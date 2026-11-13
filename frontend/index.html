@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" href="data:,">
+    <title>Cyclone IV Studio</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "/static/vendor/three.module.js"
+            }
+        }
+    </script>
+</head>
+<body>
+<div class="app">
+    <header class="topbar">
+        <div class="brand">
+            <div class="logo">C4</div>
+            <div class="brand-text">
+                <h1>Cyclone IV Studio</h1>
+                <p>EP4CE6E22C8 · real GHDL simulation</p>
+            </div>
+        </div>
+
+        <div class="topbar-center">
+            <label class="select-field">
+                <span>Example</span>
+                <select id="example-select"></select>
+            </label>
+            <label class="text-field">
+                <span>Top entity</span>
+                <input id="top-entity" type="text" placeholder="auto" spellcheck="false">
+            </label>
+        </div>
+
+        <div class="topbar-actions">
+            <span id="ghdl-badge" class="badge">GHDL …</span>
+            <button id="compile-btn" class="btn" type="button">Compile</button>
+            <button id="run-btn" class="btn primary" type="button">Run simulation</button>
+        </div>
+    </header>
+
+    <main class="workspace">
+        <section class="panel editor-panel">
+            <div class="panel-head">
+                <h2>design.vhd</h2>
+                <div class="panel-head-right">
+                    <span id="editor-status" class="muted"></span>
+                </div>
+            </div>
+            <div class="editor" id="editor">
+                <div class="gutter" id="gutter"></div>
+                <div class="code-area">
+                    <pre class="highlight" id="highlight" aria-hidden="true"><code></code></pre>
+                    <textarea id="code" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+                </div>
+            </div>
+        </section>
+
+        <div class="side">
+            <section class="panel controls-panel">
+                <div class="panel-head">
+                    <h2>Simulation</h2>
+                    <span id="run-status" class="muted"></span>
+                </div>
+                <div class="controls">
+                    <div class="field-row">
+                        <label class="text-field compact">
+                            <span>Duration (ns)</span>
+                            <input id="duration" type="number" min="10" step="10" value="1000">
+                        </label>
+                        <label class="text-field compact">
+                            <span>Clock (ns)</span>
+                            <input id="clock-period" type="number" min="1" step="1" value="10">
+                        </label>
+                        <label class="text-field compact">
+                            <span>Reset cycles</span>
+                            <input id="reset-cycles" type="number" min="0" step="1" value="2">
+                        </label>
+                    </div>
+
+                    <div class="stimulus-head">
+                        <span>Input stimulus</span>
+                        <label class="check">
+                            <input id="reset-low" type="checkbox">
+                            reset active low
+                        </label>
+                    </div>
+                    <div id="stimulus" class="stimulus"></div>
+
+                    <div class="transport">
+                        <button id="play-btn" class="btn" type="button" disabled>▶ Play</button>
+                        <button id="pause-btn" class="btn" type="button" disabled>❚❚ Pause</button>
+                        <button id="stop-btn" class="btn" type="button" disabled>■ Stop</button>
+                        <label class="speed">
+                            <span>Speed</span>
+                            <input id="speed" type="range" min="1" max="60" value="12">
+                        </label>
+                    </div>
+                </div>
+            </section>
+
+            <section class="panel log-panel">
+                <div class="panel-head">
+                    <h2>Console</h2>
+                    <button id="clear-log" class="btn tiny" type="button">clear</button>
+                </div>
+                <div id="log" class="log"></div>
+            </section>
+        </div>
+    </main>
+
+    <div class="bottom-dock">
+        <section class="panel board3d-panel">
+            <div class="panel-head">
+                <h2>Dev board</h2>
+                <div class="view-tools">
+                    <span id="board-status" class="muted">EP4CE6E22C8</span>
+                    <div class="segmented" role="tablist" aria-label="Board view">
+                        <button type="button" data-view="3d" class="active">3D</button>
+                        <button type="button" data-view="2d">2D</button>
+                    </div>
+                    <button id="focus-display" class="btn tiny" type="button">Focus display</button>
+                    <button id="reset-view" class="btn tiny" type="button">Reset view</button>
+                    <label class="check">
+                        <input id="auto-rotate" type="checkbox">
+                        orbit
+                    </label>
+                    <label class="check">
+                        <input id="show-timing" type="checkbox" checked>
+                        timing
+                    </label>
+                </div>
+            </div>
+            <div class="board3d-stage" id="board3d-stage">
+                <div id="board3d" class="board3d-canvas"></div>
+                <div id="board3d-fallback" class="board3d-fallback hidden">
+                    <div class="fallback-title">3D view unavailable</div>
+                    <div class="fallback-body">WebGL could not start in this browser. Use the 2D board or enable hardware acceleration.</div>
+                </div>
+
+                <div class="board3d-hud">
+                    <div class="hud-title">EP4CE6E22C8</div>
+                    <div class="hud-sub">RZ-EasyFPGA A2.2 · Cyclone IV E · 4-digit multiplexed display</div>
+                </div>
+                <div class="display-readout" id="display-readout">no design loaded</div>
+                <div class="board3d-hint">drag to orbit · wheel to zoom</div>
+
+                <div class="timing-overlay" id="timing-overlay">
+                    <div class="timing-head">
+                        <span>display scan timing</span>
+                        <span id="timing-mode">—</span>
+                    </div>
+                    <canvas id="scan-canvas"></canvas>
+                </div>
+
+                <div id="board-2d" class="board-2d hidden">
+                    <div class="board" id="board">
+                        <div class="board-empty">Compile a design to populate the board.</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="panel wave-panel">
+            <div class="panel-head">
+                <h2>Waveforms</h2>
+                <div class="wave-tools">
+                    <label class="check">
+                        <input id="show-internals" type="checkbox">
+                        internals
+                    </label>
+                    <span class="tool-sep"></span>
+                    <button id="zoom-out" class="btn tiny" type="button">−</button>
+                    <button id="zoom-in" class="btn tiny" type="button">+</button>
+                    <button id="zoom-fit" class="btn tiny" type="button">fit</button>
+                </div>
+            </div>
+            <div id="waveform" class="waveform">
+                <canvas id="wave-canvas"></canvas>
+                <div id="wave-tooltip" class="wave-tooltip"></div>
+                <div id="wave-empty" class="wave-empty">Run a simulation to see waveforms.</div>
+            </div>
+        </section>
+    </div>
+
+    <footer class="statusbar">
+        <span id="status-left">Ready</span>
+        <span id="status-right">GHDL not checked</span>
+    </footer>
+</div>
+
+<script type="module" src="/static/board3d.js"></script>
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>

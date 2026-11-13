@@ -1,0 +1,8 @@
+CI FPGA – Altera Cyclone IV EP4CE6E22N 
+ 
+ 
+ 
+ 
+ 
+ 
+ 

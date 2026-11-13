@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Simulator working files
+.simcache/
+cyclone_sim_*/
+cyclone_compile_*/
+*.vcd
+work/
+
+# Node (future 3D tooling)
+node_modules/
+
+# Editor
+.vscode/
+.idea/
+# GHDL / logs
+work-obj*.cf
+*.log
+
+# ZCode local state
+.zcode/
