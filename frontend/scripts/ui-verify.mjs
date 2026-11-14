@@ -1,26 +1,52 @@
 // ui-verify.mjs — headless layout + functional check of the styled UI.
 // Usage: node scripts/ui-verify.mjs [outDir]
 import puppeteer from "puppeteer-core";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { spawn, execFile } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 const outDir = resolve(process.argv[2] || "../tests/.audit-scratch/ui-restyle");
 mkdirSync(outDir, { recursive: true });
 
-const EDGE = "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
-const browser = await puppeteer.launch({
-    executablePath: EDGE,
-    headless: true,
-    args: ["--disable-gpu", "--enable-unsafe-swiftshader", "--window-size=1600,900", "--hide-scrollbars"],
-    defaultViewport: { width: 1600, height: 900 },
-});
+// Edge's startup-boost hands the launcher process off (exit code 0), which
+// defeats puppeteer.launch — spawn detached with a debug port and connect.
+const EDGE = [
+    "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+    "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
+].find((p) => existsSync(p));
+const PORT = 9336;
+const profileDir = mkdtempSync(join(tmpdir(), "ui-verify-"));
+const child = spawn(EDGE, [
+    "--headless=new", `--remote-debugging-port=${PORT}`,
+    `--user-data-dir=${join(profileDir, "p")}`,
+    "--no-first-run", "--no-default-browser-check",
+    "--disable-gpu", "--enable-unsafe-swiftshader",
+    "--use-gl=angle", "--use-angle=swiftshader",
+    "--enable-webgl", "--ignore-gpu-blocklist",
+    "--window-size=1600,900", "--hide-scrollbars", "about:blank",
+], { stdio: "ignore", detached: true });
+child.unref();
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+let ready = false;
+for (let i = 0; i < 60 && !ready; i += 1) {
+    await wait(500);
+    try { const r = await fetch(`http://127.0.0.1:${PORT}/json/version`); ready = r.ok; } catch { /* not yet */ }
+}
+if (!ready) {
+    console.error(`Edge DevTools port ${PORT} never opened`);
+    process.exit(1);
+}
+const browser = await puppeteer.connect({ browserURL: `http://127.0.0.1:${PORT}`, defaultViewport: { width: 1600, height: 900 } });
 
 const page = await browser.newPage();
+await page.setViewport({ width: 1600, height: 900 });
 const errors = [];
 page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
 page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
 
-await page.goto("http://127.0.0.1:8000/", { waitUntil: "domcontentloaded", timeout: 30000 });
+await page.goto("http://127.0.0.1:8000/", { waitUntil: "domcontentloaded", timeout: 60000 });
 await page.waitForFunction(() => window.__cyclone && document.querySelector("#board-host canvas"), { timeout: 30000 });
 await new Promise((r) => setTimeout(r, 2500));
 
@@ -64,4 +90,7 @@ await page.screenshot({ path: resolve(outDir, "02-after-run.png") });
 
 writeFileSync(resolve(outDir, "verify.json"), JSON.stringify({ layout, run, errors }, null, 2));
 console.log(JSON.stringify({ layout, run, errors }, null, 2));
-await browser.close();
+await browser.disconnect();
+try { execFile("taskkill", ["/F", "/T", "/PID", String(child.pid)]); } catch { /* ignore */ }
+try { rmSync(profileDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 400 }); } catch { /* Edge may linger */ }
+process.exit(0);

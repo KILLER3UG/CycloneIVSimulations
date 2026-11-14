@@ -102,7 +102,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--blue); margin:
     grid-template-areas:
         "toolbar toolbar toolbar"
         "left    board    right"
-        "left    bottom   bottom";
+        "left    bottom   right";
     overflow: hidden;
 }
 @media (max-width: 1360px) { #app { --left-w: 252px; } }
