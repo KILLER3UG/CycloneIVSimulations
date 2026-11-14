@@ -3,7 +3,7 @@
 // check, entity/device pickers) and the simulation setup / stimulus editor.
 
 import * as monaco from "monaco-editor";
-import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker.js?worker";
+import EditorWorker from "../monaco-editor.worker.js?worker";
 import JSZip from "jszip";
 import { icon } from "./icons.js";
 import { registerLanguages, languageForFile } from "./grammars.js";

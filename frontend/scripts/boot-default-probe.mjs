@@ -28,16 +28,26 @@ for (let i = 0; i < 60 && !ready; i += 1) {
 }
 const browser = await puppeteer.connect({ browserURL: "http://127.0.0.1:9337", defaultViewport: { width: 1600, height: 900 } });
 const page = await browser.newPage();
-await page.goto("http://127.0.0.1:8000/", { waitUntil: "domcontentloaded", timeout: 60000 });
-await page.waitForFunction(() => window.__cyclone, { timeout: 30000 });
+const consoleErrors = [];
+page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text().slice(0, 200)); });
+const targetUrl = process.argv[2] || "http://127.0.0.1:8000/";
+await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+// dev mode serves ~1300 unbundled modules; give the cold start a long budget
+let booted = true;
+try {
+    await page.waitForFunction(() => window.__cyclone, { timeout: 90000 });
+} catch {
+    booted = false;
+}
 await wait(2500);
 const out = await page.evaluate(() => ({
     fileTab: document.querySelector(".ep-tab")?.textContent?.trim(),
     topEntity: document.getElementById("ep-top")?.value,
     duration: document.getElementById("ss-duration")?.value,
     logHasSevseg: [...document.querySelectorAll("#console-log .log-line")].some((l) => l.textContent.includes("sevseg")),
+    viteErrorOverlay: !!document.querySelector("vite-error-overlay"),
 }));
-console.log(JSON.stringify(out));
+console.log(JSON.stringify({ booted, ...out, consoleErrors: consoleErrors.slice(0, 5) }));
 await browser.disconnect();
 try { execFile("taskkill", ["/F", "/T", "/PID", String(child.pid)]); } catch { /* ignore */ }
 process.exit(0);

@@ -7,13 +7,14 @@ import { fileURLToPath } from "node:url";
 // monaco-editor 0.57's package.json `exports` map ("./*.js": "./esm/vs/*.js")
 // rewrites deep subpaths like "monaco-editor/esm/vs/editor/editor.worker.js"
 // to a doubled path (./esm/vs/esm/vs/...) that does not exist on disk, and
-// rolldown-vite 8 resolves exports strictly (no fs fallback), so the deep
-// worker import in src/ui/editorPanel.js fails to resolve. Alias the worker
-// module id straight to the real file:
-//   - resolve.alias covers the dev server (JS-side resolver);
-//   - build.rolldownOptions.resolve.alias covers the build, where the native
-//     `?worker` handler resolves through the native rolldown resolver and
-//     bypasses the plugin-based resolve.alias.
+// rolldown-vite 8 resolves exports strictly (no fs fallback). The UI imports
+// the worker through the LOCAL shim src/monaco-editor.worker.js (relative
+// `?worker` import + bare side-effect import inside), which sidesteps the
+// exports map in dev and build; the alias below is still required for the
+// build, where rolldown resolves the shim's bare import through the native
+// resolver (build.rolldownOptions.resolve.alias — the plugin-based
+// resolve.alias is bypassed on the native `?worker` path and by dev's
+// worker resolver, which is why alias-only fixes kept failing somewhere).
 const MONACO_WORKER_ID = "monaco-editor/esm/vs/editor/editor.worker.js";
 const MONACO_WORKER_FILE = fileURLToPath(
   new URL("./node_modules/monaco-editor/esm/vs/editor/editor.worker.js", import.meta.url),

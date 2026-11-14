@@ -62,6 +62,20 @@ export class Board3D {
         this._fps = { frames: 0, last: performance.now(), value: 0 };
         this._tween = null;
         this._pulse = null;
+        // Render throttle: the loop runs at display vsync (up to 165 Hz on
+        // gaming monitors); rendering every vsync with bloom costs a full
+        // CPU core. Cap to 60 fps while something is animating and drop to
+        // 24 fps after 5 s of no activity — visually identical, ~85% less
+        // idle CPU (see _loop).
+        this._lastActive = performance.now();
+        this._lastRender = 0;
+        for (const m of ["applyCycle", "setPower", "resetVisual", "pressKey", "setDip", "pressReset", "setPreset", "zoomIn", "zoomOut", "fit", "setTheme"]) {
+            const orig = this[m].bind(this);
+            this[m] = (...args) => {
+                this._lastActive = performance.now();
+                return orig(...args);
+            };
+        }
         this._photo = null;
 
         this._initRenderer();
@@ -182,6 +196,10 @@ export class Board3D {
         this._resizeObserver = new ResizeObserver(() => this._resize());
         this._resizeObserver.observe(this.container);
         el.addEventListener("dblclick", this._onDblClick);
+        for (const ev of ["pointerdown", "pointermove", "wheel"]) {
+            el.addEventListener(ev, () => { this._lastActive = performance.now(); }, { passive: true });
+        }
+        this.controls.addEventListener("change", () => { this._lastActive = performance.now(); });
         this._raf = requestAnimationFrame(this._loop);
         this.renderer.render(this.scene, this.camera); // first render → ready
         if (this.container) this.container.dataset.ready = "1";
@@ -587,8 +605,13 @@ export class Board3D {
     _loop = () => {
         if (this._disposed) return;
         this._raf = requestAnimationFrame(this._loop);
-        this.renderer.info.reset();
         const now = performance.now();
+        // 60 fps while a simulation runs, a camera tween/pulse animates or
+        // the user interacted recently; 24 fps when fully idle.
+        const cap = (this.running || this._tween || this._pulse || now - this._lastActive < 5000) ? 60 : 24;
+        if (now - this._lastRender < 1000 / cap) return;
+        this._lastRender = now;
+        this.renderer.info.reset();
         const dt = Math.min(0.05, (now - (this._lastFrame || now)) / 1000);
         this._lastFrame = now;
 
