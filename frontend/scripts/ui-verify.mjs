@@ -1,7 +1,7 @@
 // ui-verify.mjs — headless layout + functional check of the styled UI.
 // Usage: node scripts/ui-verify.mjs [outDir]
 import puppeteer from "puppeteer-core";
-import { spawn, execFile } from "node:child_process";
+import { spawn, execFile, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -12,11 +12,20 @@ mkdirSync(outDir, { recursive: true });
 // Edge's startup-boost hands the launcher process off (exit code 0), which
 // defeats puppeteer.launch — spawn detached with a debug port and connect.
 const EDGE = [
+    "C:/Program Files/Google/Chrome/Application/chrome.exe",
+    "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+    process.env.LOCALAPPDATA + "/Google/Chrome/Application/chrome.exe",
     "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
     "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
 ].find((p) => existsSync(p));
 const PORT = 9336;
 const profileDir = mkdtempSync(join(tmpdir(), "ui-verify-"));
+// snapshot pre-existing browser PIDs — the exit reap kills ONLY newcomers
+// (probe-spawned browsers, incl. relaunch roots that lost their marker flags)
+const BEFORE_PIDS = spawnSync("powershell", ["-NoProfile", "-Command",
+    "(Get-CimInstance Win32_Process -Filter \"Name='chrome.exe' or Name='msedge.exe'\").ProcessId -join ','"],
+    { encoding: "utf-8" }).stdout.trim();
+
 const child = spawn(EDGE, [
     "--headless=new", `--remote-debugging-port=${PORT}`,
     `--user-data-dir=${join(profileDir, "p")}`,
@@ -92,6 +101,10 @@ await page.screenshot({ path: resolve(outDir, "02-after-run.png") });
 writeFileSync(resolve(outDir, "verify.json"), JSON.stringify({ layout, run, errors }, null, 2));
 console.log(JSON.stringify({ layout, run, errors }, null, 2));
 await browser.disconnect();
-try { execFile("taskkill", ["/F", "/T", "/PID", String(child.pid)]); } catch { /* ignore */ }
+try { spawnSync("taskkill", ["/F", "/T", "/PID", String(child.pid)], { stdio: "ignore" }); } catch { /* ignore */ }
+try {
+        spawnSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", resolve(__dirname_ps, "reap-browsers.ps1"), "-BeforePids", BEFORE_PIDS], { stdio: "ignore" });
+    } catch { /* ignore */ }
 try { rmSync(profileDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 400 }); } catch { /* Edge may linger */ }
 process.exit(0);

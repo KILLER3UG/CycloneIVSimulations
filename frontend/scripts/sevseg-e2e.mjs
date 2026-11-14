@@ -8,12 +8,18 @@
 //
 // Usage (from frontend/): node scripts/sevseg-e2e.mjs
 import puppeteer from "puppeteer-core";
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
+import { dirname as _dirname } from "node:path";
+import { fileURLToPath as _fileURLToPath } from "node:url";
+const __dirname_ps = _dirname(_fileURLToPath(import.meta.url));
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const EDGE_CANDIDATES = [
+    "C:/Program Files/Google/Chrome/Application/chrome.exe",
+    "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+    process.env.LOCALAPPDATA + "/Google/Chrome/Application/chrome.exe",
     "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
     "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
 ];
@@ -42,6 +48,12 @@ const EXPECT = {
 const exe = EDGE_CANDIDATES.find((p) => existsSync(p));
 const profileDir = mkdtempSync(join(tmpdir(), "sevseg-e2e-"));
 const PORT = 9334;
+// snapshot pre-existing browser PIDs — the exit reap kills ONLY newcomers
+// (probe-spawned browsers, incl. relaunch roots that lost their marker flags)
+const BEFORE_PIDS = spawnSync("powershell", ["-NoProfile", "-Command",
+    "(Get-CimInstance Win32_Process -Filter \"Name='chrome.exe' or Name='msedge.exe'\").ProcessId -join ','"],
+    { encoding: "utf-8" }).stdout.trim();
+
 let child = (function spawnEdge() {
     const c = spawn(exe, [
         "--headless=new", `--remote-debugging-port=${PORT}`,
@@ -209,6 +221,10 @@ writeFileSync(join(OUT, "sevseg-e2e.json"), JSON.stringify(results, null, 2));
 console.log(`\n${results.steps.filter((s) => s.pass).length}/${results.steps.length} steps passed`);
 
 await browser.disconnect();
-try { execFile("taskkill", ["/F", "/T", "/PID", String(child.pid)]); } catch { /* ignore */ }
+try { spawnSync("taskkill", ["/F", "/T", "/PID", String(child.pid)], { stdio: "ignore" }); } catch { /* ignore */ }
+try {
+        spawnSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", resolve(__dirname_ps, "reap-browsers.ps1"), "-BeforePids", BEFORE_PIDS], { stdio: "ignore" });
+    } catch { /* ignore */ }
 try { rmSync(profileDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 400 }); } catch { /* Edge may linger */ }
 process.exit(results.steps.every((s) => s.pass) ? 0 : 1);

@@ -19,7 +19,7 @@
 // stats snapshot is written next to them as stats.json and echoed to stdout.
 
 import puppeteer from "puppeteer-core";
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -31,6 +31,9 @@ const FRONTEND = resolve(HERE, "..");
 const DEFAULT_OUT = resolve(FRONTEND, "../tests/.audit-scratch/board-fidelity");
 
 const EDGE_CANDIDATES = [
+    "C:/Program Files/Google/Chrome/Application/chrome.exe",
+    "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+    process.env.LOCALAPPDATA + "/Google/Chrome/Application/chrome.exe",
     "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
     "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
 ];
@@ -54,6 +57,12 @@ const RUN_WAIT = Number(opt("run-wait", 6500));
 const PORT = Number(opt("port", 9333));
 const DO_RUN = !flag("no-run");
 const ASSERT = !flag("no-assert");
+
+// snapshot pre-existing browser PIDs — the exit reap kills ONLY newcomers
+// (probe-spawned browsers, incl. relaunch roots that lost their marker flags)
+const BEFORE_PIDS = spawnSync("powershell", ["-NoProfile", "-Command",
+    "(Get-CimInstance Win32_Process -Filter \"Name='chrome.exe' or Name='msedge.exe'\").ProcessId -join ','"],
+    { encoding: "utf-8" }).stdout.trim();
 
 const exe = EDGE_CANDIDATES.find((p) => existsSync(p));
 if (!exe) {
@@ -203,12 +212,23 @@ try {
             });
         });
         await wait(900); // let LED easing converge
-        const after = await page.evaluate(() => ({
-            ledLevels: (window.__cyclone.board.io?.leds || []).map((l) => Number(l.level.toFixed(3))),
-            segLit: window.__cyclone.board.io?.display
-                ? Array.from(window.__cyclone.board.io.display.segCurrent).filter((v) => v > 0.25).length
-                : -1,
-        }));
+        // The 7-seg display MULTIPLEXES (one digit lit at a time), so a
+        // single segLit instant is fps-dependent (slow headless rendering
+        // makes the easing chase the mux). Sample across a full mux cycle
+        // and require each digit's 7 segments to have been lit at some point.
+        const after = await page.evaluate(async () => {
+            const io = window.__cyclone.board.io;
+            const ledLevels = (io?.leds || []).map((l) => Number(l.level.toFixed(3)));
+            let litOr = new Array(32).fill(0);
+            for (let i = 0; i < 12; i += 1) {
+                if (!io?.display) break;
+                const cur = Array.from(io.display.segCurrent);
+                cur.forEach((v, j) => { if (v > 0.25) litOr[j] = 1; });
+                await new Promise((r) => setTimeout(r, 120));
+            }
+            const perDigit = [0, 1, 2, 3].map((d) => litOr.slice(d * 8, d * 8 + 7).reduce((a, b) => a + b, 0));
+            return { ledLevels, segLit: perDigit.reduce((a, b) => a + b, 0), perDigit };
+        });
         const file = join(OUT_DIR, "assert-cycle.png");
         await page.screenshot({ path: file });
         shots.push(file);
@@ -226,7 +246,9 @@ try {
         if (canvasShot.length < 60000) failures.push(`canvas render looks blank (${canvasShot.length} bytes)`);
         if (after.ledLevels[0] < 0.5 || after.ledLevels[3] < 0.5) failures.push(`LEDs did not light: ${after.ledLevels}`);
         if (after.ledLevels[1] > 0.3 || after.ledLevels[2] > 0.3) failures.push(`LED2/LED3 should be dark: ${after.ledLevels}`);
-        if (after.segLit < 28) failures.push(`7-seg segments did not light: ${after.segLit}/32`);
+        for (let d = 0; d < 4; d += 1) {
+            if ((after.perDigit?.[d] ?? 0) < 7) failures.push(`digit ${d + 1} segments did not light: ${after.perDigit?.[d]}/7`);
+        }
         if (failures.length) {
             console.error("ASSERT FAILED:\n  " + failures.join("\n  "));
             process.exitCode = 2;
@@ -243,6 +265,8 @@ try {
     if (browser) await browser.disconnect().catch(() => {});
     await killTree(child.pid);
     await reapHarnessEdge();
+    try { spawnSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", resolve(HERE, "reap-browsers.ps1"), "-BeforePids", BEFORE_PIDS], { stdio: "ignore" }); } catch { /* ignore */ }
     await wait(700);
     try { rmSync(profileDir, { recursive: true, force: true, maxRetries: 3 }); } catch { /* Edge may lag releasing files */ }
 }

@@ -1,15 +1,24 @@
 // dev-diag.mjs — diagnose why the dev-server boot stalls: watch every module
 // request, console message and failure for 45 s, then dump the page state.
 import puppeteer from "puppeteer-core";
-import { spawn, execFile } from "node:child_process";
+import { spawn, execFile, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const exe = [
+    "C:/Program Files/Google/Chrome/Application/chrome.exe",
+    "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+    process.env.LOCALAPPDATA + "/Google/Chrome/Application/chrome.exe",
     "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
     "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
 ].find((p) => existsSync(p));
+// snapshot pre-existing browser PIDs — the exit reap kills ONLY newcomers
+// (probe-spawned browsers, incl. relaunch roots that lost their marker flags)
+const BEFORE_PIDS = spawnSync("powershell", ["-NoProfile", "-Command",
+    "(Get-CimInstance Win32_Process -Filter \"Name='chrome.exe' or Name='msedge.exe'\").ProcessId -join ','"],
+    { encoding: "utf-8" }).stdout.trim();
+
 const child = spawn(exe, [
     "--headless=new", "--remote-debugging-port=9338",
     `--user-data-dir=${join(mkdtempSync(join(tmpdir(), "devdiag-")), "p")}`,
@@ -60,5 +69,9 @@ const state = await page.evaluate(() => ({
 }));
 console.log("STATE:", JSON.stringify(state));
 await browser.disconnect();
-try { execFile("taskkill", ["/F", "/T", "/PID", String(child.pid)]); } catch { /* ignore */ }
+try { spawnSync("taskkill", ["/F", "/T", "/PID", String(child.pid)], { stdio: "ignore" }); } catch { /* ignore */ }
+try {
+        spawnSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", resolve(__dirname_ps, "reap-browsers.ps1"), "-BeforePids", BEFORE_PIDS], { stdio: "ignore" });
+    } catch { /* ignore */ }
 process.exit(0);
