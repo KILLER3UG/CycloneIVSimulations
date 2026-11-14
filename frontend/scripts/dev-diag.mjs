@@ -13,7 +13,7 @@ const exe = [
 const child = spawn(exe, [
     "--headless=new", "--remote-debugging-port=9338",
     `--user-data-dir=${join(mkdtempSync(join(tmpdir(), "devdiag-")), "p")}`,
-    "--no-first-run", "--disable-gpu", "--enable-unsafe-swiftshader",
+    "--no-first-run", "--disable-features=msStartupBoost", "--disable-gpu", "--enable-unsafe-swiftshader",
     "--use-gl=angle", "--use-angle=swiftshader",
     "--enable-webgl", "--ignore-gpu-blocklist",
     "--window-size=1600,900", "about:blank",

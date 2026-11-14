@@ -102,6 +102,20 @@ export class Board3D {
         const dpr = typeof devicePixelRatio !== "undefined" ? devicePixelRatio : 1;
         const cap = this.quality === "high" ? 2 : this.quality === "balanced" ? 1.6 : 1;
         this.renderer.setPixelRatio(Math.min(dpr, cap));
+        // Report which GPU (or software fallback) actually renders the scene:
+        // a "SwiftShader"/"software" answer means hardware acceleration is
+        // OFF and every frame is CPU-drawn — the #1 cause of high CPU.
+        try {
+            const gl = this.renderer.getContext();
+            const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+            this.gpuName = String(dbg
+                ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)
+                : gl.getParameter(gl.RENDERER));
+            this.gpuIsSoftware = /swiftshader|software|basic render|llvmpipe/i.test(this.gpuName);
+        } catch {
+            this.gpuName = "unknown";
+            this.gpuIsSoftware = false;
+        }
     }
 
     _initScene() {

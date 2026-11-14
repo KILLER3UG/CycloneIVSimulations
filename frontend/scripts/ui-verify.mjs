@@ -21,6 +21,7 @@ const child = spawn(EDGE, [
     "--headless=new", `--remote-debugging-port=${PORT}`,
     `--user-data-dir=${join(profileDir, "p")}`,
     "--no-first-run", "--no-default-browser-check",
+        "--disable-features=msStartupBoost",
     "--disable-gpu", "--enable-unsafe-swiftshader",
     "--use-gl=angle", "--use-angle=swiftshader",
     "--enable-webgl", "--ignore-gpu-blocklist",

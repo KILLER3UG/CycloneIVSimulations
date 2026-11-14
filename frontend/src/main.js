@@ -42,6 +42,12 @@ function initBoard() {
         });
         board.mount();
         board.setPreset("iso");
+        // surface which renderer is actually in use (GPU vs software fallback)
+        if (board.gpuIsSoftware) {
+            log(`3D rendering is on a SOFTWARE rasterizer (${board.gpuName}) — every frame is CPU-drawn. Enable hardware acceleration in your browser settings (chrome://settings/system or edge://settings/system).`, "warn");
+        } else {
+            log(`3D renderer (GPU): ${board.gpuName}`, "info");
+        }
         interactions = createInteractions(board, host, {
             onPowerToggle: togglePower,
             onDipToggle: toggleDip,
