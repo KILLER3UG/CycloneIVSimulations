@@ -134,11 +134,40 @@ def find_ghdl() -> str:
 
 
 class GhdlTool:
-    """Command builder/runner for GHDL."""
+    """Command builder/runner for GHDL.
 
-    def __init__(self, executable: Optional[str] = None, std: str = "08") -> None:
+    The subprocess timeout scales with the requested simulation duration
+    (minimum 60 s, hard cap 900 s) so a long but legitimate run is not killed
+    by a fixed ceiling.  Set the ``GHDL_TIMEOUT`` environment variable (or
+    pass ``timeout=``) to force a specific budget in seconds — useful to
+    prove that a runaway design is reported instead of hanging.
+    """
+
+    #: Wall-clock seconds per simulated millisecond used to size the run budget.
+    WALL_SECONDS_PER_SIM_MS = 2.0
+    #: Floor/ceiling for the auto-scaled run timeout.
+    MIN_RUN_TIMEOUT = 60.0
+    MAX_RUN_TIMEOUT = 900.0
+
+    def __init__(self, executable: Optional[str] = None, std: str = "08",
+                 timeout: Optional[float] = None) -> None:
         self.executable = executable or find_ghdl()
         self.std = std
+        env_timeout = os.environ.get("GHDL_TIMEOUT", "").strip()
+        if timeout is None and env_timeout:
+            try:
+                timeout = float(env_timeout)
+            except ValueError:
+                timeout = None
+        self.timeout = float(timeout) if timeout and timeout > 0 else None
+
+    def _run_timeout(self, stop_time_ns: float) -> float:
+        """Timeout for a simulation run: explicit override, else scaled."""
+        if self.timeout is not None:
+            return self.timeout
+        simulated_ms = max(0.0, float(stop_time_ns)) / 1e6
+        scaled = simulated_ms * self.WALL_SECONDS_PER_SIM_MS + 30.0
+        return min(self.MAX_RUN_TIMEOUT, max(self.MIN_RUN_TIMEOUT, scaled))
 
     # -- introspection ----------------------------------------------------
     def version(self) -> str:
@@ -147,8 +176,20 @@ class GhdlTool:
         return first.strip()
 
     # -- commands ---------------------------------------------------------
+    @staticmethod
+    def _resolve_cwd(cwd: Optional[Path], workdir: Path) -> Optional[Path]:
+        """Explicit cwd wins; otherwise run next to the work library as before."""
+        if cwd is not None:
+            return cwd
+        return workdir.parent if workdir.parent.exists() else None
+
     def analyze(
-        self, files: Sequence[str | Path], workdir: Path, work: str = "work"
+        self,
+        files: Sequence[str | Path],
+        workdir: Path,
+        work: str = "work",
+        cwd: Optional[Path] = None,
+        extra_flags: Optional[Iterable[str]] = None,
     ) -> CommandResult:
         args = [
             self.executable,
@@ -159,10 +200,12 @@ class GhdlTool:
             "-Werror=binding",
         ]
         args.extend(str(f) for f in files)
-        return self._run(args, cwd=workdir.parent if workdir.parent.exists() else None)
+        if extra_flags:
+            args.extend(str(f) for f in extra_flags)
+        return self._run(args, cwd=self._resolve_cwd(cwd, workdir))
 
     def elaborate(
-        self, top: str, workdir: Path, work: str = "work"
+        self, top: str, workdir: Path, work: str = "work", cwd: Optional[Path] = None
     ) -> CommandResult:
         args = [
             self.executable,
@@ -173,10 +216,15 @@ class GhdlTool:
             "-Werror=binding",
             top,
         ]
-        return self._run(args, cwd=workdir.parent if workdir.parent.exists() else None)
+        return self._run(args, cwd=self._resolve_cwd(cwd, workdir))
 
     def synthesize(
-        self, files: Sequence[str | Path], workdir: Path, top: str, work: str = "work"
+        self,
+        files: Sequence[str | Path],
+        workdir: Path,
+        top: str,
+        work: str = "work",
+        cwd: Optional[Path] = None,
     ) -> CommandResult:
         """Run GHDL's synthesis front-end.
 
@@ -193,7 +241,7 @@ class GhdlTool:
         ]
         args.extend(str(f) for f in files)
         args.extend(["-e", top])
-        return self._run(args, cwd=workdir.parent if workdir.parent.exists() else None)
+        return self._run(args, cwd=self._resolve_cwd(cwd, workdir))
 
     def run(
         self,
@@ -203,6 +251,7 @@ class GhdlTool:
         stop_time_ns: float,
         work: str = "work",
         extra: Optional[Iterable[str]] = None,
+        cwd: Optional[Path] = None,
     ) -> CommandResult:
         stop = max(1, int(round(stop_time_ns)))
         args = [
@@ -217,10 +266,13 @@ class GhdlTool:
         ]
         if extra:
             args.extend(extra)
-        return self._run(args, cwd=workdir.parent if workdir.parent.exists() else None)
+        return self._run(args, cwd=self._resolve_cwd(cwd, workdir),
+                         timeout=self._run_timeout(stop_time_ns))
 
     # -- internals --------------------------------------------------------
-    def _run(self, args: Sequence[str], cwd: Optional[Path]) -> CommandResult:
+    def _run(self, args: Sequence[str], cwd: Optional[Path],
+             timeout: Optional[float] = None) -> CommandResult:
+        effective = float(timeout) if timeout is not None else (self.timeout or 60.0)
         try:
             completed = subprocess.run(
                 list(args),
@@ -229,14 +281,27 @@ class GhdlTool:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=60,
+                timeout=effective,
             )
         except subprocess.TimeoutExpired:
+            is_run = "-r" in args
+            message = (
+                f"GHDL timed out after {effective:g} s of wall time"
+                + (
+                    " — possible runaway design (an infinite loop without a wait "
+                    "statement?) or a simulation budget that is too small; raise the "
+                    "requested duration cap or set GHDL_TIMEOUT to change the limit"
+                    if is_run else ""
+                )
+            )
             return CommandResult(
                 ok=False,
-                stderr="GHDL timed out after 60 seconds",
+                stderr=message,
                 returncode=-1,
                 command=list(args),
+                diagnostics=[Diagnostic(
+                    file="ghdl", line=0, column=0, severity="error", message=message,
+                )],
             )
         except OSError as exc:
             return CommandResult(

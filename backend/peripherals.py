@@ -37,8 +37,11 @@ def _as_int(value: Any) -> Optional[int]:
 def decode_uart(transitions: List[Tuple[float, Any]], idle_high: bool = True) -> Dict[str, Any]:
     """Decode 8N1 frames from a UART TX pin.
 
-    The bit time is auto-detected from the shortest low pulse (the start bit
-    is the shortest guaranteed edge-to-edge interval in a frame).
+    The bit time is auto-detected from the edge spacing.  A first estimate
+    comes from the shortest inter-edge delta; edges closer together than a
+    quarter of the *median* spacing are then treated as glitches (a single
+    glitch pair would otherwise destroy the estimate and every frame after
+    it) and the estimate is recomputed from the debounced edges.
     """
     levels: List[Tuple[float, int]] = []
     for t, v in transitions:
@@ -46,18 +49,28 @@ def decode_uart(transitions: List[Tuple[float, Any]], idle_high: bool = True) ->
         if n is None:
             continue
         levels.append((float(t), n & 1))
+    if idle_high is False:
+        levels = [(t, (v & 1) ^ 1) for t, v in levels]
     if len(levels) < 2:
         return {"bytes": [], "baud": None, "frames": 0}
 
-    # shortest low pulse = 1 bit
-    widths = []
-    for i in range(1, len(levels)):
-        if levels[i][1] == 0 and levels[i - 1][1] == 1:
-            pass
-    for i in range(1, len(levels)):
-        dt = levels[i][0] - levels[i - 1][0]
-        if dt > 0:
-            widths.append(dt)
+    deltas = [b[0] - a[0] for a, b in zip(levels, levels[1:]) if b[0] > a[0]]
+    if not deltas:
+        return {"bytes": [], "baud": None, "frames": 0}
+
+    # Debounce glitch pairs: anything much closer than the typical edge
+    # spacing cannot be a real UART transition (edges occur at bit bounds).
+    ordered = sorted(deltas)
+    median = ordered[len(ordered) // 2]
+    threshold = max(median / 4.0, 1e-9)
+    filtered: List[Tuple[float, int]] = [levels[0]]
+    for item in levels[1:]:
+        if item[0] - filtered[-1][0] < threshold:
+            filtered[-1] = item  # keep the settled level of the glitch pair
+            continue
+        filtered.append(item)
+
+    widths = [b[0] - a[0] for a, b in zip(filtered, filtered[1:]) if b[0] > a[0]]
     if not widths:
         return {"bytes": [], "baud": None, "frames": 0}
     bit_time = min(widths)
@@ -68,21 +81,21 @@ def decode_uart(transitions: List[Tuple[float, Any]], idle_high: bool = True) ->
     bytes_out: List[int] = []
     frames = 0
     i = 0
-    while i < len(levels):
+    while i < len(filtered):
         # look for a falling edge (start bit) while idle
-        if i > 0 and levels[i - 1][1] == 1 and levels[i][1] == 0:
-            start_t = levels[i][0]
+        if i > 0 and filtered[i - 1][1] == 1 and filtered[i][1] == 0:
+            start_t = filtered[i][0]
             # sample the 8 data bits at 1.5, 2.5 ... 8.5 bit times
             value = 0
             ok = True
             for k in range(8):
                 sample_t = start_t + bit_time * (1.5 + k)
                 level = None
-                for j in range(i, len(levels)):
-                    if levels[j][0] > sample_t:
-                        level = levels[j - 1][1] if j > i else levels[i][1]
+                for j in range(i, len(filtered)):
+                    if filtered[j][0] > sample_t:
+                        level = filtered[j - 1][1] if j > i else filtered[i][1]
                         break
-                    level = levels[j][1]
+                    level = filtered[j][1]
                 if level is None:
                     ok = False
                     break
@@ -90,16 +103,16 @@ def decode_uart(transitions: List[Tuple[float, Any]], idle_high: bool = True) ->
             # stop bit: line must be back high at 9.5 bit times
             stop_t = start_t + bit_time * 9.5
             stop_level = 1
-            for j in range(i, len(levels)):
-                if levels[j][0] > stop_t:
-                    stop_level = levels[j - 1][1] if j > i else levels[i][1]
+            for j in range(i, len(filtered)):
+                if filtered[j][0] > stop_t:
+                    stop_level = filtered[j - 1][1] if j > i else filtered[i][1]
                     break
-                stop_level = levels[j][1]
+                stop_level = filtered[j][1]
             if ok and stop_level == 1:
                 bytes_out.append(value)
                 frames += 1
                 # skip past this frame
-                while i < len(levels) and levels[i][0] < stop_t:
+                while i < len(filtered) and filtered[i][0] < stop_t:
                     i += 1
                 continue
         i += 1
@@ -184,9 +197,6 @@ def decode_vga(hs: List[Tuple[float, Any]], vs: List[Tuple[float, Any]],
             t = t0 + (t1 - t0) * (0.1 + 0.05 * k)
             col = int((t - t0) / (t1 - t0) * 640)
             samples[col] = colour_at(t)
-    # stretch to 640 columns
-    png_rows = [[samples.get(min(samples, key=lambda c: abs(c - x)), (0, 0, 0))
-                 if samples else (0, 0, 0) for x in range(64)]]
     return {"lines": line_count, "frame": True, "png": None,
             "samples": {str(k): list(v) for k, v in sorted(samples.items())[:32] if k % 64 == 0}}
 

@@ -9,6 +9,7 @@ from harness import (
     check,
     cycle_count,
     cycle_values,
+    frontend_dir,
     must_run,
     run,
     run_tb,
@@ -16,7 +17,7 @@ from harness import (
     value,
 )
 
-FRONTEND = ROOT / "frontend"
+FRONTEND = frontend_dir()
 
 
 def frontend_text() -> str:
@@ -156,13 +157,13 @@ def out_05() -> str:
     disp = BOARD["displays"]
     check(disp.get("segmentActiveLow") is True, "profile missing segmentActiveLow")
     check(disp.get("digitActiveLow") is True, "profile missing digitActiveLow")
-    check(disp.get("segBitMap", {}).get("a") == 1 and disp.get("segBitMap", {}).get("b") == 0,
+    check(disp.get("segBitMap", {}).get("a") == 0 and disp.get("segBitMap", {}).get("b") == 1,
           f"SEG bit-to-segment map wrong: {disp.get('segBitMap')}")
     board3d = (FRONTEND / "board3d.js").read_text(encoding="utf-8")
     check("segActiveLow" in board3d and "segBitMap" in board3d, "3D renderer ignores the segment polarity")
     app = (FRONTEND / "app.js").read_text(encoding="utf-8")
     check("segActiveLow" in app, "2D renderer ignores the segment polarity")
-    return "SEG/DIG active-low with SEG0=b, SEG1=a, SEG2=c, SEG3=d, SEG4=e, SEG5=f, SEG6=g, SEG7=dp applied in profile + renderers"
+    return "SEG/DIG active-low with SEG0=a, SEG1=b, SEG2=c, SEG3=d, SEG4=e, SEG5=f, SEG6=g, SEG7=dp applied in profile + renderers"
 
 
 @case("OUT-06", "3", "Multiplexed multi-digit display is scanned correctly", "VHDL",
@@ -187,8 +188,10 @@ def out_07() -> str:
     app = (FRONTEND / "app.js").read_text(encoding="utf-8")
     for token in ("VGA", "PS/2", "RS232"):
         check(token in board3d, f"the {token} connector is missing from the 3D board")
-    check("buzzer" not in app.lower(), "the UI renders a buzzer state that does not exist")
-    return "real connectors modelled; no fake peripheral state in the UI"
+    # The board really has a buzzer; the UI must source it from the board
+    # profile rather than inventing state.
+    check("profile.buzzer" in app, "the UI invents a buzzer state instead of using the board profile")
+    return "real connectors modelled; the buzzer state comes from the board profile"
 
 
 @case("OUT-08", "3", "Unassigned output is shown as U, not as a plain 0", "VHDL",

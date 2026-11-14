@@ -14,8 +14,9 @@ use std.textio.all;
 
 entity at24c08 is
     generic (
+        -- Only A2 is a physical address pin on the AT24C08; control-byte bits
+        -- A1/A0 are the two MSBs of the 10-bit word address (block select).
         A2     : std_logic := '0';   -- tied to GND on the A2.2
-        A1     : std_logic := '0';   -- tied to GND on the A2.2
         TWRITE : time      := 5 ms;
         DUMP   : string    := "eeprom_dump.txt"
     );
@@ -37,11 +38,14 @@ architecture behavioural of at24c08 is
     signal wr_end    : time     := 0 ns;
     signal sda_out   : std_logic := 'Z';
 
-    function dev_ok(b : natural; sa2, sa1 : std_logic) return boolean is
+    function dev_ok(b : natural; sa2 : std_logic) return boolean is
         variable v : std_logic_vector(7 downto 0) :=
             std_logic_vector(to_unsigned(b mod 256, 8));
     begin
-        return v(7 downto 4) = "1010" and v(3) = sa2 and v(2) = sa1;
+        -- Control byte 1010 A2 A1 A0 R/W: A2 is the only physical address pin.
+        -- A1/A0 are block-select bits (word-address bits 9 and 8), so any value
+        -- of them must ACK; the device address on this board is 0x50-0x53.
+        return v(7 downto 4) = "1010" and v(3) = sa2;
     end function dev_ok;
 begin
     sda <= '0' when sda_out = '0' else 'Z';
@@ -54,6 +58,7 @@ begin
         variable rw       : std_logic := '0';
         variable wordaddr : natural  := 0;
         variable page_base: natural  := 0;
+        variable blk      : natural  := 0;   -- {A1,A0} from the control byte
         variable last_sda : std_logic := '1';
         variable last_scl : std_logic := '1';
         variable scl_x    : std_logic := '1';   -- to_x01(scl): the bus idles 'H'
@@ -84,12 +89,20 @@ begin
                     if bits = 8 then
                         -- 9th pulse: ACK slot
                         if state = ADDR then
-                            if busy or not dev_ok(shifter, A2, A1) then
+                            if busy or not dev_ok(shifter, A2) then
                                 sda_out <= 'Z';          -- NACK
                                 state   := IDLE;         -- refuse the transfer
                             else
                                 sda_out <= '0';          -- ACK
                                 rw      := '1' when (shifter mod 2) = 1 else '0';
+                                -- A1/A0 = control-byte bits 2/1 = word-address bits 9/8
+                                blk     := 0;
+                                if (shifter / 4) mod 2 = 1 then
+                                    blk := blk + 2;
+                                end if;
+                                if (shifter / 2) mod 2 = 1 then
+                                    blk := blk + 1;
+                                end if;
                                 state   := ACK_ADDR;
                             end if;
                         else
@@ -137,26 +150,22 @@ begin
                     state   := DATA_W;
                     bits    := 0;
                 when DATA_R =>
-                    if bits >= 8 and master_acked then
-                        -- sequential read: drive the next byte's bit 7
-                        tmp := std_logic_vector(to_unsigned(byte_out, 8));
-                        sda_out <= '0' when tmp(7) = '0' else 'Z';
-                        bits    := 1;
-                        master_acked := false;
-                    elsif bits >= 8 then
-                        -- master ACK slot: release SDA and preload the next
-                        -- byte; the master's ACK level is sampled on the next
-                        -- SCL rising edge
-                        sda_out  <= 'Z';
+                    if bits >= 8 then
+                        -- master ACK slot: release SDA, preload the next byte
+                        sda_out <= 'Z';
                         byte_out := to_integer(unsigned(committed(wordaddr mod MEM_BYTES)));
                         wordaddr := (wordaddr + 1) mod MEM_BYTES;
                         ack_pending := true;
-                        bits     := 8;
+                        bits := 8;
                     else
                         tmp := std_logic_vector(to_unsigned(byte_out, 8));
                         sda_out <= '0' when tmp(7 - bits) = '0' else 'Z';
                         bits := bits + 1;
                     end if;
+                    -- the ACK level was sampled on the rising edge; it must not
+                    -- leak into the next byte (this cleared the stale flag that
+                    -- corrupted the second and later bytes of a read)
+                    master_acked := false;
                 when others =>
                     sda_out <= 'Z';
             end case;
@@ -180,9 +189,8 @@ begin
                             shifter := shifter mod 256;
                             if state = WORD then
                                 tmp := std_logic_vector(to_unsigned(shifter, 8));
-                                -- P0 (device-address bit 0) = word-address MSB
-                                wordaddr  := 256 * to_integer(unsigned'("0" & tmp(0)))
-                                             + to_integer(unsigned(tmp(7 downto 1)));
+                                -- 10-bit word address = {A1, A0, word_address_byte}
+                                wordaddr  := blk * 256 + to_integer(unsigned(tmp));
                                 page_base := (wordaddr / PAGE_SIZE) * PAGE_SIZE;
                             elsif state = DATA_W then
                                 if wp = '0' then

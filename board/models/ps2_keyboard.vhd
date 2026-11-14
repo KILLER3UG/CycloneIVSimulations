@@ -33,6 +33,7 @@ begin
     sender : process
         type byte_list is array (natural range <>) of natural;
         constant bytes : byte_list := (1 => BYTE1, 2 => BYTE2, 3 => BYTE3, 4 => BYTE4);
+        constant SETUP : time := 5 us;   -- data must be valid before the clock falls
         variable count : natural := 0;
         variable b     : natural := 0;
         variable parity : std_logic := '0';
@@ -43,15 +44,16 @@ begin
         ps_data_int  <= '1';
         wait for START;
         for which in 1 to 4 loop
-            b := bytes(which - 1);
+            b := bytes(which);
             if b = 0 then
                 exit;                    -- 0 = no more bytes
             end if;
             count := count + 1;
             -- start bit
             ps_data_int <= '0';
+            wait for SETUP;
             ps_clock_int <= '0';
-            wait for HALFPERIOD;
+            wait for HALFPERIOD - SETUP;
             ps_clock_int <= '1';
             wait for HALFPERIOD;
             -- 8 data bits, LSB first
@@ -65,21 +67,24 @@ begin
                 end if;
                 ps_data_int <= bit_v;
                 parity   := parity xor bit_v;
+                wait for SETUP;
                 ps_clock_int <= '0';
-                wait for HALFPERIOD;
+                wait for HALFPERIOD - SETUP;
                 ps_clock_int <= '1';
                 wait for HALFPERIOD;
             end loop;
             -- odd parity
             ps_data_int <= not parity;
+            wait for SETUP;
             ps_clock_int <= '0';
-            wait for HALFPERIOD;
+            wait for HALFPERIOD - SETUP;
             ps_clock_int <= '1';
             wait for HALFPERIOD;
             -- stop bit
             ps_data_int <= '1';
+            wait for SETUP;
             ps_clock_int <= '0';
-            wait for HALFPERIOD;
+            wait for HALFPERIOD - SETUP;
             ps_clock_int <= '1';
             wait for HALFPERIOD;
             -- inter-frame gap

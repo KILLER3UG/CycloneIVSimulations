@@ -1,51 +1,61 @@
 """Device and board profile for the simulator.
 
-Ground truth: /board/board_spec.md, compiled ONLY from
-/board/vendor/Pinos_RZEasyFPGA.txt (the kit's own pin-assignment file),
-/board/vendor/instructor_pin_table.png (instructor-provided, identical),
-/board/schematic/*.pdf (kit schematic) and the vendor example projects in
-/board/vendor/examples/.
+All pin numbers, polarities, pull-ups, drivers and part parameters come from
+``board/board.json`` — the single source of truth compiled from
+``board/board_spec.md`` (the reconciled, tagged spec), the vendor pin file
+``board/vendor/Pinos_RZEasyFPGA.txt`` and the vendor schematic.
 
-DEVICE offers the two chips the trainer is sold with (user confirmed
-EP4CE6E22C8N on the QFP; EP4CE10E22C8N is the drop-in bigger variant).
+Nothing in this module may hard-code a pin number or a polarity: if the board
+changes, edit ``board/board.json`` (and the spec it came from) and every layer
+that consumes the profile follows automatically.
 """
 
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 
-# Cyclone IV E device handbook figures for the two trainer chips.
-DEVICES = {
-    "ep4ce6": {
-        "key": "ep4ce6",
-        "family": "Cyclone IV E",
-        "part": "EP4CE6E22C8N",
-        "quartusDevice": "EP4CE6E22C8",
-        "package": "EQFP-144",
-        "speedGrade": "8",
-        "logicElements": 6272,
-        "m9kBlocks": 30,
-        "memoryKbit": 270,
-        "multipliers18x18": 15,
-        "plls": 2,
-        "userIo": 91,
-    },
-    "ep4ce10": {
-        "key": "ep4ce10",
-        "family": "Cyclone IV E",
-        "part": "EP4CE10E22C8N",
-        "quartusDevice": "EP4CE10E22C8",
-        "package": "EQFP-144",
-        "speedGrade": "8",
-        "logicElements": 10320,
-        "m9kBlocks": 46,
-        "memoryKbit": 414,
-        "multipliers18x18": 23,
-        "plls": 2,
-        "userIo": 91,
-    },
-}
+BOARD_JSON = Path(__file__).resolve().parent.parent / "board" / "board.json"
 
+
+class BackendConfigError(RuntimeError):
+    """Raised when board/board.json is missing, corrupt or schema-broken."""
+
+
+def load_board_json() -> dict:
+    """Load the canonical board profile (pins, polarities, parts, tags).
+
+    Raises :class:`BackendConfigError` with a clear message when the file is
+    missing, invalid JSON or missing a required top-level key — never a raw
+    ``JSONDecodeError``/``KeyError`` (audit m12).
+    """
+    try:
+        with open(BOARD_JSON, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except FileNotFoundError as exc:
+        raise BackendConfigError(
+            f"board profile not found: {BOARD_JSON} — the repository checkout "
+            "appears incomplete (expected board/board.json)"
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise BackendConfigError(
+            f"board profile {BOARD_JSON} is not valid JSON at line "
+            f"{exc.lineno}, column {exc.colno}: {exc.msg}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise BackendConfigError(f"board profile {BOARD_JSON} must be a JSON object")
+    for key in ("board", "devices", "pinMap"):
+        if key not in data:
+            raise BackendConfigError(
+                f"board profile {BOARD_JSON} is missing the required top-level key '{key}'"
+            )
+    return data
+
+
+_DATA = load_board_json()
+
+DEVICES: dict = _DATA["devices"]
 DEFAULT_DEVICE = "ep4ce6"
 _selected: str = DEFAULT_DEVICE
 
@@ -79,8 +89,8 @@ def DEVICE() -> dict:
         "multipliers18x18": device["multipliers18x18"],
         "plls": device["plls"],
         "userIo": device["userIo"],
-        "defaultIoStandard": "3.3 V LVTTL",
-        "coreVoltage": "1.2 V",
+        "defaultIoStandard": device.get("ioStandard", "3.3 V LVTTL"),
+        "coreVoltage": device.get("coreVoltage", "1.2 V"),
         "pinMap": None,
         "modelNotes": MODEL_NOTES,
         "selected": _selected,
@@ -88,180 +98,124 @@ def DEVICE() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Board: RZ-EasyFPGA A2.2.  Every number below comes from board_spec.md.
+# Board: RZ-EasyFPGA A2.2.  Every value below is loaded from board.json and
+# reshaped only where an older consumer expects the historical flat key.
 # ---------------------------------------------------------------------------
 
-_LED_PINS = ["PIN_87", "PIN_86", "PIN_85", "PIN_84"]
-_KEY_PINS = ["PIN_88", "PIN_89", "PIN_90", "PIN_91"]
-_SEG_PINS = ["PIN_128", "PIN_121", "PIN_125", "PIN_129", "PIN_132", "PIN_126", "PIN_124", "PIN_127"]
-_DIG_PINS = ["PIN_133", "PIN_135", "PIN_136", "PIN_137"]
 
-# SEG bit -> display segment, per the schematic Display sheet
-# (SEG0->b, SEG1->a, SEG2->c, SEG3->d, SEG4->e, SEG5->f, SEG6->g, SEG7->dp).
-SEG_BIT_MAP = {"b": 0, "a": 1, "c": 2, "d": 3, "e": 4, "f": 5, "g": 6, "dp": 7}
+def _build_board(raw: dict) -> dict:
+    """Reshape the JSON board into the flat profile shape the code consumes.
 
-BOARD = {
-    "name": "RZ-EasyFPGA A2.2",
-    "vendor": "RZRD (www.rzrd.net)",
-    "fpga": "EP4CE6E22C8N",
-    "clockHz": 50_000_000,
-    "clockPort": "CLOCK_50",
-    "clockPin": "PIN_23",
-    "resetPort": "FPGA_RST",
-    "resetPin": "PIN_25",
-    "resetActiveLow": True,
-    "resetPullup": "10 kΩ + 100 nF RC",
-    "leds": {
-        "port": "LED",
-        "count": 4,
-        # Schematic: anodes to 3.3 V, cathodes through 470 R to the pins.
-        "activeLow": True,
-        "pins": list(_LED_PINS),
-    },
-    "buttons": {
-        "port": "KEY",
-        "count": 4,
-        # Keys close to GND through 220 R; 10 kΩ pull-ups to 3.3 V.
-        "activeLow": True,
-        "pullup": "10 kΩ to 3.3 V",
-        "pins": list(_KEY_PINS),
-    },
-    "switches": {
-        # The red 4-position DIP is wired to the same nets as the keys.
-        "port": "KEY",
-        "count": 4,
-        "sharedWithButtons": True,
-        "activeLow": True,
-        "pullup": "10 kΩ to 3.3 V",
-        # ON/closed shorts the net to GND -> reads 0.
-        "onValue": 0,
-        "pins": list(_KEY_PINS),
-    },
-    "displays": {
-        "ports": ["SEG"],
-        "digitPort": "DIG",
-        "count": 4,
-        "segmentsPerDigit": 8,
-        "multiplexed": True,
-        # Common anode behind 8550 PNP high-side drivers.
-        "segmentActiveLow": True,
-        "digitActiveLow": True,
-        "segBitMap": dict(SEG_BIT_MAP),
-        "pins": {"SEG": list(_SEG_PINS), "DIG": list(_DIG_PINS)},
-    },
-    "buzzer": {
-        "FPGA_BUZZER": "PIN_110",
-        # 2-terminal speaker behind an 8550 PNP: no on-board oscillator.
-        # Schematic proves the drive (no oscillator -> design must toggle the
-        # pin); whether the fitted part is active or passive is UNVERIFIED on
-        # real hardware (physical test T-BUZZER-1 in board/real_board_results.md).
-        "type": "passive",
-        "typeConfidence": "unverified on real hardware",
-        "activeLow": True,
-        "pullup": "10 kΩ to 3.3 V",
-    },
-    "vga": {
-        "VGA_R": "PIN_106",
-        "VGA_G": "PIN_105",
-        "VGA_B": "PIN_104",
-        "VGA_HSYNC": "PIN_101",
-        "VGA_VSYNC": "PIN_103",
-        "colors": 8,
-    },
-    "ps2": {
-        "PS_CLOCK": "PIN_119",
-        "PS_DATA": "PIN_120",
-        "pullup": "10 kΩ to 5 V + 470 Ω series",
-        "openCollector": True,
-    },
-    "uart": {
-        "UART_TXD": "PIN_114",
-        "UART_RXD": "PIN_115",
-        "transceiver": "MAX3232E",
-    },
-    "infrared": {
-        "IR": "PIN_100",
-        "activeLow": True,
-        "pullup": "3.3 V via 100 Ω",
-    },
-    "i2c": {
-        # Two SEPARATE I2C buses on the schematic (board_spec.md §0c):
-        # EEPROM U8 on I2C_SCL/I2C_SDA (99/98), LM75 U9 on FPGA_SCL/FPGA_SDA (112/113).
-        "I2C_SCL": "PIN_99",
-        "I2C_SDA": "PIN_98",
-        "FPGA_SCL": "PIN_112",
-        "FPGA_SDA": "PIN_113",
-        "pullup": "5.1 kΩ to 3.3 V",
-        "eeprom": {"part": "AT24C08", "address": 0x50, "bytes": 1024, "pageSize": 16,
-                   "writeCycleMs": 5,
-                   # WP (U8 pin 7) is tied to VCC on the board -> writes blocked.
-                   "writeProtected": True},
-        "tempSensor": {"part": "LM75", "address": 0x48},
-    },
-    "lcd": {
-        "LCD_RS": "PIN_141",
-        "LCD_RW": "PIN_138",
-        "LCD_E": "PIN_143",
-        "LCD_D0": "PIN_142",
-        "LCD_D1": "PIN_1",
-        "LCD_D2": "PIN_144",
-        "LCD_D3": "PIN_3",
-        "LCD_D4": "PIN_2",
-        "LCD_D5": "PIN_10",
-        "LCD_D6": "PIN_7",
-        "LCD_D7": "PIN_11",
-        "contrastTrimmer": "10 kΩ",
-    },
-    "sdram": {
-        "part": "HY57V641620",
-        "bits": 64,
-        "dataBits": 16,
-        "banks": 4,
-        "A": ["PIN_76", "PIN_77", "PIN_80", "PIN_83", "PIN_68", "PIN_67",
-              "PIN_66", "PIN_65", "PIN_64", "PIN_60", "PIN_75", "PIN_59"],
-        "DQ": ["PIN_28", "PIN_30", "PIN_31", "PIN_32", "PIN_33", "PIN_34", "PIN_38", "PIN_39",
-               "PIN_54", "PIN_53", "PIN_52", "PIN_51", "PIN_50", "PIN_49", "PIN_46", "PIN_44"],
-        "CKE": "PIN_58", "CLK": "PIN_43", "CS": "PIN_72", "RAS": "PIN_71",
-        "CAS": "PIN_70", "WE": "PIN_69", "BS0": "PIN_73", "BS1": "PIN_74",
-        "LDQM": "PIN_42", "UDQM": "PIN_55",
-    },
-    "config": {
-        "flash": "EPCS16 (U7; footprint accepts EPCS4/EPCS16)",
-        "jtag": "2×5 header",
-        "as": "2×5 header",
-        "sof": "volatile (lost on power cycle)",
-        "pof": "persistent (auto-loads from EPCS at power-on)",
-        "unusedPins": 'weak pull-up, "as input tri-stated" (vendor .qsf)',
-    },
-    "rails": {"input": "5 V", "rails": ["3.3 V", "2.5 V", "1.2 V"], "regulators": ["1117-3.3", "1117-2.5", "1117-1.2"]},
+    The reshape is structural only — no pin numbers, polarities or part
+    numbers are introduced here; they all come from board.json.
+    """
+    b = raw["board"]
+    board = dict(b)
+
+    # Buzzer: JSON uses port/pin, consumers use FPGA_BUZZER.
+    buzzer = dict(b["buzzer"])
+    buzzer["FPGA_BUZZER"] = buzzer["pin"]
+    board["buzzer"] = buzzer
+
+    # VGA / PS2 / UART: JSON nests pins under "pins"; consumers use flat keys.
+    board["vga"] = {**b["vga"]["pins"], "colors": b["vga"]["colors"],
+                    "connector": b["vga"].get("connector"),
+                    "resistors": b["vga"].get("resistors"),
+                    "db15": b["vga"].get("db15")}
+    board["ps2"] = {**b["ps2"]["pins"], "pullup": b["ps2"]["pullup"],
+                    "openCollector": b["ps2"]["openCollector"],
+                    "connector": b["ps2"].get("connector"),
+                    "bus": b["ps2"].get("bus"),
+                    "deviceTypeTag": b["ps2"].get("deviceTypeTag")}
+    uart = dict(b["uart"])
+    uart.update(b["uart"]["pins"])
+    board["uart"] = uart
+
+    # Infrared: JSON uses "pin".
+    infrared = dict(b["infrared"])
+    infrared["IR"] = infrared["pin"]
+    board["infrared"] = infrared
+
+    # I2C: JSON has a "buses" list; keep the legacy flat keys for consumers.
+    i2c = dict(b["i2c"]["legacyFlatKeys"])
+    i2c["buses"] = b["i2c"]["buses"]
+    board["i2c"] = i2c
+
+    # LCD: JSON nests pins under "pins".
+    lcd = dict(b["lcd"]["pins"])
+    lcd["contrastTrimmer"] = b["lcd"]["contrastTrimmer"]
+    lcd["socket"] = b["lcd"].get("socket")
+    lcd["backlightPins"] = b["lcd"].get("backlightPins")
+    lcd["socketPinOrderTag"] = b["lcd"].get("socketPinOrderTag")
+    board["lcd"] = lcd
+
+    # Clock aliases live in the JSON, not in code.
+    board["clockAliases"] = b.get("clockAliases", [])
+    return board
+
+
+try:
+    BOARD = _build_board(_DATA)
+except KeyError as exc:
+    raise BackendConfigError(
+        f"board profile {BOARD_JSON} is missing the required key {exc}"
+    ) from exc
+MODEL_NOTES = BOARD.get("modelNotes", [])
+
+# SEG bit -> display segment, from board.json (the schematic Display sheet).
+SEG_BIT_MAP = dict(BOARD["displays"]["segBitMap"])
+
+_CLOCK_ALIASES = [BOARD["clockPort"]] + list(BOARD.get("clockAliases", [])) + ["CLK"]
+
+# Textbook port-name aliases for this board family.  Student designs often
+# name the display buses "seven_seg"/"dtube" and drive the keys with scalar
+# "s1".."s4" instead of the vendor's SEG/DIG/KEY vectors; resolve those to
+# the same profile pins so such designs run unmodified.
+_SEGMENT_ALIASES = {"seg", "seg7", "sevenseg", "display", "hex"}
+_DIGIT_ALIASES = {"dig", "dtube", "digit", "tube", "sel", "scan", "com", "anode"}
+_SCALAR_ALIASES = {
+    "s": "KEY", "key": "KEY", "sw": "KEY", "dip": "KEY",
+    "btn": "KEY", "button": "KEY", "push": "KEY",
+    "led": "LED",
 }
+_RESET_ALIASES = {"reset", "rst"}
 
-# Clock aliases seen in real designs for the on-board 50 MHz oscillator.
-_CLOCK_ALIASES = ["CLOCK_50", "FPGA_CLK", "CLK"]
 
-# UI-facing notes: what the simulator models per the reconciled schematic and
-# which behaviours remain unverified on real hardware (board_spec.md §0/§16-18,
-# physical tests in board/real_board_results.md).
-MODEL_NOTES = [
-    {"topic": "Buzzer", "status": "unverified on real hardware",
-     "detail": "Modelled as a passive speaker: the schematic shows a 2-terminal SPEAKER behind a single 8550 transistor with no on-board oscillator, so a tone requires toggling pin 110. Whether the fitted part is active or passive needs physical test T-BUZZER-1."},
-    {"topic": "AT24C08 EEPROM", "status": "per schematic (verified)",
-     "detail": "WP pin tied to VCC on the board: writes are blocked, reads work. Address 0x50 on its own bus, I2C_SCL/I2C_SDA = pins 99/98."},
-    {"topic": "LM75 temperature sensor", "status": "per schematic (verified); ambient value unverified",
-     "detail": "Sits on the SECOND I2C bus, FPGA_SCL/FPGA_SDA = pins 112/113, address 0x48. The simulated temperature is a UI setting, not a measured value."},
-    {"topic": "PS/2 port", "status": "unverified on real hardware",
-     "detail": "Model sends keyboard-style scancodes (make/break) with open-collector timing; the fitted device type is not shown on the schematic (pull-ups are to 5 V, pins 119/120)."},
-    {"topic": "IR receiver", "status": "unverified on real hardware",
-     "detail": "Model emits NEC frames (active-low bursts, idle high) on pin 100; the receiver part number and protocol are not marked on the schematic."},
-    {"topic": "RS232 DB9", "status": "per schematic (verified, non-standard)",
-     "detail": "Board TX exits on DB9 pin 7 and RX enters on pin 8, GND pin 5 - a straight-through PC cable will NOT work; a crossover (7->2, 8->3, 5<->5) is needed."},
-    {"topic": "7-segment display", "status": "per schematic (verified)",
-     "detail": "Common anode behind 8550 PNP digit drivers: digits and segments are active-low. SEG0=b, SEG1=a, SEG2=c, SEG3=d, SEG4=e, SEG5=f, SEG6=g, SEG7=dp."},
-    {"topic": "Keys and DIP switch", "status": "per schematic (verified)",
-     "detail": "The DIP is wired across the same nets as the keys (pins 88-91): pressed/closed reads 0. They cannot be used independently."},
-    {"topic": "SDRAM / VGA / LCD", "status": "per schematic (verified pin maps)",
-     "detail": "SDRAM HY57V641620 pin map only (no timing model). VGA is 1 bit per channel (8 colours). LCD socket signals follow the vendor pin table."},
-]
+def resolve_port_pins(name: str, kind: Optional[str] = None) -> Optional[List[str]]:
+    """Resolve a design port name to board profile pins, aliases included.
+
+    Exact profile names win (LED/KEY/SEG/DIG/CLOCK_50/...).  Otherwise a bus
+    alias maps the whole port onto the profile bus (``seven_seg`` -> SEG,
+    ``dtube`` -> DIG, ... -- port bit i drives profile bit i) and a numbered
+    scalar maps onto one bit of a profile bus (``s3`` -> KEY bit 2, i.e. the
+    third key net; ``led2`` -> LED bit 1).  ``kind`` is the waveform classifier
+    result ("display"/"digit"/...) and only gates the bus aliases; scalar
+    aliases work without it.  Returns the pin list ordered by port bit index,
+    or None when the port has no board pin.
+    """
+    profile = board_pin_map()
+    exact = profile.get(str(name).upper())
+    if exact:
+        return list(exact)
+    norm = re.sub(r"[^a-z0-9]", "", str(name).lower())
+    if kind == "display" and norm in _SEGMENT_ALIASES:
+        pins = profile.get("SEG")
+        return list(pins) if pins else None
+    if kind == "digit" and norm in _DIGIT_ALIASES:
+        pins = profile.get("DIG")
+        return list(pins) if pins else None
+    if norm in _RESET_ALIASES:
+        pins = profile.get(BOARD.get("resetPort", "FPGA_RST"))
+        return list(pins) if pins else None
+    match = re.fullmatch(r"([a-z]+)(\d+)", norm)
+    if match:
+        target = _SCALAR_ALIASES.get(match.group(1))
+        index = int(match.group(2))
+        if target:
+            pins = profile.get(target)
+            if pins and 1 <= index <= len(pins):
+                return [pins[index - 1]]
+    return None
 
 
 def board_pin_map() -> dict:
@@ -300,7 +254,36 @@ def board_pin_map() -> dict:
             continue
         if is_pin_value(pins):
             add(f"SDRAM_{name}", pins)
+
+    # Vector-style port names used by designs (e.g. a design declares
+    # "LCD_D : out std_logic_vector(7 downto 0)" while the profile lists
+    # LCD_D0..LCD_D7): merge the per-bit pinMap entries into one ordered
+    # list so the whole pinMap is reachable by its port name.
+    by_base: dict = {}
+    for key, pins in _DATA["pinMap"].items():
+        match = re.match(r"^(.*)\[(\d+)\]$", key)
+        if match:
+            by_base.setdefault(match.group(1).upper(), {})[int(match.group(2))] = pins[0]
+    for base, bits in by_base.items():
+        if base not in index:
+            add(base, [bits[b] for b in sorted(bits)])
+    for key, pins in _DATA["pinMap"].items():
+        base = re.sub(r"\[\d+\]$", "", key).upper()
+        if base not in index:
+            add(base, pins)
     return index
 
 
-__all__ = ["DEVICES", "DEVICE", "set_device", "get_device", "BOARD", "board_pin_map", "SEG_BIT_MAP"]
+__all__ = [
+    "BackendConfigError",
+    "BOARD_JSON",
+    "DEVICES",
+    "DEVICE",
+    "set_device",
+    "get_device",
+    "load_board_json",
+    "BOARD",
+    "board_pin_map",
+    "resolve_port_pins",
+    "SEG_BIT_MAP",
+]

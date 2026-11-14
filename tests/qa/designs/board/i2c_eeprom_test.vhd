@@ -124,7 +124,7 @@ begin
             scl_low;
             wait for HALFPERIOD;
         end loop;
-        readback := rv;
+        readback <= rv;
         i2c_stop;
         done <= '1';
         wait;

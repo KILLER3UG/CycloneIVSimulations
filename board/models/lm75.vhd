@@ -58,6 +58,10 @@ begin
             elsif regsel = CREG then
                 byte_out(15 downto 8) := (others => '0');
                 byte_out(7 downto 0)  := conf_reg;
+            elsif regsel = THREG then
+                byte_out := x"4B00";    -- Thyst power-up default: 75 C
+            elsif regsel = TSREG then
+                byte_out := x"5000";    -- Tos power-up default: 80 C
             else
                 byte_out := (others => '0');
             end if;

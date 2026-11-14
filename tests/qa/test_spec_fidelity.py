@@ -113,10 +113,10 @@ def spec_02() -> str:
 
 
 @case("SPEC-03", "8", "SEG bit map and SEG/DIG pins match the schematic sheet", "VHDL",
-      "SEG0=b..SEG7=dp; SEG pins 128,121,125,129,132,126,124,127; DIG 133,135,136,137")
+      "SEG0=a..SEG7=dp; SEG pins 128,121,125,129,132,126,124,127; DIG 133,135,136,137")
 def spec_03() -> str:
     from backend.device import BOARD, SEG_BIT_MAP
-    check(SEG_BIT_MAP == {"b": 0, "a": 1, "c": 2, "d": 3, "e": 4, "f": 5, "g": 6, "dp": 7},
+    check(SEG_BIT_MAP == {"a": 0, "b": 1, "c": 2, "d": 3, "e": 4, "f": 5, "g": 6, "dp": 7},
           f"SEG_BIT_MAP={SEG_BIT_MAP}")
     disp = BOARD["displays"]
     check(disp["pins"]["SEG"] == ["PIN_128", "PIN_121", "PIN_125", "PIN_129",

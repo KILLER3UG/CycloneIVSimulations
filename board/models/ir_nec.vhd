@@ -25,7 +25,7 @@ begin
     ir <= '0' when ir_int = '0' else 'Z';
 
     sender : process
-        variable frame : natural := 0;
+        variable frame : unsigned(31 downto 0);
         variable bit_v : std_logic;
     begin
         ir_int <= 'Z';
@@ -35,13 +35,14 @@ begin
         wait for 9 ms;
         ir_int <= 'Z';
         wait for 4_500 us;
-        -- 32 bits LSB first
-        frame := (ADDRESS mod 256)
-                 + ((255 - (ADDRESS mod 256)) * 256)
-                 + ((COMMAND mod 256) * 65536)
-                 + ((255 - (COMMAND mod 256)) * 16_777_216);
+        -- 32 bits LSB first: address, ~address, command, ~command.
+        -- Built as unsigned: a natural is 31-bit in VHDL and overflows.
+        frame := to_unsigned(ADDRESS mod 256, 32)
+                 or shift_left(to_unsigned(255 - (ADDRESS mod 256), 32), 8)
+                 or shift_left(to_unsigned(COMMAND mod 256, 32), 16)
+                 or shift_left(to_unsigned(255 - (COMMAND mod 256), 32), 24);
         for i in 0 to 31 loop
-            if (shift_right(to_unsigned(frame, 32), i)(0)) = '1' then
+            if (shift_right(frame, i)(0)) = '1' then
                 bit_v := '1';
             else
                 bit_v := '0';

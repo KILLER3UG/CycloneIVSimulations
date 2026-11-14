@@ -14,6 +14,7 @@ from harness import (
     compile_text,
     cycle_count,
     errors_text,
+    frontend_dir,
     has_error,
     must_run,
     run,
@@ -24,7 +25,7 @@ from harness import (
 )
 
 BACKEND = ROOT / "backend"
-FRONTEND = ROOT / "frontend"
+FRONTEND = frontend_dir()
 
 
 def all_source() -> str:
@@ -44,10 +45,17 @@ def all_source() -> str:
 @case("DEV-01", "0", "Device definition EP4CE6E22C8 present and matches datasheet", "n/a",
       "Simulator declares 6272 LEs, 30 M9K, 15 multipliers, 2 PLLs, 91 I/O, EQFP-144, 3.3V LVTTL")
 def dev_01() -> str:
-    text = all_source()
-    missing = [token for token in ("6272", "M9K", "EQFP", "91", "LVTTL") if token.lower() not in text.lower()]
-    check(not missing, f"no device profile found; missing tokens: {missing}")
-    return "device profile present"
+    from backend.device import DEVICE
+    device = DEVICE()
+    expected = {
+        "logicElements": 6272, "m9kBlocks": 30, "multipliers18x18": 15,
+        "plls": 2, "userIo": 91, "package": "EQFP-144",
+    }
+    bad = [f"{key}={device.get(key)!r} (want {want!r})"
+           for key, want in expected.items() if device.get(key) != want]
+    check(not bad, f"device profile mismatch: {bad}")
+    check("LVTTL" in str(device.get("defaultIoStandard", "")), "no LVTTL I/O standard")
+    return "device profile matches the datasheet"
 
 
 @case("DEV-02", "0", "Pin map internally consistent (no duplicate/invalid pins)", "n/a",

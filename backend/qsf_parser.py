@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-_LOCATION_RE = re.compile(r"^\s*set_location_assignment\s+(PIN_\d+)\s+-to\s+(\S+)\s*$", re.IGNORECASE)
+_LOCATION_RE = re.compile(r"^\s*set_location_assignment\s+(\S+)\s+-to\s+(\S+)\s*$", re.IGNORECASE)
 _GLOBAL_RE = re.compile(r"^\s*set_global_assignment\s+-name\s+(\w+)\s+(.*\S)\s*$", re.IGNORECASE)
 _INSTANCE_RE = re.compile(r"^\s*set_instance_assignment\s+-name\s+(\w+)\s+(.*\S)\s+-to\s+(\S+)\s*$", re.IGNORECASE)
 _PIN_NUMBER_RE = re.compile(r"^PIN_(\d+)$", re.IGNORECASE)
@@ -46,6 +46,28 @@ class QsfResult:
     assignments: int = 0
 
 
+def _strip_inline_comment(line: str) -> str:
+    """Remove a trailing ``-- comment`` or ``# comment`` from a QSF line.
+
+    Quartus allows comments after an assignment
+    (``set_location_assignment PIN_87 -to LED[0] -- LED1``).  The comment
+    marker is only recognised *outside* double-quoted values, so values such
+    as ``"3.3-V LVTTL"`` survive untouched.
+    """
+    in_quote = False
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if char == '"':
+            in_quote = not in_quote
+        elif not in_quote and char == "#":
+            return line[:index]
+        elif not in_quote and char == "-" and line.startswith("--", index):
+            return line[:index]
+        index += 1
+    return line
+
+
 def _error(line_no: int, message: str) -> dict:
     return {"file": "project.qsf", "line": line_no, "column": 1, "severity": "error", "message": message}
 
@@ -58,8 +80,10 @@ def parse_qsf(text: str) -> QsfResult:
     result = QsfResult()
     seen_pins: Dict[Tuple[str, Optional[int]], str] = {}
     seen_slots: Dict[Tuple[str, Optional[int]], int] = {}
+    seen_pin_targets: Dict[str, Tuple[str, Optional[int]]] = {}
+    pin_key_map: Dict[str, str] = {}   # upper-case base -> first-seen spelling
     for line_no, raw in enumerate(text.splitlines(), start=1):
-        line = raw.strip()
+        line = _strip_inline_comment(raw).strip()
         if not line or line.startswith("#") or line.startswith("--"):
             continue
 
@@ -79,6 +103,14 @@ def parse_qsf(text: str) -> QsfResult:
                 base = target
             key = base.upper()
             slot = (key, bit)
+            if pin in seen_pin_targets and seen_pin_targets[pin] != slot:
+                previous = seen_pin_targets[pin]
+                result.errors.append(_error(
+                    line_no,
+                    f"duplicate pin assignment: {pin} is used by both "
+                    f"'{previous[0]}[{previous[1]}]' and '{base}[{bit}]'",
+                ))
+                continue
             if slot in seen_pins and seen_pins[slot] != pin:
                 result.errors.append(_error(
                     line_no,
@@ -86,11 +118,16 @@ def parse_qsf(text: str) -> QsfResult:
                     f" (first at line {seen_slots[slot]})",
                 ))
                 continue
-            result.pins.setdefault(base, [])
-            if pin not in result.pins[base]:
-                result.pins[base].append(pin)
+            # Merge case-insensitive duplicates under the first-seen spelling
+            # (a .qsf may write KEY[0] and key[1] for the same vector).
+            actual_key = pin_key_map.get(key, base)
+            pin_key_map.setdefault(key, actual_key)
+            result.pins.setdefault(actual_key, [])
+            if pin not in result.pins[actual_key]:
+                result.pins[actual_key].append(pin)
             seen_pins[slot] = pin
             seen_slots[slot] = line_no
+            seen_pin_targets[pin] = slot
             continue
 
         inst = _INSTANCE_RE.match(line)

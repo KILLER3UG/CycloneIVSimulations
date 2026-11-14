@@ -63,7 +63,10 @@ def board_models(entity) -> List[Dict[str, Any]]:
             "scl": lm75_scl["name"],
             "sda": lm75_sda["name"],
             "lm75": {"address": BOARD["i2c"]["tempSensor"]["address"],
-                     "temperature": 25.0},
+                     # Ambient temperature is a simulation parameter: the
+                     # board profile may override it, otherwise 25.0 C is the
+                     # documented classroom default (LM75 power-up 0x3200).
+                     "temperature": BOARD["i2c"]["tempSensor"].get("temperatureC", 25.0)},
         })
 
     # PS/2 keyboard.
@@ -83,11 +86,15 @@ def board_models(entity) -> List[Dict[str, Any]]:
                        "e": en["name"], "data": data["name"],
                        "width": data["width"]})
 
-    # IR receiver input (the model drives it with an NEC frame).
+    # IR receiver input (the model drives it with an NEC frame).  The NEC
+    # address/command are simulation parameters: the board profile may
+    # override them, otherwise 0x00/0x01 is the documented default frame.
     ir = _find(ports, ["IR"])
     if ir:
-        models.append({"kind": "ir", "ir": ir["name"], "command": 0x01,
-                       "address": 0x00})
+        infrared = BOARD.get("infrared", {})
+        models.append({"kind": "ir", "ir": ir["name"],
+                       "command": infrared.get("necCommand", 0x01),
+                       "address": infrared.get("necAddress", 0x00)})
 
     return models
 

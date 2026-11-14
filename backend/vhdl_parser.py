@@ -33,7 +33,7 @@ _TOKEN_RE = re.compile(
   | (?P<based>[0-9]+\#[0-9a-fA-F_xXzZ]+\#)
   | (?P<number>\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?)
   | (?P<ident>[A-Za-z_][A-Za-z0-9_]*)
-  | (?P<char>'(?:[01xXzZwWhHuUlL\-])')
+  | (?P<char>'(.)')
   | (?P<op>\*\*|=>|<=|>=|/=|\?=|:\=|<<|>>|[\+\-&\|=<>\(\)\[\],;:\.])
   | (?P<other>.)
     """,
@@ -384,6 +384,11 @@ class VHDLParser:
             while not self._at_end():
                 token = self._peek()
                 assert token is not None
+                if token.is_kw("signal", "constant", "variable"):
+                    # VHDL-2008 interface class keywords, e.g.
+                    # port (signal a : in std_logic) — not a port name.
+                    self.pos += 1
+                    continue
                 if token.kind == "ident":
                     names.append((token.value, token.line, token.column))
                     self.pos += 1

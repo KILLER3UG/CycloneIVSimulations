@@ -52,12 +52,33 @@ import { Board3D } from "./board3d.js";
         waveEmpty: $("wave-empty"),
         statusLeft: $("status-left"),
         statusRight: $("status-right"),
+        uploadBtn: $("upload-btn"),
+        fileUpload: $("file-upload"),
+        dropZone: $("drop-zone"),
+        waveDrawer: $("wave-drawer"),
+        waveToggle: $("wave-toggle"),
+        hoverTip: $("hover-tip"),
+        toast: $("interaction-toast"),
+        periphLibrary: $("periph-library"),
+        periphConnected: $("periph-connected"),
+        periphCount: $("periph-count"),
+        sceneKey: $("scene-key"),
+        sceneGlow: $("scene-glow"),
+        sceneFog: $("scene-fog"),
+        sceneExposure: $("scene-exposure"),
+        sceneOrbit: $("scene-orbit"),
+        sceneQuality: $("scene-quality"),
+        sceneGrid: $("scene-grid"),
+        sceneGhost: $("scene-ghost"),
+        sceneReset: $("scene-reset"),
+        sceneRandomize: $("scene-randomize"),
     };
 
     const state = {
         source: "",
         entity: null,
         board: null,
+        profile: null,
         waveform: null,
         examples: [],
         currentExample: null,
@@ -71,6 +92,9 @@ import { Board3D } from "./board3d.js";
         playback: { playing: false, index: 0, timer: null },
         drag: null,
         hoverTime: null,
+        peripherals: [],
+        periphSeq: 0,
+        simTimer: null,
     };
 
     let board3d = null;
@@ -354,6 +378,60 @@ import { Board3D } from "./board3d.js";
         }
     }
 
+    // Load the canonical board profile (board/board.json) so the UI's pin
+    // map, polarities and part parameters come from the same source as the
+    // backend instead of being hard-coded here.
+    async function loadBoardProfile() {
+        const { data } = await api("/api/board");
+        state.profile = (data && data.board) || null;
+        if (state.profile) {
+            log(`Board profile: ${state.profile.name} (${state.profile.fpga})`, "info");
+        }
+        return state.profile;
+    }
+
+    // Merge the board profile's device configuration into a simulation's board
+    // map. The backend already sends ledConfig/displayConfig, but the profile
+    // is authoritative and covers the case where a design has no mapped I/O.
+    function applyBoardProfile(board) {
+        if (!board) return board;
+        const profile = state.profile;
+        if (!profile) return board;
+        board.ledConfig = board.ledConfig && Object.keys(board.ledConfig).length
+            ? board.ledConfig
+            : {
+                activeLow: profile.leds.activeLow,
+                count: profile.leds.count,
+                seriesResistor: profile.leds.seriesResistor,
+            };
+        board.displayConfig = board.displayConfig && Object.keys(board.displayConfig).length
+            ? board.displayConfig
+            : {
+                segBitMap: profile.displays.segBitMap,
+                segmentActiveLow: profile.displays.segmentActiveLow,
+                digitActiveLow: profile.displays.digitActiveLow,
+                multiplexed: profile.displays.multiplexed,
+                count: profile.displays.count,
+            };
+        board.parts = board.parts && Object.keys(board.parts).length
+            ? board.parts
+            : {
+                buzzer: profile.buzzer,
+                i2c: profile.i2c,
+                infrared: profile.infrared,
+                ps2: profile.ps2,
+                uart: profile.uart,
+                vga: profile.vga,
+            };
+        board.controlsConfig = board.controlsConfig && Object.keys(board.controlsConfig).length
+            ? board.controlsConfig
+            : {
+                activeLow: profile.buttons.activeLow,
+                onValue: profile.switches.onValue,
+            };
+        return board;
+    }
+
     // Surface what the simulator models per the schematic and which behaviours
     // are still unverified on real hardware (board_spec.md §0/§16-18).
     function logModelNotes(notes) {
@@ -430,7 +508,7 @@ import { Board3D } from "./board3d.js";
         }
 
         state.entity = data.entity;
-        state.board = data.board || state.board;
+        state.board = applyBoardProfile(data.board || state.board);
         if (state.board && typeof state.board.resetActiveHigh === "boolean") {
             dom.resetLow.checked = !state.board.resetActiveHigh;
         }
@@ -508,7 +586,7 @@ import { Board3D } from "./board3d.js";
         }
 
         state.waveform = data.waveforms;
-        state.board = data.board || state.board;
+        state.board = applyBoardProfile(data.board || state.board);
         state.entity = data.entity || state.entity;
         if (state.board && typeof state.board.resetActiveHigh === "boolean") {
             dom.resetLow.checked = !state.board.resetActiveHigh;
@@ -538,6 +616,8 @@ import { Board3D } from "./board3d.js";
         drawTiming(0);
         drawWaveform();
         updateStatus();
+        refreshPeripheralPorts();
+        updatePeripherals(state.waveform.final || {});
 
         const cycles = (state.waveform.cycles || []).length;
         log(`Simulation complete: ${cycles} clock cycles over ${duration.toFixed(1)} ns`, "ok");
@@ -746,7 +826,9 @@ import { Board3D } from "./board3d.js";
         const value = parseValue(config.value, port);
         dom.board.querySelectorAll(`.switch[data-port="${port.name}"], .key[data-port="${port.name}"]`).forEach((button) => {
             const bit = Number(button.dataset.bit);
-            button.classList.toggle("on", Boolean(value & (1 << bit)));
+            // Board controls are active-low: ON/pressed reads 0 (board.json).
+            const activeLow = !!(state.board && state.board.controlsConfig && state.board.controlsConfig.activeLow);
+            button.classList.toggle("on", activeLow ? ((value >> bit) & 1) === 0 : Boolean(value & (1 << bit)));
         });
     }
 
@@ -755,7 +837,7 @@ import { Board3D } from "./board3d.js";
         const byName = {};
         for (const port of state.entity.ports) byName[port.name] = port;
 
-        const ledActiveLow = state.board && state.board.leds && state.board.leds.activeLow !== false;
+        const ledActiveLow = !!(state.board && state.board.ledConfig && state.board.ledConfig.activeLow);
         dom.board.querySelectorAll(".led-cell").forEach((cell) => {
             const port = byName[cell.dataset.port];
             const bit = Number(cell.dataset.bit);
@@ -767,9 +849,9 @@ import { Board3D } from "./board3d.js";
             cell.classList.toggle("on", lit);
         });
 
-        const segMap = (state.board && state.board.displays && state.board.displays.segBitMap)
-            || { a: 6, b: 5, c: 4, d: 3, e: 2, f: 1, g: 0 };
-        const segActiveLow = state.board && state.board.displays && state.board.displays.segmentActiveLow === true;
+        const segMap = (state.board && state.board.displayConfig && state.board.displayConfig.segBitMap)
+            || { b: 0, a: 1, c: 2, d: 3, e: 4, f: 5, g: 6, dp: 7 };
+        const segActiveLow = !(state.board && state.board.displayConfig && state.board.displayConfig.segmentActiveLow === false);
         dom.board.querySelectorAll(".seven-seg").forEach((svg) => {
             const group = svg.closest(".board-group");
             const portName = group && group.querySelector('[data-role="value"]');
@@ -828,6 +910,8 @@ import { Board3D } from "./board3d.js";
             const value = values[chip.dataset.chip];
             chip.classList.toggle("on", bitAt(value, 0) === 1);
         });
+
+        updatePeripherals(values);
     }
 
     // --------------------------------------------------------------- playback
@@ -1264,7 +1348,10 @@ import { Board3D } from "./board3d.js";
         board3d.onReadout = (info) => {
             if (dom.displayReadout) dom.displayReadout.textContent = formatReadout(info);
         };
+        board3d.onToggle = (kind, index) => onBoardToggle(kind, index);
+        board3d.onHover = (label, x, y) => onBoardHover(label, x, y);
         board3d.setAutoRotate(dom.autoRotate.checked);
+        applySceneDefaults();
     }
 
     function setView(view) {
@@ -1497,11 +1584,284 @@ import { Board3D } from "./board3d.js";
         });
     }
 
+    // ------------------------------------------------------------- file upload
+    function initUpload() {
+        dom.uploadBtn.addEventListener("click", () => dom.fileUpload.click());
+        dom.fileUpload.addEventListener("change", () => {
+            const file = dom.fileUpload.files && dom.fileUpload.files[0];
+            if (file) readVhdlFile(file);
+            dom.fileUpload.value = "";
+        });
+        const editor = dom.editor;
+        ["dragenter", "dragover"].forEach((ev) => editor.addEventListener(ev, (e) => {
+            e.preventDefault();
+            editor.classList.add("dragover");
+        }));
+        editor.addEventListener("dragleave", (e) => {
+            if (!editor.contains(e.relatedTarget)) editor.classList.remove("dragover");
+        });
+        editor.addEventListener("drop", (e) => {
+            e.preventDefault();
+            editor.classList.remove("dragover");
+            const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+            if (file) readVhdlFile(file);
+        });
+    }
+
+    function readVhdlFile(file) {
+        const reader = new FileReader();
+        reader.onload = () => loadVhdlText(String(reader.result || ""), file.name);
+        reader.onerror = () => log(`Could not read ${file.name}`, "error");
+        reader.readAsText(file);
+    }
+
+    function loadVhdlText(text, name) {
+        state.currentExample = null;
+        state.entity = null;
+        state.board = null;
+        state.waveform = null;
+        state.stimulusConfig = {};
+        dom.code.value = text;
+        state.source = text;
+        dom.topEntity.value = "";
+        updateEditor();
+        renderBoard();
+        renderStimulus();
+        log(`Loaded file: ${name} (${text.split("\n").length} lines)`, "cmd");
+        compile().then((ok) => { if (ok) simulate(); });
+    }
+
+    // ----------------------------------------------------------- scene controls
+    function initSceneControls() {
+        const bind = (el, fn) => el && el.addEventListener("input", fn);
+        bind(dom.sceneKey, () => board3d && board3d.ok && board3d.setKeyLight(Number(dom.sceneKey.value)));
+        bind(dom.sceneGlow, () => board3d && board3d.ok && board3d.setGlow(Number(dom.sceneGlow.value)));
+        bind(dom.sceneFog, () => board3d && board3d.ok && board3d.setFog(Number(dom.sceneFog.value)));
+        bind(dom.sceneExposure, () => board3d && board3d.ok && board3d.setExposure(Number(dom.sceneExposure.value)));
+        bind(dom.sceneOrbit, () => board3d && board3d.ok && board3d.setOrbitSpeed(Number(dom.sceneOrbit.value)));
+        dom.sceneQuality.addEventListener("change", () => board3d && board3d.ok && board3d.setQuality(Number(dom.sceneQuality.value)));
+        dom.sceneGrid.addEventListener("change", () => board3d && board3d.ok && board3d.setGrid(dom.sceneGrid.checked));
+        dom.sceneGhost.addEventListener("change", () => board3d && board3d.ok && board3d.setGhost(dom.sceneGhost.checked));
+        dom.sceneRandomize.addEventListener("click", () => board3d && board3d.ok && board3d.randomizeAngle());
+        dom.sceneReset.addEventListener("click", () => {
+            dom.sceneKey.value = "2.35"; dom.sceneGlow.value = "1"; dom.sceneFog.value = "0.35";
+            dom.sceneExposure.value = "1.08"; dom.sceneOrbit.value = "0.55"; dom.sceneQuality.value = "1.5";
+            dom.sceneGrid.checked = false; dom.sceneGhost.checked = false; dom.autoRotate.checked = false;
+            if (board3d && board3d.ok) board3d.resetScene();
+        });
+    }
+
+    function applySceneDefaults() {
+        if (!board3d || !board3d.ok) return;
+        board3d.setKeyLight(Number(dom.sceneKey.value));
+        board3d.setGlow(Number(dom.sceneGlow.value));
+        board3d.setFog(Number(dom.sceneFog.value));
+        board3d.setExposure(Number(dom.sceneExposure.value));
+        board3d.setOrbitSpeed(Number(dom.sceneOrbit.value));
+        board3d.setQuality(Number(dom.sceneQuality.value));
+        board3d.setGrid(dom.sceneGrid.checked);
+        board3d.setGhost(dom.sceneGhost.checked);
+    }
+
+    // ------------------------------------------------------------- wave drawer
+    function initWaveDrawer() {
+        dom.waveToggle.addEventListener("click", () => {
+            const collapsed = dom.waveDrawer.classList.toggle("collapsed");
+            dom.waveToggle.setAttribute("aria-expanded", String(!collapsed));
+            if (!collapsed) { resizeCanvas(); drawWaveform(); }
+        });
+    }
+
+    // --------------------------------------------------------- board interaction
+    function onBoardToggle(kind, index) {
+        if (!state.entity || !state.board) { showToast("Load a design first"); return; }
+        const names = kind === "switch" ? (state.board.switches || []) : (state.board.buttons || []);
+        const byName = {};
+        for (const p of state.entity.ports) byName[p.name] = p;
+        let port = null, bit = index, acc = 0;
+        for (const name of names) {
+            const p = byName[name];
+            if (!p) continue;
+            const w = Math.min(p.width || 1, 16);
+            if (index < acc + w) { port = p; bit = index - acc; break; }
+            acc += w;
+        }
+        if (!port) { showToast(kind === "switch" ? "No DIP input in this design" : "No KEY input in this design"); return; }
+        const config = getConfig(port);
+        let value = parseValue(config.value, port);
+        value ^= (1 << bit);
+        config.value = String(value);
+        config.kind = "constant";
+        const input = dom.stimulus.querySelector(`.stimulus-row input[data-field="value"][data-port="${port.name}"]`);
+        if (input) input.value = config.value;
+        const on = (value & (1 << bit)) === 0;
+        showToast(`${kind === "switch" ? "DIP" : "KEY"} ${index + 1} → ${on ? "ON (0)" : "OFF (1)"} · re-running`);
+        if (board3d && board3d.ok) {
+            if (kind === "switch" && board3d.switchCells[index]) board3d.setSwitch(board3d.switchCells[index], on);
+            if (kind === "key" && board3d.keyCells[index]) board3d.setKey(board3d.keyCells[index], on);
+        }
+        scheduleSimulate();
+    }
+
+    function scheduleSimulate() {
+        if (state.simTimer) clearTimeout(state.simTimer);
+        state.simTimer = setTimeout(() => { state.simTimer = null; simulate(); }, 180);
+    }
+
+    function onBoardHover(label, x, y) {
+        const tip = dom.hoverTip;
+        if (!label) { tip.classList.add("hidden"); return; }
+        const stage = dom.board3dEl.getBoundingClientRect();
+        tip.textContent = label;
+        tip.style.left = (x - stage.left) + "px";
+        tip.style.top = (y - stage.top) + "px";
+        tip.classList.remove("hidden");
+    }
+
+    let toastTimer = null;
+    function showToast(msg) {
+        dom.toast.textContent = msg;
+        dom.toast.classList.remove("hidden");
+        if (toastTimer) clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => dom.toast.classList.add("hidden"), 1800);
+    }
+
+    // -------------------------------------------------------------- peripherals
+    const PERIPH_TYPES = [
+        { type: "ledbar", name: "LED bar", icon: "▮", desc: "8 discrete LEDs", prefer: "led" },
+        { type: "lcd", name: "1602 LCD", icon: "▭", desc: "Character display", prefer: null },
+        { type: "servo", name: "Servo", icon: "◔", desc: "PWM horn angle", prefer: null },
+        { type: "bargraph", name: "Bargraph", icon: "▥", desc: "10-level meter", prefer: null },
+    ];
+
+    function outputPorts() {
+        if (!state.entity) return [];
+        return state.entity.ports.filter((p) => p.direction === "out" || p.direction === "inout");
+    }
+
+    function initPeripherals() {
+        renderPeriphLibrary();
+        renderPeriphConnected();
+    }
+
+    function renderPeriphLibrary() {
+        dom.periphLibrary.innerHTML = "";
+        for (const def of PERIPH_TYPES) {
+            const item = document.createElement("button");
+            item.type = "button";
+            item.className = "periph-item";
+            item.innerHTML = `<span class="pi-icon">${def.icon}</span><span class="pi-name">${def.name}</span><span class="pi-desc">${def.desc}</span>`;
+            item.addEventListener("click", () => connectPeripheral(def));
+            dom.periphLibrary.appendChild(item);
+        }
+    }
+
+    function connectPeripheral(def) {
+        if (!board3d || !board3d.ok) { showToast("3D view unavailable"); return; }
+        if (state.peripherals.length >= 6) { showToast("All 6 expansion slots used"); return; }
+        const id = "p" + (state.periphSeq += 1);
+        const outs = outputPorts();
+        let bind = "";
+        if (def.prefer) {
+            const pref = outs.find((p) => p.name.toLowerCase().includes(def.prefer));
+            bind = pref ? pref.name : (outs[0] ? outs[0].name : "");
+        } else {
+            bind = outs[0] ? outs[0].name : "";
+        }
+        const entry = { id, type: def.type, name: def.name, icon: def.icon, bind };
+        state.peripherals.push(entry);
+        board3d.attachPeripheral(id, def.type, { label: def.name });
+        renderPeriphConnected();
+        updatePeripherals(state.waveform ? state.waveform.final || {} : {});
+        log(`Connected ${def.name}${bind ? " → " + bind : ""}`, "ok");
+        showToast(`${def.name} connected`);
+    }
+
+    function disconnectPeripheral(id) {
+        const i = state.peripherals.findIndex((p) => p.id === id);
+        if (i < 0) return;
+        const [entry] = state.peripherals.splice(i, 1);
+        if (board3d && board3d.ok) board3d.detachPeripheral(id);
+        renderPeriphConnected();
+        log(`Disconnected ${entry.name}`, "cmd");
+    }
+
+    function renderPeriphConnected() {
+        dom.periphConnected.innerHTML = "";
+        dom.periphCount.textContent = `${state.peripherals.length} connected`;
+        if (!state.peripherals.length) {
+            const empty = document.createElement("div");
+            empty.className = "periph-empty";
+            empty.textContent = "No modules connected. Pick one above to plug it into the board.";
+            dom.periphConnected.appendChild(empty);
+            return;
+        }
+        const outs = outputPorts();
+        for (const p of state.peripherals) {
+            const card = document.createElement("div");
+            card.className = "periph-card";
+            card.id = "periph-card-" + p.id;
+            const options = ['<option value="">— bind port —</option>']
+                .concat(outs.map((o) => `<option value="${esc(o.name)}"${o.name === p.bind ? " selected" : ""}>${esc(o.name)} [${o.width || 1}]</option>`))
+                .join("");
+            card.innerHTML = `
+                <div class="periph-card-head">
+                    <span class="periph-card-title"><span class="pi-icon">${p.icon}</span>${esc(p.name)}</span>
+                    <button class="periph-remove" type="button" title="Disconnect">✕</button>
+                </div>
+                <div class="periph-bind"><label>Port</label><select>${options}</select></div>
+                <div class="periph-readout">bind a port</div>`;
+            card.querySelector(".periph-remove").addEventListener("click", () => disconnectPeripheral(p.id));
+            card.querySelector("select").addEventListener("change", (e) => {
+                p.bind = e.target.value;
+                updatePeripherals(state.waveform ? state.waveform.final || {} : {});
+            });
+            dom.periphConnected.appendChild(card);
+        }
+    }
+
+    function refreshPeripheralPorts() {
+        const outs = outputPorts();
+        const names = new Set(outs.map((o) => o.name));
+        for (const p of state.peripherals) {
+            if (p.bind && !names.has(p.bind)) p.bind = outs[0] ? outs[0].name : "";
+        }
+        renderPeriphConnected();
+    }
+
+    function updatePeripherals(values) {
+        if (!board3d || !board3d.ok || !state.peripherals.length) return;
+        const byName = {};
+        if (state.entity) for (const p of state.entity.ports) byName[p.name] = p;
+        const ledNames = (state.board && state.board.leds) || [];
+        for (const p of state.peripherals) {
+            const port = byName[p.bind];
+            const width = port ? (port.width || 1) : 8;
+            const raw = port && values[p.bind] != null ? values[p.bind] : 0;
+            const value = toIntLocal(raw);
+            const activeLow = ledNames.includes(p.bind);
+            const max = ((1 << Math.min(width, 16)) - 1) || 1;
+            const meta = { activeLow, max };
+            if (p.type === "lcd") meta.text = port ? "0x" + (value >>> 0).toString(16).toUpperCase() : "----";
+            board3d.updatePeripheral(p.id, value, meta);
+            const ro = document.querySelector(`#periph-card-${p.id} .periph-readout`);
+            if (ro) {
+                if (!port) ro.textContent = "bind a port";
+                else if (p.type === "servo") ro.textContent = `${p.bind} = ${value} → ${Math.round((value / max) * 180 - 90)}°`;
+                else ro.textContent = `${p.bind} = 0x${(value >>> 0).toString(16).toUpperCase()} · ${value}`;
+            }
+        }
+    }
+
     async function init() {
         bindEditor();
         bindControls();
         bindBoardTools();
         bindWaveform();
+        initUpload();
+        initSceneControls();
+        initPeripherals();
+        initWaveDrawer();
         initBoard3D();
         setView("3d");
         updateEditor();
@@ -1510,6 +1870,7 @@ import { Board3D } from "./board3d.js";
         state.source = initial;
         updateEditor();
         await checkHealth();
+        await loadBoardProfile();
         await loadExamples();
         if (state.examples.length) {
             dom.exampleSelect.value = state.examples[0].id;

@@ -11,6 +11,9 @@ from harness import (
     case,
     check,
     cycle_values,
+    errors_text,
+    frontend_dir,
+    has_error,
     must_run,
     run,
     run_tb,
@@ -20,7 +23,7 @@ from harness import (
     value,
 )
 
-FRONTEND = ROOT / "frontend"
+FRONTEND = frontend_dir()
 
 
 def frontend_text() -> str:
@@ -191,11 +194,18 @@ begin
     end process;
 end architecture rtl;"""
     result = run_text(source, duration=15, resetCycles=0)
+    # The literal absolute path is rejected by the backend pre-scan before
+    # GHDL ever runs (audit N7 / ENG-07 mitigation).  Documented residual:
+    # runtime-computed paths (concatenated strings) are not covered by the
+    # scan; relative paths inside the workdir stay allowed (RB-05B).
+    check(not result.get("ok"), "the design ran; an absolute textio path must be rejected")
+    check(has_error(result, "outside the simulation work directory"),
+          f"unclear rejection: {errors_text(result)}")
     wrote = escape.exists()
     if wrote:
         escape.unlink(missing_ok=True)
     check(not wrote, f"uploaded HDL wrote {escape} outside the sandbox")
-    return "file write blocked"
+    return "absolute-path file write rejected before GHDL (no host file written)"
 
 
 # ---------------------------------------------------------------------------

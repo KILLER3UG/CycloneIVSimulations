@@ -48,6 +48,19 @@ Open <http://127.0.0.1:8000>.
 
 The counter example is compiled and simulated automatically on load.
 
+### 4. Frontend development (optional)
+
+The served UI is the pre-built app in `frontend/dist/` (committed workflows
+don't need it). To work on the frontend with hot reload, start the backend as
+above and then — from the repo root —:
+
+```powershell
+npm run dev      # Vite dev server on :5173, /api + /ws proxied to :8000
+npm run build    # production build into frontend/dist/
+```
+
+(`npm run serve` also starts the backend; `npm test` runs the full QA suite.)
+
 ## What works today
 
 - Real GHDL compilation/elaboration/simulation (VHDL-2008, `--std=08`).
@@ -64,6 +77,10 @@ The counter example is compiled and simulated automatically on load.
   RZ-EasyFPGA A2.2 pin table (CLOCK_50/PIN_23, FPGA_RST/PIN_25, KEY[3:0],
   LED[3:0], SEG[7:0] + DIG[3:0], VGA, PS/2, UART, buzzer, IR, I2C, SDRAM),
   returned with every result.
+- Single source of truth `board/board.json`: pins, polarities, pull-ups,
+  drivers, part numbers and VERIFIED/INFERRED/UNVERIFIED tags. The backend
+  (`/api/board`) and the frontend both load their board parameters from it;
+  no pin numbers are hard-coded in runtime code.
 - Multi-file projects via the `files` array on `/api/compile` and `/api/simulate`.
 - Synthesis lint warnings (latch inference, multiple drivers) from a GHDL
   `--synth` pass, unbound megafunctions as hard errors, and warnings for
@@ -195,19 +212,26 @@ kit's port names (LED, KEY, SEG, DIG, CLOCK_50, VGA_*, ...).
   2048) to keep the payload small; all transitions are still returned.
 - The 3D board (Three.js) models the RZ-EasyFPGA A2.2: 4 LEDs, 4 keys, a red
   4-position DIP, the 4-digit multiplexed seven-segment tube, VGA, PS/2, RS232,
-  buzzer, IR receiver, SDRAM, M25P16 flash, 50 MHz crystal and the 144-pin EQFP
+  buzzer, IR receiver, SDRAM, EPCS16 config flash, 50 MHz crystal and the 144-pin EQFP
   package ringed by the four yellow expansion headers. The 2D board is clickable
-  and drives the stimulus; the 3D board is view-only.
+  and drives the stimulus (reaching the design on the next run); the 3D board
+  parts are pickable too (ENG-09).
 - **No HDL sandbox**: GHDL executes `std.textio` file I/O with process privileges.
   Only simulate HDL you trust.
 
 ## Tests
 
 ```powershell
-python -m pytest -q
+python -m pytest -q                 # fast unit tests (profile, parsers, decoders)
+python tests/run_all.py             # unit tests + full QA suite -> tests/RESULTS.md
+python tests/qa/mutation.py         # mutation testing -> tests/MUTATION_REPORT.md
 ```
 
-Tests skip automatically if GHDL is not installed.
+The QA suite covers the device profile, project input, clock/reset, I/O
+devices, VHDL language coverage, Cyclone IV blocks, engine/UI behaviour, the
+vendor examples, and audit sections for the board profile (`BJ`), polarity
+(`POL`), QSF parsing (`QF`), open-drain buses (`OD`), peripheral protocols
+(`PR`), robustness (`RB`) and end-to-end runs (`E2E`).
 
 ## Next
 

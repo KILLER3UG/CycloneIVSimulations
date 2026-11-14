@@ -38,7 +38,9 @@ def blk_02() -> str:
 @case("BLK-03", "5", "Two-PLL limit is reported", "VHDL",
       "A design with three PLLs warns about the 2-PLL limit")
 def blk_03() -> str:
-    text = str(run("blocks.vhd", top="altpll_top", duration=50, resetCycles=0).get("warnings", []))
+    # The three-PLL design itself: designs/pll_limit.vhd instantiates altpll
+    # three times (the old blocks.vhd altpll_top fixture only had one).
+    text = str(run("pll_limit.vhd", top="pll_limit", duration=50, resetCycles=0).get("warnings", []))
     check("pll" in text.lower(), "no PLL resource check")
     return "PLL count checked"
 
@@ -130,17 +132,23 @@ def blk_11() -> str:
 
 
 @case("BLK-12", "5", "Warning when the design exceeds 6272 LEs", "VHDL",
-      "Resource warning naming the LE limit")
+      "Resource warning naming the LE limit (big_regs declares 8192 register bits)")
 def blk_12() -> str:
-    text = str(run("resource.vhd", top="wide_io", duration=10, resetCycles=0).get("warnings", [])).lower()
+    result = run("resource.vhd", top="big_regs", duration=30, resetCycles=0,
+                 constantInputs={"d": 0})
+    check(result.get("ok"), f"simulation failed: {result.get('errors')}")
+    text = str(result.get("warnings", [])).lower()
     check("6272" in text, "no LE resource warning")
     return "LE warning present"
 
 
 @case("BLK-13", "5", "Warning when the design exceeds 30 M9K blocks", "VHDL",
-      "Resource warning naming the M9K limit")
+      "Resource warning naming the M9K limit (big_mem infers a 20480x16 array)")
 def blk_13() -> str:
-    text = str(run("resource.vhd", top="wide_io", duration=10, resetCycles=0).get("warnings", [])).lower()
+    result = run("resource.vhd", top="big_mem", duration=30, resetCycles=0,
+                 constantInputs={"we": 0, "addr": 0, "din": 0})
+    check(result.get("ok"), f"simulation failed: {result.get('errors')}")
+    text = str(result.get("warnings", [])).lower()
     check("m9k" in text, "no M9K resource warning")
     return "M9K warning present"
 

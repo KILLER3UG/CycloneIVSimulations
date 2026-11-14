@@ -63,14 +63,27 @@ def _normalize(name: str) -> str:
 
 
 def detect_clock(entity: Entity) -> Optional[Port]:
+    """Find the clock port: exact/board names first, then clk*/clock* stems.
+
+    Ports whose name only *starts* with clk/clock are accepted only when they
+    are not obviously something else (clock enable, clock output, divider...),
+    so ``clk_en``/``clk_out`` are never mistaken for the clock (audit m3).
+    """
     for port in entity.ports:
         if not port.is_input:
             continue
         name = _normalize(port.name)
         if name in _CLOCK_NAMES or re.fullmatch(r"(?:sys_?)?clk\d+[a-z]?", name):
             return port
-        if (name.startswith("clk") or name.startswith("clock")) and (port.width or 1) == 1:
-            return port
+    for port in entity.ports:
+        if not port.is_input:
+            continue
+        name = _normalize(port.name)
+        if not ((name.startswith("clk") or name.startswith("clock")) and (port.width or 1) == 1):
+            continue
+        if name.endswith(("en", "enable", "out", "by", "div", "gate")):
+            continue
+        return port
     return None
 
 
@@ -84,19 +97,21 @@ def _is_active_low(name: str) -> bool:
 
 
 def detect_reset(entity: Entity) -> Optional[tuple[Port, bool]]:
+    """Find the reset port by exact name (or the board profile's reset port).
+
+    Substring matching is deliberately avoided: an input like ``reset_req``
+    is not a reset the testbench should drive (audit m4).
+    """
     board_reset = _normalize(BOARD.get("resetPort", ""))
     board_active_high = not BOARD.get("resetActiveLow", False)
     for port in entity.ports:
         if not port.is_input:
             continue
         name = _normalize(port.name)
-        matched = (name in _RESET_NAMES or "reset" in name
-                   or name in {"rst", "nrst"}
-                   or (board_reset != "" and name == board_reset))
-        if matched:
-            if board_reset != "" and name == board_reset:
-                return port, board_active_high   # board profile knows the polarity
+        if name in _RESET_NAMES:
             return port, not _is_active_low(port.name)
+        if board_reset != "" and name == board_reset:
+            return port, board_active_high   # board profile knows the polarity
     return None
 
 
@@ -161,20 +176,6 @@ def stimulus_from_dict(data: dict) -> Stimulus:
         period_cycles=max(1, int(data.get("periodCycles", 1) or 1)),
         pulse_cycles=max(1, int(data.get("pulseCycles", 1) or 1)),
     )
-
-
-def default_stimuli(entity: Entity, clock: Optional[Port], reset: Optional[Port]) -> List[Stimulus]:
-    stimuli: List[Stimulus] = []
-    for port in entity.inputs:
-        if clock and port.name == clock.name:
-            continue
-        if reset and port.name == reset.name:
-            continue
-        if (port.width or 1) > 1:
-            stimuli.append(Stimulus(port=port.name, kind="constant", value=0))
-        else:
-            stimuli.append(Stimulus(port=port.name, kind="constant", value=0))
-    return stimuli
 
 
 # ---------------------------------------------------------------------------
@@ -296,8 +297,8 @@ def _value_literal(port: Port, value: Any) -> str:
     return _bit_literal(value, width)
 
 
-def _increment_statement(port: Port) -> str:
-    name = port.name
+def _increment_statement(port: Port, signal_name: Optional[str] = None) -> str:
+    name = signal_name or port.name
     if port.type_name == "std_logic_vector":
         return f"{name} <= std_logic_vector(unsigned({name}) + 1);"
     if port.type_name in ("unsigned", "signed", "integer"):
@@ -361,6 +362,14 @@ def generate_testbench(entity: Entity, config: TestbenchConfig) -> str:
     # The generated testbench must not drive output ports.
     driven = {p.name for p in entity.inputs}
 
+    # Ports owned by an on-board device model (EEPROM/LM75/PS2/LCD/IR) are
+    # driven by that model; the testbench must not add a second driver.
+    model_ports = set()
+    for model in config.models:
+        for key in ("clock", "data", "scl", "sda", "ir", "rs", "rw", "e"):
+            if key in model:
+                model_ports.add(str(model[key]).lower())
+
     stimuli: Dict[str, Stimulus] = {}
     for item in config.stimuli:
         if item.port in driven:
@@ -370,6 +379,8 @@ def generate_testbench(entity: Entity, config: TestbenchConfig) -> str:
             stimuli[name] = Stimulus(port=name, kind="constant", value=value)
     for port in entity.inputs:
         if port.name in driven and port.name not in stimuli and port.name != (clock.name if clock else None) and port.name != (reset.name if reset else None):
+            if port.name.lower() in model_ports:
+                continue   # the device model drives this pin
             stimuli[port.name] = Stimulus(port=port.name, kind="constant", value=0)
 
     top = config.testbench_name or f"tb_{entity.name}"
@@ -406,13 +417,15 @@ def generate_testbench(entity: Entity, config: TestbenchConfig) -> str:
                             f"    signal {sda_b} : std_logic := 'H';"]
             port_overrides[model["scl"].lower()] = scl_b
             port_overrides[model["sda"].lower()] = sda_b
+            # board_spec.md §0d: WP (U8 pin 7) is tied to VCC on the A2.2, so
+            # the real EEPROM is write-protected — model the same, derived
+            # from the board.json writeProtected fact (not a literal).
+            wp = "1" if BOARD["i2c"]["eeprom"].get("writeProtected", True) else "0"
             model_insts += [
                 f"    {scl_b} <= 'H';   -- EEPROM bus pull-ups (R25/R26)",
                 f"    {sda_b} <= 'H';",
-                # board_spec.md §0d: WP (U8 pin 7) is tied to VCC on the A2.2,
-                # so the real EEPROM is write-protected — model the same.
-                "    u_eeprom : entity work.at24c08 port map (scl => " + scl_b
-                          + ", sda => " + sda_b + ", wp => '1');",
+                f"    u_eeprom : entity work.at24c08 port map (scl => {scl_b}"
+                          + f", sda => {sda_b}, wp => '{wp}');",
             ]
         elif kind == "i2c_lm75":
             # LM75 bus: FPGA_SCL(112)/FPGA_SDA(113), pull-ups R27/R28 5.1k.
@@ -558,8 +571,15 @@ def generate_testbench(entity: Entity, config: TestbenchConfig) -> str:
         if stimulus is None:
             continue
 
+        # When a board-device model overrides the port (e.g. PS_DATA is
+        # connected to PS_DATA_bus so the model and the user stimulus share
+        # the same resolved bus), the stimulus must drive the *bus* signal —
+        # driving the original port-named signal would write to a shadow
+        # signal connected to nothing (audit M6).
+        signal_name = port_overrides.get(port.name.lower(), port.name)
+
         if stimulus.kind == "constant":
-            lines.append(f"    {port.name} <= {_value_literal(port, stimulus.value)};")
+            lines.append(f"    {signal_name} <= {_value_literal(port, stimulus.value)};")
             continue
 
         lines.append(f"    stim_{port.name} : process")
@@ -571,16 +591,16 @@ def generate_testbench(entity: Entity, config: TestbenchConfig) -> str:
 
         if stimulus.kind == "toggle":
             lines.append("        loop")
-            lines.append(f"            {_increment_statement(port)}")
+            lines.append(f"            {_increment_statement(port, signal_name)}")
             lines.append(f"            {_wait_cycles(max(1, stimulus.period_cycles), clock)}")
             lines.append("        end loop;")
         elif stimulus.kind == "pulse":
             pulse = max(1, stimulus.pulse_cycles)
             period_cycles = max(pulse + 1, stimulus.period_cycles)
             lines.append("        loop")
-            lines.append(f"            {port.name} <= {_value_literal(port, 1)};")
+            lines.append(f"            {signal_name} <= {_value_literal(port, 1)};")
             lines.append(f"            wait for {pulse} * CLK_PERIOD;")
-            lines.append(f"            {port.name} <= {_value_literal(port, 0)};")
+            lines.append(f"            {signal_name} <= {_value_literal(port, 0)};")
             lines.append(f"            wait for {period_cycles - pulse} * CLK_PERIOD;")
             lines.append("        end loop;")
         elif stimulus.kind == "sequence":
@@ -589,11 +609,11 @@ def generate_testbench(entity: Entity, config: TestbenchConfig) -> str:
                 values = [stimulus.value, 0]
             lines.append("        loop")
             for value in values:
-                lines.append(f"            {port.name} <= {_value_literal(port, value)};")
+                lines.append(f"            {signal_name} <= {_value_literal(port, value)};")
                 lines.append(f"            {_wait_cycles(max(1, stimulus.period_cycles), clock)}")
             lines.append("        end loop;")
         else:
-            lines.append(f"        {port.name} <= {_value_literal(port, stimulus.value)};")
+            lines.append(f"        {signal_name} <= {_value_literal(port, stimulus.value)};")
             lines.append("        wait;")
 
         lines.append("    end process;")
@@ -633,7 +653,6 @@ def detect_top_entity(source: str, requested: Optional[str] = None) -> tuple[Opt
 __all__ = [
     "Stimulus",
     "TestbenchConfig",
-    "default_stimuli",
     "detect_clock",
     "detect_reset",
     "detect_top_entity",

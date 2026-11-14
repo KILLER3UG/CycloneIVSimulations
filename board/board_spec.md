@@ -31,7 +31,7 @@ Reference keys:
 Pin numbers are **EQFP144 package pins** (silkscreened on the board and printed
 in the instructor table). Never reuse pins from other boards.
 
-## 0. Reconciliation findings (questions a–g, resolved)
+## 0. Reconciliation findings (questions a–h, resolved)
 
 **a. RESET key net/pin — VERIFIED.** The RESET key (silk "RESET") shorts the
 `RESET` net to GND; `RESET` has R2 10 kΩ pull-up to 3.3 V and C10 100 nF to
@@ -43,14 +43,14 @@ Active-low: pressed = 0, released = 1. [SCH, CROP-reset_clk, PIN, INST]
 pull-ups" was WRONG (that was the collision).** Real topology, read from the
 zoomed Botões/DIP and Display sheets [CROP-leds_dip, CROP-sevenseg, SCH]:
 
-| Function | Designators | Value / wiring |
-| --- | --- | --- |
-| Key series resistors | **R34–R37** | 220 Ω, FPGA pin → node → key S1–S4 → GND |
-| Key pull-ups | **R38–R41** | 10 kΩ from 3.3 V to each KEY net |
-| DIP pull-ups | **R42–R45** | 10 kΩ from 3.3 V to each DIP-wired KEY net |
-| 7-seg digit base resistors | **R46–R49** | 10 kΩ, DIG1→R49, DIG2→R48, DIG3→R47, DIG4→R46, into Q1–Q4 8550 bases |
-| 7-seg segment resistors | **R50–R57** | 220 Ω (SEG4→R50, SEG3→R51, SEG0→R52, SEG7→R53, SEG5→R54, SEG2→R55, SEG6→R56, SEG1→R57) |
-| LED resistors | R30–R33 | 470 Ω in each LED cathode |
+| Function | Designators | Value / wiring | Tag |
+| --- | --- | --- | --- |
+| Key series resistors | **R34–R37** | 220 Ω, FPGA pin → node → key S1–S4 → GND (KEY1→R34 … KEY4→R37) | VERIFIED |
+| Key pull-ups | **R38–R41** | 10 kΩ from 3.3 V to each KEY net | VERIFIED |
+| DIP pull-ups | **R42–R45** | 10 kΩ from 3.3 V to each DIP-wired KEY net | VERIFIED |
+| 7-seg digit base resistors | **R46–R49** | 10 kΩ, DIG1→R49, DIG2→R48, DIG3→R47, DIG4→R46, into Q1–Q4 8550 bases | VERIFIED |
+| 7-seg segment resistors | **R50–R57** | 220 Ω (SEG4→R50, SEG3→R51, SEG0→R52, SEG7→R53, SEG5→R54, SEG2→R55, SEG6→R56, SEG1→R57) | VERIFIED |
+| LED resistors | R30–R33 | 470 Ω in each LED cathode (R30→LED4, R31→LED3, R32→LED2, R33→LED1) | VERIFIED |
 
 So: keys and DIP each have their own 10 kΩ pull-up group in parallel on the
 same four nets (KEY1–KEY4); the digit base resistors are R46–R49. No
@@ -90,12 +90,24 @@ the schematic** → UNVERIFIED. Physical test: see `real_board_results.md`
 **g. GPIO count — VERIFIED: 91 user I/O; "92" was a miscount.** The Cyclone IV
 handbook gives 91 user I/O for the E144 package [DS]. The schematic's bank
 symbols U5A–U5I list exactly 91 I/O-capable pins (bank 1 = pins 1, 2, 3, 6, 7,
-8, 10, 11, 13 — pins 2/3 are easy to miss in text extraction). All 91 are
+8, 10, 11, 13 — pins 2/3 are easy to miss in text extraction; confirmed in
+`zoom_u5a.png`). All 91 are
 used/brought out: 86 to on-board peripherals (incl. clock 23, reset 25), pins
 6/8/13 to the EPCS16 config flash (ASDO/nCSO/DATA0) and AS header, and pins
-24 → P1.34, 111 → P1.2 as free GPIO on the P1 header. **There is no 92nd GPIO
+24 → P1 header pin 34, 111 → P1 header pin 4 as free GPIO on the P1 header
+(P1 header pins 1/2 are GND — `zoom_p1_pins.png`). **There is no 92nd GPIO
 pin.** (Likely source of the old "92": CONF_DONE is literally package pin 92 —
-a dedicated output, not user I/O.) [SCH, CROP-leds_dip (P1 zoom), DS]
+a dedicated output, not user I/O.) [SCH, CROP-leds_dip (P1 zoom), zoom_p1_pins, DS]
+
+**h. 7-segment SEG bit map — VERIFIED: SEG0=a, SEG1=b (the earlier
+"SEG0=b, SEG1=a" claim was a misreading and has been corrected).** Re-derived
+from the Display sheet's own resistor table (`zoom_seg_map.png`):
+SEG0→R52→display pin 11, SEG1→R57→pin 7, SEG2→R55→pin 4, SEG3→R51→pin 2,
+SEG4→R50→pin 1, SEG5→R54→pin 10, SEG6→R56→pin 5, SEG7→R53→pin 3. The display
+symbol labels pin 11=a, 7=b, 4=c, 2=d, 1=e, 10=f, 5=g, 3=dp, matching the
+3461BS datasheet pin map (1=e, 2=d, 3=dp, 4=c, 5=g, 7=b, 10=f, 11=a). Therefore
+SEG0=a, SEG1=b, SEG2=c, SEG3=d, SEG4=e, SEG5=f, SEG6=g, SEG7=dp — the standard
+mapping, not the swapped one. [SCH Display sheet, zoom_seg_map, DS (3461BS)]
 
 ## 1. Device
 
@@ -119,6 +131,7 @@ a dedicated output, not user I/O.) [SCH, CROP-leds_dip (P1 zoom), DS]
 | Power switch | self-locking SW-DPDT cuts the 5 V input; R1 2 kΩ + D1 LED = power indicator on 5 V | VERIFIED | SCH, CROP-power |
 | Rails | 3.3 V (U1 1117-3.3 from 5 V), 2.5 V (U3 1117-2.5 from 5 V), 1.2 V (U2 1117-1.2 **from 3.3 V**) | VERIFIED | SCH, CROP-power, AMP1 |
 | Config flash | EPCS16 (U7; footprint accepts EPCS4/EPCS16), AS mode: DCLK/DATA/nCS/ASDI; DATA via R7 22 Ω | VERIFIED | SCH, CROP-jtag, AMP1 |
+| Config flash revision note | A2.2 = EPCS16; the older A2.1 schematic V2.1 uses an M25P16 (a different SPI part); OMDAZZ manuals say EPCS16N. Identify the fitted part before generating a JIC. | VERIFIED | schematic vs A2.1 V2.1 schematic, OMDAZZ manuals (see sources.md) |
 | JTAG | HEADER 5X2: TCK/TDO/TMS/TDI + R8 1 kΩ/R9,R10 10 kΩ pull-ups to 2.5 V | VERIFIED | SCH, CROP-jtag |
 | AS header | HEADER 5X2: DCLK/CONF_DONE/nCONFIG/DATA/ASDO/nCE/nCSO + R11 10 kΩ | VERIFIED | SCH, CROP-jtag |
 | Unused pins | `RESERVE_ALL_UNUSED_PINS_WEAK_PULLUP "AS INPUT TRI-STATED"` | VERIFIED | all vendor QSF |
@@ -167,7 +180,7 @@ a dedicated output, not user I/O.) [SCH, CROP-leds_dip (P1 zoom), DS]
 | Digit polarity | digit ON when DIG pin = 0 (PNP conducts when its base is pulled low) | VERIFIED | SCH, CROP-sevenseg |
 | Segments | SEG0 = 128, SEG1 = 121, SEG2 = 125, SEG3 = 129, SEG4 = 132, SEG5 = 126, SEG6 = 124, SEG7 = 127 → 220 Ω (R50–R57) → display | VERIFIED | SCH, CROP-sevenseg, INST |
 | Segment polarity | segment lit when SEG pin = 0 (cathode drive; common anode) | VERIFIED | SCH |
-| Segment mapping | SEG0 = b, SEG1 = a, SEG2 = c, SEG3 = d, SEG4 = e, SEG5 = f, SEG6 = g, SEG7 = dp (display pins 11=a, 7=b, 4=c, 2=d, 1=e, 10=f, 5=g, 3=dp) | VERIFIED | SCH Display section, CROP-sevenseg |
+| Segment mapping | SEG0 = a, SEG1 = b, SEG2 = c, SEG3 = d, SEG4 = e, SEG5 = f, SEG6 = g, SEG7 = dp (display pins 11=a, 7=b, 4=c, 2=d, 1=e, 10=f, 5=g, 3=dp; SEG0→R52→pin 11, SEG1→R57→pin 7 — see §0h) | VERIFIED | SCH Display section, zoom_seg_map, DS (3461BS) |
 | Drive method | direct multiplexing, one digit at a time through the PNP | VERIFIED | SCH |
 
 ## 6. Buzzer
@@ -214,7 +227,7 @@ a dedicated output, not user I/O.) [SCH, CROP-leds_dip (P1 zoom), DS]
 | --- | --- | --- | --- |
 | Part | AT24C08 (U8), 8 Kbit = 1 KiB, 16-byte pages | VERIFIED | SCH, CROP-ps2_eep |
 | Bus | **separate bus**: I2C_SCL = 99, I2C_SDA = 98, pull-ups R25/R26 5.1 kΩ → 3.3 V | VERIFIED | SCH, INST, PIN — see §0c |
-| Address | A2/A1/A0 tied to GND → device address 0b1010_000 = **0x50** | VERIFIED | SCH, zoom_eep |
+| Address | Control byte 1010 A2 A1 A0 R/W. Only **A2** is a physical address pin (tied to GND); A1/A0 are word-address bits 9/8 (block select), so 0xA0–0xA7 all address this chip and map to word addresses 0/256/512/768. Board address 0x50 (A2/A1/A0 pins all GND). | VERIFIED | SCH, zoom_eep, AT24C08 datasheet (doc0180) |
 | WP | **pin 7 tied to VCC (3.3 V) → writes blocked on real hardware; read-only** | VERIFIED | SCH, zoom_eep, DS — see §0d |
 | Behaviour | byte/page write, ACK polling, ~5 ms write cycle | VERIFIED | DS (only reachable off-board: WP blocks writes on this board) |
 
@@ -227,6 +240,7 @@ a dedicated output, not user I/O.) [SCH, CROP-leds_dip (P1 zoom), DS]
 | Address | A2/A1/A0 to GND → **0x48** | VERIFIED | SCH, zoom_eep |
 | OS output | pin 3 (OS) unused | VERIFIED | SCH (no net) |
 | Registers | 0x00 temperature (9-bit, 0.5 °C LSB), 0x01 config, 0x02 Thyst, 0x03 Tos | VERIFIED | DS |
+| Power-up defaults | Thyst = 75 °C (0x4B00), Tos = 80 °C (0x5000); config = 0x00 | VERIFIED | LM75B datasheet |
 | Ambient temperature during a classroom run | unknown until measured | UNVERIFIED | physical test T-LM75-1 |
 
 ## 12. SDRAM
@@ -236,6 +250,7 @@ a dedicated output, not user I/O.) [SCH, CROP-leds_dip (P1 zoom), DS]
 | Part | HY57V641620 (U6) — 64 Mbit, 16-bit bus, 4 banks | VERIFIED | SCH (U6), PIN |
 | Pins | DQ[15:0]: 28,30,31,32,33,34,38,39,54,53,52,51,50,49,46,44; A[11:0]: 76,77,80,83,68,67,66,65,64,60,75,59; CKE 58, CLK 43, CS 72, RAS 71, CAS 70, WE 69, BS0 73, BS1 74, LDQM 42, UDQM 55 | VERIFIED | INST, PIN, SCH |
 | Header breakout | SDRAM pins also routed to P2 (22×2) | VERIFIED | SCH IO Interface |
+| Refresh | 4096 rows → 4096 refresh cycles / 64 ms (Hynix datasheet; the 8192 figure is for 8192-row parts) | VERIFIED | HY57V641620 datasheet |
 
 ## 13. IR receiver
 
@@ -259,9 +274,9 @@ a dedicated output, not user I/O.) [SCH, CROP-leds_dip (P1 zoom), DS]
 
 | Header | Size | Notes | Tag | Source |
 | --- | --- | --- | --- | --- |
-| P1 | 19×2 | carries BEEP(110), 111, SCL(112), SDA(113), TXD(114), RXD(115), PS_CLOCK(119), PS_DATA(120), SEG1/6/2/5/7/0/3/4 (121,124,125,126,127,128,129,132), DIG1–4 (133,135,136,137), LCD2/1/4/3/6/5/8/7/10/9/11 (138,141,142,143,144,1,3,2,7,10,11), **24**, 3.3 V, 5 V, GND | VERIFIED | SCH P1 zoom |
-| P2 | 22×2 | power rails + KEY nets 88/89 + SDRAM breakout | VERIFIED (block level; pin-by-pin read is low-confidence at this zoom) | SCH P2 zoom |
-| P3 | 10×2 | LED1/3 (84/86), KEY1/3 (88/90), I2C_SDA(98), IR(100), VGA_VSYNC(103), VGA_G(105), 5 V … (right column mirrors: LED2/4, KEY2/4, I2C_SCL, VGA_HSYNC, VGA_B, VGA_R) | VERIFIED (block level) | SCH P3 zoom |
+| P1 | 19×2 | header pins 1/2 = GND; 3=BEEP(110), 4=111, 5=SCL(112), 6=SDA(113), 7=TXD(114), 8=RXD(115), 9=PS_CLOCK(119), 10=PS_DATA(120), 11–18=SEG1/6/2/5/7/0/3/4 (121,124,125,126,127,128,129,132), 19–22=DIG1–4 (133,135,136,137), 23–33=LCD2/1/4/3/6/5/8/7/10/9/11 (138,141,142,143,144,1,3,2,7,10,11), 34=**24** (free GPIO), 35/36=3.3 V, 37/38=5 V | VERIFIED (pin-by-pin) | SCH P1 zoom, zoom_p1_pins |
+| P2 | 22×2 | header pins 1/2 = 5 V, 3/4 = 3.3 V, 5/6 = GND; pins 7–44 = SDRAM breakout, all 38 SDRAM nets (pin-by-pin: 7=83/A3, 8=80/A2, 9=77/A1, 10=76/A0, 11=75/A10, 12=74/BS1, 13=73/BS0, 14=72/CS, 15=71/RAS, 16=70/CAS, 17=69/WE, 18=68/A4, 19=67/A5, 20=66/A6, 21=65/A7, 22=64/A8, 23=60/A9, 24=59/A11, 25=58/CKE, 26=55/UDQM, 27=54/DQ8, 28=53/DQ9, 29=52/DQ10, 30=51/DQ11, 31=50/DQ12, 32=49/DQ13, 33=46/DQ14, 34=44/DQ15, 35=43/CLK, 36=42/LDQM, 37=39/DQ7, 38=38/DQ6, 39=34/DQ5, 40=33/DQ4, 41=32/DQ3, 42=31/DQ2, 43=30/DQ1, 44=28/DQ0). **No KEY nets on P2** (the old "KEY nets 88/89" note was wrong); the earlier "pins 43/44 not connected" note was ALSO wrong — hp43/44 carry SDRAM_DQ[1]/DQ[0] (re-read from the PDF at 10× zoom + text coordinates, see sources.md §7) | VERIFIED (pin-by-pin) | SCH P2 zoom, zoom_p2_pins, Pinos_EP4CE6E22C8 net list |
+| P3 | 10×2 | header pins 1/2 = GND; left column 3=LED1(84), 5=LED3(86), 7=KEY1(88), 9=KEY3(90), 11=I2C_SDA(98), 13=IR(100), 15=VGA_VSYNC(103), 17=VGA_G(105), 19=5 V; right column 4=LED2(85), 6=LED4(87), 8=KEY2(89), 10=KEY4(91), 12=I2C_SCL(99), 14=VGA_HSYNC(101), 16=VGA_B(104), 18=VGA_R(106), 20=3.3 V | VERIFIED (pin-by-pin) | SCH P3 zoom, zoom_p3_pins |
 
 ## 16. Peripheral inventory status
 
@@ -270,10 +285,15 @@ a dedicated output, not user I/O.) [SCH, CROP-leds_dip (P1 zoom), DS]
 | 50 MHz oscillator, RESET key, 4 keys, DIP, 4 LEDs, 4-digit tube, buzzer drive, RS232/DB9, VGA (8-color), PS/2, LCD socket + trimmer, SDRAM, EPCS16, JTAG/AS 2×5, expansion headers, rails 3.3/2.5/1.2 V | **Confirmed** (schematic + photos) — VERIFIED |
 | IR receiver, AT24C08 EEPROM (read-only, WP=VCC), LM75 temperature sensor | **Confirmed** (schematic) — VERIFIED; IR protocol and LM75 ambient value UNVERIFIED |
 | Buzzer part type (active vs passive), PS/2 device type, LCD socket pin order vs standard module, IR carrier/protocol | **UNVERIFIED** — physical tests in real_board_results.md |
-| LCD module, OV7670 camera, ENC28J60 Ethernet, USB module | **Out of scope** (bundle accessories; user confirmed board-only kit) |
-| 8-digit tube variant | Different board variant — not this board |
+| Fitted config flash marking (schematic EPCS16 vs vendor-photo "M25P16" label) and fitted RS232 chip (schematic MAX3232E vs vendor-photo "SP3232"/manual "SP232") | **UNVERIFIED** (functionally equivalent parts; physical check T-FLASH-1 / marking read) |
+| LCD module, OV7670 camera, ENC28J60 Ethernet, USB module | **Out of scope** (bundle accessories; user confirmed board-only kit) — VERIFIED (scope, user statement) |
+| 8-digit tube variant | Different board variant — not this board — VERIFIED (scope, sources.md §4.1) |
 
 ## 17. Instructor pin table vs vendor .qsf cross-check
+
+All statements in this section are **VERIFIED** (vendor pin file, instructor
+table, four vendor .qsf files, and the independent online pin tables listed in
+`sources.md`).
 
 Compared `vendor/instructor_pin_table.png` against all four vendor .qsf files
 and `Pinos_RZEasyFPGA.txt`:
@@ -294,6 +314,12 @@ and `Pinos_RZEasyFPGA.txt`:
   I/O, which is legal: VGA_HSYNC = 101 (nCEO), VGA_VSYNC = 103 (CLKUSR),
   SEG0 = 128 / SEG3 = 129 / SEG5 = 126 / SEG6 = 124 / SEG7 = 127 (DATA[2,3]/DQ
   dual-purpose) — all post-configuration user I/O per the Cyclone IV pinout.
+* **Independent online cross-check (2026-11-13):** nine community/vendor pin
+  tables (dualvim's 16 .qsf, inaciose, leoo-c1, fsmiamoto, kdg-auts, naelolaiz,
+  LiteX, microCore, MUDAL) agree with this baseline on CLK/RST/KEY/LED/SEG/DIG/
+  UART/LCD/VGA/SDRAM/PS2/I2C/IR/buzzer. The conflicts found (OMDAZZ reverses
+  SEG/KEY bit order; inaciose remaps LED[2:3]; leoo-c1 uses adapter-centric UART
+  names; microCore omits pin 101/LCD_D7) are documented in `sources.md`.
 
 ## 18. Peripherals NOT exercised by any vendor example
 

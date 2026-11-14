@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 _TIME_UNIT_NS = {
     "s": 1e9,
@@ -97,12 +97,27 @@ def _convert_vector(text: str) -> Any:
 
 
 def parse_vcd(path: str) -> VcdData:
+    """Parse a VCD file by streaming it line by line.
+
+    Large dumps (hundreds of MB) must not be materialised as one string, so
+    the file handle is consumed incrementally; the parsed result is identical
+    to :func:`parse_vcd_text`.
+    """
     with open(path, "r", encoding="utf-8", errors="replace") as handle:
-        return parse_vcd_text(handle.read())
+        return _parse_vcd_lines(handle)
 
 
 def parse_vcd_text(text: str) -> VcdData:
-    lines = text.splitlines()
+    """Parse a VCD from an in-memory string (kept for tests/compat)."""
+    return _parse_vcd_lines(text.splitlines())
+
+
+_VECTOR_CHANGE_RE = re.compile(r"^([bB])\s*([01xXzZ]+)\s*(\S+)$")
+_REAL_CHANGE_RE = re.compile(r"^([rRsS])\s*([^\s]+)\s+(\S+)$")
+
+
+def _parse_vcd_lines(lines: Iterable[str]) -> VcdData:
+    line_iter = iter(lines)
 
     timescale_ns = 1.0
     scope_stack: List[str] = []
@@ -110,10 +125,8 @@ def parse_vcd_text(text: str) -> VcdData:
     order: List[str] = []
 
     # ---- header ---------------------------------------------------------
-    index = 0
-    while index < len(lines):
-        line = lines[index].strip()
-        index += 1
+    for raw in line_iter:
+        line = raw.strip()
         if not line:
             continue
         if line.startswith("$timescale"):
@@ -123,11 +136,10 @@ def parse_vcd_text(text: str) -> VcdData:
                 #   $timescale
                 #     1 fs
                 #   $end
-                while index < len(lines) and not lines[index].strip():
-                    index += 1
-                if index < len(lines):
-                    match = _TIMESCALE_RE.search(lines[index])
-                    index += 1
+                candidate = next(line_iter, "").strip()
+                while not candidate:
+                    candidate = next(line_iter, "").strip()
+                match = _TIMESCALE_RE.search(candidate)
             if match:
                 factor = _TIME_UNIT_NS.get(match.group(2).lower(), 1.0)
                 timescale_ns = int(match.group(1)) * factor
@@ -171,8 +183,8 @@ def parse_vcd_text(text: str) -> VcdData:
     current_time = 0.0
     duration = 0.0
 
-    for raw_line in lines[index:]:
-        line = raw_line.strip()
+    for raw in line_iter:
+        line = raw.strip()
         if not line:
             continue
         if line.startswith("$"):
@@ -185,14 +197,28 @@ def parse_vcd_text(text: str) -> VcdData:
             duration = max(duration, current_time)
             continue
 
-        # Vector value:  b1010 !   /  B1010 "   (space is optional)
         first = line[0]
-        if first in _VECTOR_PREFIXES:
-            body = line[1:].strip()
-            parts = body.split()
-            if len(parts) != 2:
+
+        # Vector value:  b1010 !   /  B1010!   (space is optional)
+        if first in "bB":
+            match = _VECTOR_CHANGE_RE.match(line)
+            if not match:
                 continue
-            value_text, identifier = parts
+            value_text, identifier = match.group(2), match.group(3)
+            signal = signals.get(identifier)
+            if signal is None:
+                continue
+            value = _convert_vector(value_text)
+            signal.transitions.append((current_time, value))
+            duration = max(duration, current_time)
+            continue
+
+        # Real/vector value:  r3.14 !  /  s1010 !
+        if first in "rRsS":
+            match = _REAL_CHANGE_RE.match(line)
+            if not match:
+                continue
+            value_text, identifier = match.group(2), match.group(3)
             signal = signals.get(identifier)
             if signal is None:
                 continue

@@ -13,8 +13,8 @@ All tests fit in one Quartus project per test using the pins from
 | ID | Peripheral | Test design (what to load) | Expected real behaviour | Result |
 | --- | --- | --- | --- | --- |
 | T-RESET | Reset key (pin 25) | Counter clocked by clk(23), async clear driven by the RESET net; LEDs show count. Hold RESET pressed, release, press again. | Released: RESET reads 1 (10 kΩ pull-up), counter runs. Pressed: RESET = 0, counter clears/holds at 0. ~1 ms RC means a <1 ms glitch bounce is filtered-ish; bouncing may still show — observe. | ☐ |
-| T-7SEG-1 | Digit select polarity | Drive DIG1..4 = 1110 (only DIG1=0), SEG = pattern for "1." (b,c on → SEG0=0, SEG2=0, dp=0? check map: SEG0=b, SEG2=c, SEG7=dp). | Only the rightmost digit (DIG1, pin 133) lights; other three fully off (their PNPs are cut). If two digits glow dimly, multiplex ghosting exists. | ☐ |
-| T-7SEG-2 | Segment map | Static "0." on digit 1: SEG pins a..dp = 0 except g (SEG6) and use dp to confirm. Expected lit segments from the map (SEG1=a, SEG0=b, SEG2=c, SEG3=d, SEG4=e, SEG5=f, SEG7=dp). | Shows "0." exactly if the SEG-bit map (SEG0=b, SEG1=a, SEG2=c, SEG3=d, SEG4=e, SEG5=f, SEG6=g, SEG7=dp) is right. A wrong map shows a rotated/mirrored glyph. | ☐ |
+| T-7SEG-1 | Digit select polarity | Drive DIG1..4 = 1110 (only DIG1=0), SEG = pattern for "1." (segments b,c + dp lit → SEG1=0, SEG2=0, SEG7=0 per the §0h map). | Only the rightmost digit (DIG1, pin 133) lights; other three fully off (their PNPs are cut). If two digits glow dimly, multiplex ghosting exists. | ☐ |
+| T-7SEG-2 | Segment map | Static "0." on digit 1: SEG pins a..dp = 0 except g (SEG6) and use dp to confirm. Expected lit segments from the map (SEG0=a, SEG1=b, SEG2=c, SEG3=d, SEG4=e, SEG5=f, SEG7=dp — spec §0h). | Shows "0." exactly if the SEG-bit map (SEG0=a, SEG1=b, SEG2=c, SEG3=d, SEG4=e, SEG5=f, SEG6=g, SEG7=dp) is right. A wrong map shows a rotated/mirrored glyph. | ☐ |
 | T-7SEG-3 | Multiplexing | Scan 4 digits at 1 kHz, different numeral per digit. | All four digits show their numeral with no visible flicker; brightness ~¼ of static. Confirms PNP high-side multiplexing works at classroom scan rates. | ☐ |
 | T-BUZZER-1 | Buzzer type (active vs passive) + polarity | (a) Drive BEEP=0 constant (DC). (b) Drive BEEP with 1 kHz–4 kHz square wave (50% duty). (c) BEEP=1 constant. | (a) continuous beep ⇒ **active** buzzer; only a faint click ⇒ **passive**. (b) clear tone ⇒ passive (and confirms drive). (c) silent in both cases ⇒ ON=0 confirmed. Record which type sounded. | ☐ |
 | T-BUZZER-2 | Audible frequency range | Sweep square wave 100 Hz → 10 kHz on BEEP. | Passive speaker: audible roughly 300 Hz–5 kHz, loudest near resonance (~2–4 kHz typical). Record the loudest frequency. | ☐ |
@@ -32,9 +32,15 @@ All tests fit in one Quartus project per test using the pins from
 | T-LM75-1 | LM75 temperature (bus 112/113) | Bit-bang I2C on pins 112(SCL)/113(SDA); read reg 0x00 (2 bytes) from 0x48. | Returns a plausible room temperature: value/2 °C within ~18–30 °C. Confirms the second bus and address 0x48. Record the value and the room thermometer reading. | ☐ |
 | T-SDRAM-1 | Data integrity | Minimal SDRAM controller (init, auto-refresh, write pattern to a row, read back). Compare on LEDs. | Readback matches written pattern (e.g. 0xA5A5 / 0x5A5A in several banks). Confirms pin map + 16-bit bus. | ☐ |
 | T-SDRAM-2 | Refresh behaviour | Write, stop refresh for 0/1/2 s, read back. | With refresh stopped, cells decay after ~seconds (readback errors appear); with refresh running, data holds. Demonstrates why controllers must refresh. | ☐ |
-| T-GPIO | Header GPIO pins 24 & 111 | Drive pin 24 high/low, read pin 111 as input with a jumper wire between P1.34 and P1.2. | Reading follows the driven level — confirms pins 24 (P1.34) and 111 (P1.2) are usable free GPIO (spec §0g). | ☐ |
+| T-GPIO | Header GPIO pins 24 & 111 | Drive pin 24 high/low, read pin 111 as input with a jumper wire between P1 header pin 34 (FPGA 24) and P1 header pin 4 (FPGA 111); P1 pins 1/2 are GND — do not use them. | Reading follows the driven level — confirms pins 24 (P1.34) and 111 (P1.4) are usable free GPIO (spec §0g). | ☐ |
 | T-CLK | 50 MHz oscillator | Divide by 50,000,000 → 1 Hz blink on LED1. | LED1 blinks at ~1 Hz (period measured with a phone stopwatch ≈ 1.00 s). Confirms the oscillator is 50 MHz and active (works without external crystal wiring). | ☐ |
 | T-POWER | Rails | Multimeter on the regulator outputs with the power switch on. | 3.3 V ±0.15, 2.5 V ±0.15, 1.2 V ±0.1; USB jack also powers the board through the switch. | ☐ |
+| T-DIP-1 | DIP switch + key shared nets | Read KEY1–4 as inputs (pull-ups on); flip each DIP position and press each key in turn. | Flipping DIP[n] or pressing KEY[n] pulls the SAME net (pins 88–91) low — they cannot differ. Confirms shared nets + R38–R41/R42–R45 pull-up groups. | ☐ |
+| T-FLASH-1 | Config flash identity | Read the U7 package marking; let Quartus' AS programmer (USB Blaster) identify the device. | Marking reads EPCS16 (or M25P16/EPCS16N per the vendor photo/manual — sources.md §7.5); Quartus identifies a 16 Mbit AS flash. Record the exact marking. | ☐ |
+| T-LM75-2 | LM75 register defaults | On bus 112/113 read regs 0x01/0x02/0x03 at 0x48, power-on state. | Config = 0x00, Thyst = 0x4B00 (75 °C), Tos = 0x5000 (80 °C) — datasheet power-up defaults (component_table.md). | ☐ |
+| T-EEPROM-3 | AT24C08 block select | On bus 99/98 do a read with control bytes 0x50, 0x51, 0x52, 0x53; compare first data byte of each. | All four control bytes ACK (only A2 is a real pin; A1/A0 are block-select bits — spec §10). Blocks 0/1 must NOT alias. | ☐ |
+| T-UART-3 | DB9 pin roles | Design sends steady 0x55 at 9600; measure DB9 pins 7 and 8 vs pin 5. | Pin 7 = board TX (idle ≈ −5 to −9 V mark, data swings); pin 8 quiet (board RX input). Confirms the non-standard 7/8 wiring (spec §0e). | ☐ |
+| T-HDR-1 | Header power/GND map | Multimeter on P1 (1/2 GND, 35/36 3.3 V, 37/38 5 V), P2 (1/2 5 V, 3/4 3.3 V, 5/6 GND), P3 (1/2 GND, 19 5 V, 20 3.3 V). | Every listed pin measures the expected rail; no GND-to-rail continuity. Confirms the header maps (spec §15). | ☐ |
 
 ## Results (fill in at school)
 
@@ -66,6 +72,12 @@ that contradicts `board_spec.md` becomes a spec correction.
 | T-GPIO | | | |
 | T-CLK | | | |
 | T-POWER | | | |
+| T-DIP-1 | | | |
+| T-FLASH-1 | | | |
+| T-LM75-2 | | | |
+| T-EEPROM-3 | | | |
+| T-UART-3 | | | |
+| T-HDR-1 | | | |
 
 Nothing has been executed on physical hardware yet — all rows are open. The
 simulator audit (see QA_REPORT.md updates) treats these as pending ground
