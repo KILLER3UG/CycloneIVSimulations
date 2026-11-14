@@ -4,9 +4,11 @@ from __future__ import annotations
 import os
 import tempfile
 import threading
+from typing import Optional
 from pathlib import Path
 
 from harness import (
+    DESIGNS,
     ROOT,
     case,
     check,
@@ -87,16 +89,114 @@ def eng_02() -> str:
 
 
 @case("ENG-03", "6", "Stop/cancel a running simulation", "UI",
-      "Stop aborts the server-side GHDL run and clears state")
+      "sim_stop kills the server-side GHDL run and emits sim_stopped within 10 s "
+      "(the uncanceled long_run fixture needs minutes of wall time)")
 def eng_03() -> str:
+    import queue as _queue
+    import time as _time
+
     from fastapi.testclient import TestClient
     from backend.server import app
 
     client = TestClient(app)
-    response = client.get("/api/stop")
-    check(response.status_code != 404, "no server-side stop/cancel endpoint")
-    check(response.status_code == 200, f"stop endpoint returned {response.status_code}")
-    return "stop endpoint responds"
+    source = (DESIGNS / "long_run.vhd").read_text(encoding="utf-8")
+    # Declared expectations (declared before running): sim_stop during the
+    # GHDL phase -> a single "sim_stopped" arrives within 10 s; "sim_ready"
+    # and "sim_done" never arrive (the uncanceled run of duration 2e9 ns =
+    # 2e8 cycles at 10 ns clock needs minutes of wall time, so a prompt
+    # stop proves the subprocess was actually killed, not waited for).
+    messages: list = []
+    started = _time.monotonic()
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "sim_start", "vhdl": source, "top": "long_run",
+                      "duration": 2_000_000_000, "clockPeriod": 10,
+                      "maxCycles": 1000})
+        _time.sleep(4.0)  # compile phase done, GHDL run in flight (no frames yet)
+
+        reader_q: _queue.Queue = _queue.Queue()
+
+        def _reader() -> None:
+            try:
+                while True:
+                    reader_q.put(ws.receive_json())
+            except Exception:
+                reader_q.put({"type": "_reader_exit"})
+
+        stop_sent = _time.monotonic()
+        ws.send_json({"type": "sim_stop"})
+        reader = threading.Thread(target=_reader, daemon=True)
+        reader.start()
+
+        stopped_in: Optional[float] = None
+        saw_done = False
+        saw_ready = False
+        while _time.monotonic() - stop_sent < 10.0:
+            try:
+                msg = reader_q.get(timeout=1.0)
+            except _queue.Empty:
+                continue
+            kind = msg.get("type")
+            if kind == "_reader_exit":
+                break
+            messages.append(kind)
+            if kind == "sim_stopped":
+                stopped_in = _time.monotonic() - stop_sent
+                break
+            if kind == "sim_done":
+                saw_done = True
+                break
+            if kind == "sim_ready":
+                saw_ready = True
+                break
+            if kind == "sim_error":
+                check(False, f"simulation errored: {msg.get('message')}")
+                return "error"
+    elapsed = _time.monotonic() - started
+    check(stopped_in is not None, f"no sim_stopped within 10 s; frames={messages[-6:]}")
+    check(not saw_done, "run completed instead of being stopped")
+    check(not saw_ready, "cancelled run streamed results (stop must discard them)")
+    check(stopped_in is not None and stopped_in < 10.0,
+          f"stop took {stopped_in if stopped_in is not None else '?'} s")
+    check(elapsed < 45.0, f"whole stop cycle took {elapsed:.1f} s (kill must be immediate)")
+    if stopped_in is None:
+        return "failed"
+    return (f"sim_stopped after {stopped_in:.2f} s; whole cycle {elapsed:.1f} s "
+            f"(uncanceled run: minutes)")
+
+
+@case("ENG-03B", "6", "Stop is a kill, not a wait: GHDL child exits promptly", "API",
+      "Simulator.cancel() ends a minutes-long run within ~5 s")
+def eng_03b() -> str:
+    import threading as _threading
+    import time as _time
+
+    from backend.simulator import SimulationRequest, Simulator
+
+    source = (DESIGNS / "long_run.vhd").read_text(encoding="utf-8")
+    # Declared expectations (declared before running): with duration 2e9 ns
+    # the uncanceled run needs minutes; cancel() after 4 s (compile done,
+    # GHDL in flight) must end the worker within 15 s total with the child
+    # process gone.
+    request = SimulationRequest.from_dict({
+        "vhdl": source, "top": "long_run",
+        "duration": 2_000_000_000, "clockPeriod": 10, "maxCycles": 1000,
+    })
+    sim = Simulator()
+    results: list = []
+    worker = _threading.Thread(target=lambda: results.append(sim.simulate(request)), daemon=True)
+    worker.start()
+    _time.sleep(4.0)  # compile phase done, GHDL run in flight
+    killed = sim.cancel()
+    t0 = _time.monotonic()
+    worker.join(15.0)
+    elapsed = _time.monotonic() - t0
+    check(worker.is_alive() is False, f"worker still alive {elapsed:.1f} s after cancel")
+    check(killed or not results, "cancel reported a killed child or run already ended")
+    if results:
+        check(results[0].get("cancelled") is True or results[0].get("ok") is False,
+              "cancelled run reported as not-ok")
+    check(elapsed < 15.0, f"cancel cycle took {elapsed:.1f} s (uncanceled: minutes)")
+    return f"worker exited {elapsed:.1f} s after cancel (killed={killed})"
 
 
 @case("ENG-04", "6", "Re-upload during a running sim leaves no stale state", "VHDL",

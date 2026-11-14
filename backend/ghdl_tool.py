@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence
@@ -46,6 +47,9 @@ class CommandResult:
     returncode: int = 0
     diagnostics: List[Diagnostic] = field(default_factory=list)
     command: List[str] = field(default_factory=list)
+    #: True when the run was aborted by ``cancel_current()`` (stop path) —
+    #: reported as not-ok but NOT as a compile/simulation error.
+    cancelled: bool = False
 
     @property
     def output(self) -> str:
@@ -160,6 +164,12 @@ class GhdlTool:
             except ValueError:
                 timeout = None
         self.timeout = float(timeout) if timeout and timeout > 0 else None
+        # Stop/cancel support (ENG-03): the currently running GHDL child is
+        # registered so ``cancel_current()`` can kill it mid-run. A fresh
+        # Simulator instance owns a fresh tool, so "current" is unambiguous.
+        self._cancel_lock = threading.Lock()
+        self._cancel_requested = False
+        self._current_child: Optional[subprocess.Popen] = None
 
     def _run_timeout(self, stop_time_ns: float) -> float:
         """Timeout for a simulation run: explicit override, else scaled."""
@@ -269,21 +279,75 @@ class GhdlTool:
         return self._run(args, cwd=self._resolve_cwd(cwd, workdir),
                          timeout=self._run_timeout(stop_time_ns))
 
+    # -- stop/cancel (ENG-03) ---------------------------------------------
+    def reset_cancel(self) -> None:
+        """Clear the cancel flag before starting a fresh run."""
+        with self._cancel_lock:
+            self._cancel_requested = False
+
+    def cancel_current(self) -> bool:
+        """Kill the running GHDL child, if any. Returns True when killed."""
+        with self._cancel_lock:
+            self._cancel_requested = True
+            child = self._current_child
+        if child is not None and child.poll() is None:
+            try:
+                child.kill()
+                return True
+            except OSError:
+                return False
+        return False
+
+    @property
+    def cancel_requested(self) -> bool:
+        return self._cancel_requested
+
+    def _cancelled_result(self, args: Sequence[str]) -> CommandResult:
+        return CommandResult(
+            ok=False,
+            stderr="simulation cancelled",
+            returncode=-2,
+            command=list(args),
+            cancelled=True,
+        )
+
     # -- internals --------------------------------------------------------
     def _run(self, args: Sequence[str], cwd: Optional[Path],
              timeout: Optional[float] = None) -> CommandResult:
         effective = float(timeout) if timeout is not None else (self.timeout or 60.0)
-        try:
-            completed = subprocess.run(
+        with self._cancel_lock:
+            if self._cancel_requested:
+                return self._cancelled_result(args)
+            proc = subprocess.Popen(
                 list(args),
                 cwd=str(cwd) if cwd else None,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=effective,
             )
+            self._current_child = proc
+        timed_out = False
+        try:
+            completed_stdout, completed_stderr = proc.communicate(timeout=effective)
         except subprocess.TimeoutExpired:
+            timed_out = True
+            proc.kill()
+            completed_stdout, completed_stderr = proc.communicate()
+        except OSError as exc:
+            return CommandResult(
+                ok=False,
+                stderr=str(exc),
+                returncode=-1,
+                command=list(args),
+            )
+        finally:
+            with self._cancel_lock:
+                self._current_child = None
+                cancel_hit = self._cancel_requested
+
+        if timed_out:
             is_run = "-r" in args
             message = (
                 f"GHDL timed out after {effective:g} s of wall time"
@@ -303,13 +367,12 @@ class GhdlTool:
                     file="ghdl", line=0, column=0, severity="error", message=message,
                 )],
             )
-        except OSError as exc:
-            return CommandResult(
-                ok=False,
-                stderr=str(exc),
-                returncode=-1,
-                command=list(args),
-            )
+        if cancel_hit and proc.returncode != 0:
+            # killed by cancel_current(): report as cancelled, not as a
+            # compile/simulation error (the stop path discards the run)
+            return self._cancelled_result(args)
+
+        completed = subprocess.CompletedProcess(args, proc.returncode, completed_stdout, completed_stderr)
 
         diagnostics = parse_diagnostics(completed.stdout + "\n" + completed.stderr)
         errors = [d for d in diagnostics if d.severity.lower() == "error"]

@@ -217,10 +217,11 @@ class SimSession:
     async def stop(self) -> None:
         """Stop playback and the worker thread.
 
-        The worker thread is joined (up to ``JOIN_TIMEOUT`` seconds); the GHDL
-        subprocess of a long simulation keeps running to its own wall-clock
-        timeout until a server-side cancel exists (ENG-03).  Its results are
-        discarded, never streamed: the run's generation is invalidated here.
+        The worker thread is joined (up to ``JOIN_TIMEOUT`` seconds) and the
+        in-flight GHDL subprocess is killed via ``Simulator.cancel()`` (ENG-03
+        implemented): a stop no longer waits for the simulation's own wall
+        clock.  Its results are discarded, never streamed: the run's
+        generation is invalidated here.
 
         A ``sim_stopped`` acknowledgement is emitted when this transitions an
         active session (compiling/running/paused); stopping an already
@@ -237,6 +238,12 @@ class SimSession:
             thread = self._thread
             pump_task = self._pump_task
             self._pump_task = None
+        # ENG-03: kill the in-flight GHDL child so a stopped session does not
+        # keep simulating in the background for up to its own 900 s budget.
+        try:
+            self._simulator.cancel()
+        except Exception:  # defensive: never block the stop path
+            pass
         # Audit N1: cancel the pump task so a replaced/stopped run can never
         # deliver its late results to the client.
         if pump_task is not None and not pump_task.done():

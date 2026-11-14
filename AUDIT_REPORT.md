@@ -220,10 +220,11 @@ Synced against the final run (224/230; every failing case ID is named here).
 5. ALTPLL has no behavioral model (`BLK-02`); the 2-PLL resource limit IS
    checked by the static estimator against the board.json device figure
    (`BLK-03`); altsyncram/lpm_* are rejected with a clear binding error.
-6. No REST cancel endpoint and no UI waveform export (`ENG-03`/`ENG-01B`).
-   The in-progress Vite frontend has WebSocket
-   `sim_pause`/`sim_step`/`sim_stop`/`sim_reset`; the legacy app
-   (`frontend/legacy/`) has none of these.
+6. No UI waveform export (`ENG-01B`). Server-side stop/cancel IS implemented
+   (ENG-03, 2026-11-14): `GhdlTool` registers the running GHDL child (Popen)
+   and `session.stop()` calls `Simulator.cancel()` to kill it mid-run — the
+   WS `sim_stop` path is verified by the ENG-03/ENG-03B cases. The legacy
+   app has no stop control; the Vite app does.
 7. 2D board switch/key clicks edit the stimulus and reach the design only on
    the next run (`ENG-10`); the 3D board is pickable (`ENG-09`).
 8. **No full HDL sandbox.** Literal absolute textio paths (drive letters, UNC

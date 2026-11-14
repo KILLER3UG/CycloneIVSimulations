@@ -607,8 +607,12 @@ export class Board3D {
         this._raf = requestAnimationFrame(this._loop);
         const now = performance.now();
         // 60 fps while a simulation runs, a camera tween/pulse animates or
-        // the user interacted recently; 24 fps when fully idle.
-        const cap = (this.running || this._tween || this._pulse || now - this._lastActive < 5000) ? 60 : 24;
+        // the user interacted recently; 24 fps when idle; 6 fps after 20 s
+        // fully idle (desktop sessions stay open for hours — a static board
+        // is visually identical at 6 fps and costs ~0.2% CPU).
+        const idleMs = now - this._lastActive;
+        const cap = (this.running || this._tween || this._pulse || idleMs < 5000) ? 60
+            : (idleMs < 20000 ? 24 : 6);
         if (now - this._lastRender < 1000 / cap) return;
         this._lastRender = now;
         this.renderer.info.reset();

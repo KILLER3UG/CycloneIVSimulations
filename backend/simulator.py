@@ -902,6 +902,15 @@ class Simulator:
             shutil.rmtree(workdir, ignore_errors=True)
 
     # -- simulate ---------------------------------------------------------
+    def cancel(self) -> bool:
+        """Abort the in-flight GHDL run of this simulator (stop/cancel path).
+
+        Each session owns a fresh Simulator, so "current" is unambiguous.
+        The cancelled run returns a ``cancelled`` CommandResult which the
+        session worker discards (the stop path already emitted sim_stopped).
+        """
+        return self.ghdl.cancel_current()
+
     def simulate(self, request: SimulationRequest) -> Dict[str, Any]:
         """Simulate a design.
 
@@ -912,6 +921,7 @@ class Simulator:
         pairs skip analysis and the lint pass entirely.  Any cache trouble
         falls back to the isolated flow, so results are identical either way.
         """
+        self.ghdl.reset_cancel()  # fresh run: a prior stop must not poison it
         if self.library_cache is not None:
             try:
                 return self._simulate_cached(request)

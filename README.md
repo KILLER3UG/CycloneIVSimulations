@@ -240,5 +240,6 @@ vendor examples, and audit sections for the board profile (`BJ`), polarity
 2. Behavioral ALTPLL model and LE/M9K/multiplier resource-limit warnings.
 3. Real-time clock scaling so a 1 Hz blinker at 50 MHz can be watched live.
 4. Clickable 3D board (raycaster picking) and live switch toggling.
-5. Save/load projects, waveform export (CSV/VCD) in the UI, and a server-side
-   stop/cancel endpoint.
+5. Save/load projects and waveform export (CSV/VCD) in the UI. (A server-side
+   stop/cancel WAS the roadmap item here — it is implemented now via the WS
+   `sim_stop` -> `Simulator.cancel()` path.)

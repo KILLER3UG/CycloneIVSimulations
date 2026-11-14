@@ -34,6 +34,9 @@ passed = total - len(fails)
 # Root cause -> fix, for cases that failed an earlier pass and now PASS.
 # Titles are taken from the current results table (by_id).
 FIXED = {
+ "ENG-03": ("Simulations were synchronous request/response jobs: a stop only halted UI playback while the GHDL subprocess kept running to its own wall-clock timeout.",
+            "Implemented server-side cancel: GhdlTool registers the running child (Popen) and session.stop() calls Simulator.cancel(), killing GHDL mid-run; the cancelled run is discarded and sim_stopped is emitted (ENG-03, verified live over the WS bridge).",
+            "PASS"),
  "IN-02": ("Backend accepted any text and only reported 'No entity declaration found'.",
            "Added a source pre-check that returns an explicit 'Verilog/SystemVerilog is not supported (VHDL-only GHDL)' error.",
            "PASS"),
@@ -165,7 +168,6 @@ LIMIT = {
  "OUT-13": "A combinational loop (a <= not a) neither hangs nor produces a diagnostic; GHDL resolves it to a stable value and the simulator reports it as a normal result. Not detected.",
  "BLK-02": "There is no behavioral ALTPLL model; designs containing it fail elaboration with a clear 'not bound' error.",
  "ENG-01B": "The raw VCD is produced (ENG-01) but there is no UI export button or download endpoint.",
- "ENG-03": "Simulations are synchronous request/response jobs; there is no server-side stop/cancel endpoint. Playback stop in the UI only stops the animation.",
  "ENG-10": "Clicking a switch in the 2D board edits the stimulus configuration; the change reaches the design on the next simulation run, not on a live step.",
 }
 
@@ -251,7 +253,7 @@ lines += [
     "5. ALTPLL has no behavioral model (BLK-02); the 2-PLL resource limit IS checked by a "
     "static estimator against the board.json device figure (BLK-03); altsyncram/lpm_* "
     "megafunctions are rejected with a clear binding error.",
-    "6. No server-side cancel of a running simulation; no UI waveform export (ENG-03/ENG-01B).",
+    "6. No UI waveform export (ENG-01B). Server-side stop/cancel is implemented (ENG-03).",
     "7. 2D switch/key clicks edit the stimulus configuration and reach the design only on the next run (ENG-10).",
     "8. Textio file I/O: literal absolute paths (drive letters, UNC, '..', %ENV%) are rejected "
     "by a pre-scan before GHDL runs (ENG-07/RB-05) and relative paths stay inside the "
