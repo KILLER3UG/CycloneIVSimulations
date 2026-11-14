@@ -356,6 +356,11 @@ async function loadExample(id) {
         if (/uart/i.test(ex.id)) {
             $("ss-duration").value = "1500";
         }
+        if (/sevseg/i.test(ex.id)) {
+            // the tubes multiplex every 16384 cycles (~327 µs at 10 ns clock);
+            // ~1.5 ms shows two full rotations across all four digits
+            $("ss-duration").value = "1500000";
+        }
     } catch (err) {
         log(`Failed to load example ${ex.id}: ${err.message}`, "error");
     }
@@ -956,9 +961,11 @@ async function init() {
     await loadProfile();
     await loadExamples();
 
-    // default: load the counter example into the editor
-    const counter = S.examples.find((e) => /counter/i.test(e.id) || /counter/i.test(e.name));
-    if (counter) await loadExample(counter.id);
+    // default: load the sevseg_keys example (DIP-driven 4-tube demo);
+    // fall back to the counter if it is missing
+    const def = S.examples.find((e) => e.id === "sevseg_keys")
+        || S.examples.find((e) => /counter/i.test(e.id) || /counter/i.test(e.name));
+    if (def) await loadExample(def.id);
 
     // expose for console poking / tests
     window.__cyclone = { board, state: S, api, run, stopSim, editor, bottom };
