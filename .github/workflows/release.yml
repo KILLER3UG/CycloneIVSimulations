@@ -1,0 +1,138 @@
+name: Release Desktop Installer
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Windows x64 Installer (NSIS)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry & Tauri build deps
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install GHDL (UCRT64 mcode)
+        shell: pwsh
+        run: |
+          $installed = $false
+          try {
+            winget install --id ghdl.ghdl.ucrt64.mcode -e --source winget --accept-package-agreements --accept-source-agreements
+            if ($LASTEXITCODE -eq 0) { $installed = $true }
+          } catch {
+            Write-Host "winget install failed, falling back to official GHDL release zip..."
+          }
+          if (-not $installed) {
+            $ghdlDir = "C:\ghdl"
+            Invoke-WebRequest -Uri "https://github.com/ghdl/ghdl/releases/download/v6.0.0/ghdl-mcode-6.0.0-ucrt64.zip" -OutFile "ghdl.zip"
+            Expand-Archive -Path "ghdl.zip" -DestinationPath $ghdlDir -Force
+            $binDir = (Get-ChildItem -Path $ghdlDir -Filter "ghdl.exe" -Recurse | Select-Object -First 1).DirectoryName
+            "$binDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+
+      - name: Install Python dependencies
+        run: python -m pip install --upgrade pip -r backend/requirements.txt pyinstaller
+
+      - name: Verify VERSION sync & tag parity
+        shell: pwsh
+        run: |
+          python scripts/sync_version.py --check
+          $ver = (Get-Content VERSION -Raw).Trim()
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $tag = $env:GITHUB_REF_NAME.TrimStart("v")
+            if ($tag -ne $ver) {
+              Write-Error "Git tag v$tag does not match VERSION ($ver)"
+              exit 1
+            }
+          }
+
+      - name: Run Python test suite
+        run: python -m pytest -q
+
+      - name: Install Node dependencies, run Vitest, and build frontend
+        shell: pwsh
+        run: |
+          npm ci
+          Push-Location frontend
+          npm ci
+          npm run test:unit
+          npm run build
+          Pop-Location
+
+      - name: Build frozen backend + GHDL sidecar
+        shell: pwsh
+        run: |
+          python packaging/build_sidecar.py
+          .\src-tauri\sidecar\cyclone-backend\cyclone-backend.exe doctor
+
+      - name: Build Tauri Windows installer
+        run: npx tauri build
+
+      - name: Prepare release artifacts & SHA256SUMS.txt
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-artifacts | Out-Null
+          $ver = (Get-Content VERSION -Raw).Trim()
+          Get-ChildItem -Path "src-tauri\target\release\bundle\nsis\*.exe" | Copy-Item -Destination "release-artifacts\"
+          Copy-Item "THIRD_PARTY_LICENSES.md" "release-artifacts\THIRD_PARTY_LICENSES.md"
+          Push-Location release-artifacts
+          $sums = Get-ChildItem -File | Where-Object { $_.Name -ne "SHA256SUMS.txt" } | Sort-Object Name | ForEach-Object {
+            $hash = (Get-FileHash -Algorithm SHA256 -Path $_.FullName).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          }
+          $sums | Set-Content -Path "SHA256SUMS.txt" -Encoding utf8
+          Pop-Location
+
+          @'
+          from pathlib import Path
+          import re
+          ver = Path("VERSION").read_text(encoding="utf-8").strip()
+          cl = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          m = re.search(rf"^## \[{re.escape(ver)}\][^\n]*\n(.*?)(?=^## \[|\Z)", cl, flags=re.MULTILINE | re.DOTALL)
+          section = m.group(1).strip() if m else f"Release v{ver}."
+          notes = (
+              f"# Cyclone IV Studio v{ver}\n\n"
+              f"{section}\n\n"
+              "## Windows SmartScreen Note\n"
+              "Unsigned GitHub build: if Windows Defender SmartScreen shows *Windows protected your PC*, "
+              "click **More info** -> **Run anyway**, or verify the `.exe` hash against `SHA256SUMS.txt`.\n"
+          )
+          Path("release-artifacts/RELEASE_NOTES.md").write_text(notes, encoding="utf-8")
+          '@ | python -
+
+      - name: Create Draft GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          draft: true
+          name: "Cyclone IV Studio ${{ github.ref_name }}"
+          body_path: release-artifacts/RELEASE_NOTES.md
+          files: |
+            release-artifacts/*.exe
+            release-artifacts/SHA256SUMS.txt
+            release-artifacts/THIRD_PARTY_LICENSES.md

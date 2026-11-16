@@ -37,3 +37,12 @@ work-obj*.cf
 
 # ZCode local state
 .zcode/
+
+# Desktop packaging & Tauri build outputs
+packaging/build/
+packaging/dist/
+packaging/*.spec
+src-tauri/sidecar/
+src-tauri/target/
+release-artifacts/
+

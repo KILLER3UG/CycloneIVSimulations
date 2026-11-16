@@ -12,12 +12,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import shutil
+import socket
 import sys
 from pathlib import Path
 
 from .ghdl_tool import GhdlNotFoundError
+from .paths import log_file_path, projects_dir, user_data_dir
 from .simulator import SimulationRequest, Simulator
 
 
@@ -124,17 +127,63 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _configure_file_logging() -> None:
+    try:
+        log_path = log_file_path()
+        projects_dir()
+        handler = logging.FileHandler(log_path, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+        for logger_name in ("cyclone", "cyclone.server", "uvicorn", "uvicorn.error", "uvicorn.access"):
+            logging.getLogger(logger_name).addHandler(handler)
+    except OSError:
+        pass
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
+    from .server import app
 
-    print(f"Starting Cyclone IV simulator on http://{args.host}:{args.port}")
-    uvicorn.run(
-        "backend.server:app",
-        host=args.host,
-        port=args.port,
-        reload=args.reload,
-        log_level=args.log_level,
-    )
+    if getattr(args, "user_data_dir", None):
+        os.environ["CYCLONE_USER_DATA_DIR"] = str(args.user_data_dir)
+    user_data_dir()
+    _configure_file_logging()
+
+    if args.reload:
+        if args.port == 0:
+            print("Cannot combine --reload with --port 0; falling back to 8080", file=sys.stderr, flush=True)
+            args.port = 8080
+        print(f"CYCLONE_PORT={args.port}", flush=True)
+        print(f"Starting Cyclone IV simulator on http://{args.host}:{args.port}", flush=True)
+        uvicorn.run(
+            "backend.server:app",
+            host=args.host,
+            port=args.port,
+            reload=True,
+            log_level=args.log_level,
+        )
+        return 0
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind((args.host, args.port))
+        sock.listen(128)
+        actual_port = sock.getsockname()[1]
+        print(f"CYCLONE_PORT={actual_port}", flush=True)
+        print(f"Starting Cyclone IV simulator on http://{args.host}:{actual_port}", flush=True)
+        config = uvicorn.Config(
+            app,
+            host=args.host,
+            port=actual_port,
+            log_level=args.log_level,
+            use_colors=False,
+        )
+        server = uvicorn.Server(config)
+        server.run(sockets=[sock])
+    finally:
+        try:
+            sock.close()
+        except OSError:
+            pass
     return 0
 
 
@@ -159,6 +208,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve = sub.add_parser("serve", help="start the HTTP/WebSocket server")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8080)
+    serve.add_argument("--user-data-dir", help="writable directory for logs and projects")
     serve.add_argument("--reload", action="store_true")
     serve.add_argument("--log-level", default="info")
     serve.set_defaults(func=_cmd_serve)
@@ -167,6 +217,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    if argv is None and len(sys.argv) <= 1 and getattr(sys, "frozen", False):
+        argv = ["serve", "--host", "127.0.0.1", "--port", "0"]
     parser = build_parser()
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):

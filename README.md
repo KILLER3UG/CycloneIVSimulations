@@ -16,50 +16,63 @@ of ports to the board's LEDs / switches / keys / 7-segment displays.  The
 frontend then renders all of that in the browser, including playback of the
 captured clock cycles.
 
-## Quick start
+## Windows Desktop Installer (3-Step Quick Start)
+
+No Python, Node.js, or separate GHDL setup is required when using the installer:
+
+1. Download **`Cyclone IV Studio_<version>_x64-setup.exe`** (and optional `SHA256SUMS.txt`) from the GitHub Releases page.
+2. Double-click the installer to install per-user (bundled runtime includes GHDL, FastAPI, and the built UI; user logs and projects live in `%APPDATA%\CycloneIVStudio`).
+   > **Windows SmartScreen Note:** Because this open-source build is currently unsigned, Windows Defender SmartScreen may display *"Windows protected your PC"*. Click **More info** -> **Run anyway**, or verify the file hash against `SHA256SUMS.txt` first.
+3. Launch **Cyclone IV Studio** from the Start Menu, pick an example or click **+ Add file** (`.vhd` / `.v`), assign pins in **Pin Planner**, and press **Compile**.
+
+See [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) for license terms and the GHDL GPL-2.0 source offer.
+
+---
+
+## Development Setup (From Source)
 
 ### 1. Install GHDL
 
 ```powershell
 winget install ghdl.ghdl.ucrt64.mcode
-```
-
-Verify:
-
-```powershell
 python -m backend doctor
 ```
 
 The backend also finds GHDL through `GHDL_BIN` if it is installed elsewhere.
 
-### 2. Install Python dependencies
+### 2. Install Python & Node Dependencies
 
 ```powershell
 python -m pip install -r backend/requirements.txt
+npm install
+cd frontend && npm install && npm run build && cd ..
 ```
 
-### 3. Run
+### 3. Run in Development Mode
+
+Terminal 1 (backend API on `127.0.0.1:8080`):
+```powershell
+python -m backend serve --host 127.0.0.1 --port 8080 --reload
+```
+
+Terminal 2 (Vite dev server on `http://localhost:8000`, proxying `/api` and `/ws` to `:8080`):
+```powershell
+npm run dev
+```
+
+Or run both from a single backend server on `:8080` serving `frontend/dist/`.
+
+### 4. Build the Standalone Desktop Installer
 
 ```powershell
-python -m backend serve --port 8000
+python -m pip install pyinstaller
+python scripts/sync_version.py --check
+cd frontend && npm run build && cd ..
+python packaging/build_sidecar.py
+npx tauri build
 ```
 
-Open <http://127.0.0.1:8000>.
-
-The counter example is compiled and simulated automatically on load.
-
-### 4. Frontend development (optional)
-
-The served UI is the pre-built app in `frontend/dist/` (committed workflows
-don't need it). To work on the frontend with hot reload, start the backend as
-above and then — from the repo root —:
-
-```powershell
-npm run dev      # Vite dev server on :5173, /api + /ws proxied to :8000
-npm run build    # production build into frontend/dist/
-```
-
-(`npm run serve` also starts the backend; `npm test` runs the full QA suite.)
+Installer artifacts are written to `src-tauri/target/release/bundle/nsis/`.
 
 ## What works today
 

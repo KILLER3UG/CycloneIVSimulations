@@ -28,23 +28,25 @@ from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
+from . import __version__
 from .device import DEVICE, DEVICES, get_device, set_device
+from .paths import bundle_root, projects_dir, user_data_dir
 from .ghdl_tool import GhdlNotFoundError
 from .session import SimSession
 from .simulator import SimulationRequest, Simulator
 from .vhdl_parser import VHDLParser
 
-FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
-EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"
+FRONTEND_DIR = bundle_root() / "frontend"
+EXAMPLES_DIR = bundle_root() / "examples"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("cyclone.server")
 
-app = FastAPI(title="Cyclone IV VHDL Simulator", version="0.2.0")
+app = FastAPI(title="Cyclone IV VHDL Simulator", version=__version__)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$|^tauri://localhost$|^https?://tauri\.localhost$",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -129,20 +131,31 @@ def _example_description(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+@app.get("/api/version")
+def app_version() -> dict:
+    return {"ok": True, "version": __version__}
+
+
 @app.get("/api/health")
 def health() -> dict:
+    data_dir = str(user_data_dir())
+    projects_dir()
     try:
         simulator = get_simulator()
         result = simulator.health()
+        result["appVersion"] = __version__
         result["frontend"] = str(FRONTEND_DIR)
+        result["userDataDir"] = data_dir
         result["device"] = DEVICE()
         return result
     except GhdlNotFoundError as exc:
         return {
             "ok": False,
+            "appVersion": __version__,
             "ghdl": None,
             "version": None,
             "error": str(exc),
+            "userDataDir": data_dir,
             "device": DEVICE(),
         }
 

@@ -78,3 +78,73 @@ def test_websocket_roundtrip(client):
             if message["type"] == "simulation_complete":
                 assert message["ok"] is True
                 break
+
+
+def test_version_sync_and_endpoints(client):
+    expected_version = (Path(__file__).resolve().parent.parent / "VERSION").read_text(encoding="utf-8").strip()
+
+    from scripts.sync_version import run_sync
+    ok, notes = run_sync(write=False)
+    assert ok, notes
+
+    v_resp = client.get("/api/version")
+    assert v_resp.status_code == 200
+    assert v_resp.json() == {"ok": True, "version": expected_version}
+
+    h_resp = client.get("/api/health")
+    assert h_resp.status_code == 200
+    h_body = h_resp.json()
+    assert h_body["appVersion"] == expected_version
+    assert h_body["userDataDir"]
+
+
+def test_serve_port_zero_prints_port_and_writes_log(tmp_path):
+    import re
+    import subprocess
+    import sys
+    import urllib.request
+
+    root = Path(__file__).resolve().parent.parent
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "backend",
+            "serve",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "0",
+            "--user-data-dir",
+            str(tmp_path),
+            "--log-level",
+            "warning",
+        ],
+        cwd=str(root),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    port = None
+    try:
+        assert proc.stdout is not None
+        for _ in range(40):
+            line = proc.stdout.readline()
+            if not line:
+                break
+            m = re.search(r"CYCLONE_PORT=(\d+)", line)
+            if m:
+                port = int(m.group(1))
+                break
+        assert port is not None and port > 0
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/version", timeout=5) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        assert payload["ok"] is True
+        assert (tmp_path / "logs" / "backend.log").exists()
+        assert (tmp_path / "projects").is_dir()
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()

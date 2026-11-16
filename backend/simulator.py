@@ -25,8 +25,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .device import BOARD, DEVICE, board_pin_map, resolve_port_pins
+from .paths import bundle_root
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = bundle_root()
 from .qsf_parser import parse_qsf
 from .board_detect import board_models, model_files
 from .peripherals import decode_uart, decode_buzzer, decode_vga, read_model_dumps
@@ -95,9 +96,12 @@ class SimulationRequest:
     #: ``cycles`` are omitted (the client replays nothing) and a tiny
     #: persistence-of-vision board image is returned instead, so a switch flip
     #: updates the board without shipping ~20 MB of per-cycle samples.
-    compact_board: bool = False
-    #: Pin Planner mode: only explicit pin assignments map to the board.
-    strict_pins: bool = False
+    compact_board: bool = False
+
+    #: Pin Planner mode: only explicit pin assignments map to the board.
+
+    strict_pins: bool = False
+
     #: Notes produced while clamping out-of-range request parameters (M1).
     clamp_notes: List[str] = field(default_factory=list)
 

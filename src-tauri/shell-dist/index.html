@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cyclone IV Studio</title>
+<style>
+  :root {
+    --bg: #0b1220;
+    --card: #111c30;
+    --border: rgba(148, 163, 184, 0.24);
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --blue: #3b82f6;
+    --red: #f87171;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    height: 100vh; display: grid; place-items: center;
+    background: radial-gradient(700px 400px at 50% 35%, rgba(37,99,235,0.16), transparent), var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 24px;
+  }
+  .card {
+    width: min(560px, 95vw); background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 26px 28px; box-shadow: 0 24px 60px rgba(0,0,0,0.45);
+  }
+  h1 { font-size: 18px; margin-bottom: 10px; display: flex; align-items: center; gap: 10px; }
+  .spinner {
+    width: 16px; height: 16px; border-radius: 50%;
+    border: 2px solid rgba(59,130,246,0.3); border-top-color: var(--blue);
+    animation: spin 0.75s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  p { font-size: 13px; line-height: 1.55; color: var(--muted); }
+  .err { color: var(--red); display: none; margin-top: 10px; font-size: 13px; line-height: 1.5; }
+  .logbox {
+    display: none; margin-top: 14px; padding: 10px 12px; border-radius: 8px;
+    background: rgba(15, 23, 42, 0.85); border: 1px solid var(--border);
+    font-family: Consolas, "Courier New", monospace; font-size: 12px; color: #cbd5e1;
+    word-break: break-all;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1><span class="spinner" id="sp"></span><span id="title">Starting Cyclone IV Studio…</span></h1>
+    <p id="sub">Launching the local GHDL simulation backend on 127.0.0.1…</p>
+    <div class="err" id="err"></div>
+    <div class="logbox" id="logbox"></div>
+  </div>
+  <script>
+    window.showBackendError = function (message, logPath) {
+      document.getElementById("sp").style.display = "none";
+      document.getElementById("title").textContent = "Backend failed to start";
+      document.getElementById("sub").textContent =
+        "Cyclone IV Studio could not launch or reach its local simulation service.";
+      const errEl = document.getElementById("err");
+      errEl.style.display = "block";
+      errEl.textContent = String(message || "Unknown startup error.");
+      if (logPath) {
+        const box = document.getElementById("logbox");
+        box.style.display = "block";
+        box.textContent = "Diagnostics log: " + logPath;
+      }
+    };
+  </script>
+</body>
+</html>

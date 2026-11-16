@@ -1,15 +1,18 @@
 {
-    "name": "cycloneivsimulations",
-    "private": true,
-    "version": "2.0.0",
-    "description": "Cyclone IV Studio — RZ-EasyFPGA A2.2 browser simulator (root task runner; the frontend app lives in frontend/)",
-    "scripts": {
-        "dev": "cd frontend && npm run dev",
-        "build": "cd frontend && npm run build",
-        "serve": "python -m backend serve --port 8080",
-        "start": "python -m backend serve --port 8080",
-        "test": "python tests/run_all.py",
-        "shot:board": "cd frontend && node scripts/board-shot.mjs",
-        "shot:ui": "cd frontend && node scripts/ui-verify.mjs"
-    }
+  "name": "cycloneivsimulations",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Cyclone IV Studio \u2014 RZ-EasyFPGA A2.2 browser simulator (root task runner; the frontend app lives in frontend/)",
+  "scripts": {
+    "dev": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build",
+    "serve": "python -m backend serve --port 8080",
+    "start": "python -m backend serve --port 8080",
+    "test": "python tests/run_all.py",
+    "shot:board": "cd frontend && node scripts/board-shot.mjs",
+    "shot:ui": "cd frontend && node scripts/ui-verify.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4"
+  }
 }

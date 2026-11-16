@@ -12,9 +12,12 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from .paths import bundled_ghdl_candidates
 from typing import Dict, Iterable, List, Optional, Sequence
 
 # GHDL's default timescale is femtoseconds in the VCD it writes; the backend
@@ -84,7 +87,7 @@ class GhdlNotFoundError(RuntimeError):
 
 
 def _candidate_paths() -> List[Path]:
-    candidates: List[Path] = []
+    candidates: List[Path] = list(bundled_ghdl_candidates())
     home = Path.home()
     local = home / "AppData" / "Local"
 
@@ -122,6 +125,11 @@ def find_ghdl() -> str:
         if path.exists():
             return str(path)
         raise GhdlNotFoundError(f"GHDL_BIN points to a non-existent file: {override}")
+
+    if getattr(sys, "frozen", False):
+        for candidate in bundled_ghdl_candidates():
+            if candidate.exists():
+                return str(candidate)
 
     which = shutil.which("ghdl")
     if which:

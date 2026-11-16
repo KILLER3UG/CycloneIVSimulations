@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
+from .paths import bundle_root
 
-BOARD_JSON = Path(__file__).resolve().parent.parent / "board" / "board.json"
+BOARD_JSON = bundle_root() / "board" / "board.json"
 
 
 class BackendConfigError(RuntimeError):

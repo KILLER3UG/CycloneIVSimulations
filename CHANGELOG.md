@@ -1,0 +1,20 @@
+# Changelog
+
+All notable changes to **Cyclone IV Studio** are documented in this file.
+
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0] - 2026-11-16
+
+### Added
+- **Interactive 3D RZ-EasyFPGA A2.2 Board Simulator**: Three.js hardware model featuring EP4CE6E22C8N / EP4CE10E22C8N FPGA packages, 4 active-low red LEDs, 4 momentary active-low push keys (`KEY1`–`KEY4`) pulled up via 10 kΩ resistors sharing nets with 4 latching DIP switches, 4-digit common-anode red 7-segment display with persistence-of-vision multiplexing, piezo buzzer, and expandable board inspection overlay.
+- **Quartus-Style IDE & Project Manager**:
+  - Multi-file VHDL-2008 and Verilog-2001 project tree and editor tabs (`+ Add file` `.vhd`, `.v`), inline rename, confirmation-free file delete with Undo toast, top-level entity pinning (`Set as Top-Level`), automatic transitive dependency resolution, ignored-file reporting, and empty-project state.
+  - Single unified **Compile** button that compiles, validates pin assignments, programs the virtual JTAG board, and runs GHDL simulation while preserving previous board state when compilation fails.
+  - Scrollable Quartus-style **Messages** panel with severity filters (`All` / `Err` / `Warn` / `Info`), summary metrics, and click-to-jump `file:line` navigation.
+  - Collapsible left and right sidebars with persistent rail toggles, keyboard shortcuts (`Ctrl+B`, `Ctrl+\`, `Ctrl+Enter`), and reload state preservation.
+- **Editable Pin Planner & QSF Support**:
+  - Per-bit expansion for bus ports (`led[3..0]`), valid EQFP-144 pin catalog dropdown with connected board peripheral labels, custom pin entry, I/O standard selection, optional `Apply board defaults` helper, and `.qsf` import/export round-trip persisted in `localStorage`.
+  - Pre-compile validation matching Quartus rules: warnings for unassigned ports (no-op on hardware) and errors for duplicate pin assignments, nonexistent pins, and direction conflicts.
+- **Waveform & Peripheral Inspectors**: Interactive VCD waveform viewer with zoom/pan/cursor/probes plus live decoded UART, VGA, character LCD, buzzer, and I2C EEPROM/temperature sensor analyzers.
+- **Windows Desktop Distribution**: Standalone PyInstaller + GHDL backend sidecar managed by a native Tauri v2 shell, Windows NSIS/MSI installer (`v0.1.0`), per-user storage in `%APPDATA%\CycloneIVStudio`, `THIRD_PARTY_LICENSES.md`, and draft GitHub Release CI workflow.
