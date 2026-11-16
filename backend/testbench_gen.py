@@ -101,6 +101,12 @@ def detect_reset(entity: Entity) -> Optional[tuple[Port, bool]]:
 
     Substring matching is deliberately avoided: an input like ``reset_req``
     is not a reset the testbench should drive (audit m4).
+
+    Polarity is a property of the DESIGN, inferred from the port name
+    (``rst_n``/``resetn`` -> active-low, bare ``reset``/``rst`` -> active-high).
+    The board's own active-low RESET key is applied by the UI, which passes
+    ``resetActiveHigh=false`` + ``resetPort`` explicitly; this heuristic only
+    drives the bare-API path where no board polarity is supplied.
     """
     board_reset = _normalize(BOARD.get("resetPort", ""))
     board_active_high = not BOARD.get("resetActiveLow", False)

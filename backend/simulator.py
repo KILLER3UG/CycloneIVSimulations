@@ -12,8 +12,10 @@ interfere with each other.  Set ``CYCLESIM_KEEP_DIR=1`` to keep the project
 from __future__ import annotations
 
 import hashlib
+import heapq
 import json
 import os
+import traceback
 import re
 import shutil
 import tempfile
@@ -37,7 +39,8 @@ from .testbench_gen import (
     generate_testbench,
     stimulus_from_dict,
 )
-from .vhdl_parser import Design, Entity, VHDLParser
+from .verilog_support import translate_verilog_sources
+from .vhdl_parser import Design, Entity, VHDLParser, tokenize
 from .vcd_parser import parse_vcd
 from .waveform import build_waveform, map_board, _classify_port
 
@@ -49,7 +52,7 @@ MIN_DURATION_NS = 1.0
 MAX_CLOCK_PERIOD_NS = 1_000_000.0        # 1 kHz
 MIN_CLOCK_PERIOD_NS = 0.01               # 100 GHz (parser/unit sanity only)
 MAX_RESET_CYCLES = 1_000_000
-MAX_SAMPLE_CYCLES = 8192                 # UI cycle-table samples
+MAX_SAMPLE_CYCLES = 131072               # UI cycle-table samples (2 textbook scan rotations)
 
 
 def _finite_float(value: Any, default: float) -> tuple[float, Optional[str]]:
@@ -84,6 +87,17 @@ class SimulationRequest:
     #: plain content string (named ``rom.mif``).  Written into the simulation
     #: workdir so a design can read it with std.textio at elaboration time.
     memory_init_file: Optional[Dict[str, str]] = None
+    #: Skip the GHDL synthesis-lint pass (refresh path). The lint only reports
+    #: code-level warnings already surfaced by the initial compile; an input
+    #: change does not alter the code, so re-running it wastes ~0.5 s.
+    skip_synth: bool = False
+    #: Compact board-only result (live input-change refresh). The waveform
+    #: ``cycles`` are omitted (the client replays nothing) and a tiny
+    #: persistence-of-vision board image is returned instead, so a switch flip
+    #: updates the board without shipping ~20 MB of per-cycle samples.
+    compact_board: bool = False
+    #: Pin Planner mode: only explicit pin assignments map to the board.
+    strict_pins: bool = False
     #: Notes produced while clamping out-of-range request parameters (M1).
     clamp_notes: List[str] = field(default_factory=list)
 
@@ -177,6 +191,9 @@ class SimulationRequest:
             max_cycles=max_cycles,
             files=files,
             memory_init_file=memory_init_file,
+            skip_synth=bool(data.get("skipSynth", False)),
+            compact_board=bool(data.get("compactBoard", False)),
+            strict_pins=bool(data.get("strictPins", data.get("strict_pins", False))),
             clamp_notes=notes,
         )
         return request
@@ -192,7 +209,11 @@ class SimulationError(RuntimeError):
         self.logs = logs
 
 
-_VERILOG_RE = re.compile(r"^\s*(?:module|endmodule|always|assign|wire|reg)\b", re.IGNORECASE | re.MULTILINE)
+_COMMENT_RE = re.compile(r"--[^\n]*|/\*.*?\*/", re.DOTALL)
+_VERILOG_RE = re.compile(
+    r"^\s*(?:endmodule\b|always(?:_ff|_comb|_latch)?\s*(?:@|#|\b)|module\s+[A-Za-z_]\w*\s*(?:\(|#|;)|(?:assign|wire|reg)\s+(?![<:]=|:)\S)",
+    re.IGNORECASE | re.MULTILINE,
+)
 _QSF_RE = re.compile(
     r"set_(?:location|instance|global)_assignment|TOP_LEVEL_ENTITY|IO_STANDARD",
     re.IGNORECASE,
@@ -200,32 +221,7 @@ _QSF_RE = re.compile(
 
 
 def _unsupported_source(source: str) -> Optional[dict]:
-    """Return a clear error for inputs this simulator cannot compile.
-
-    GHDL is a VHDL-only simulator and there is no Quartus project reader, so
-    silently reporting "No entity declaration found" for Verilog or a .qsf
-    would be misleading.  Say what is unsupported instead.
-    """
-    if _VERILOG_RE.search(source):
-        if re.search(r"\bentity\b", source, re.IGNORECASE):
-            return {
-                "message": (
-                    "Mixed-language projects are not supported: the simulator compiles "
-                    "VHDL only (GHDL). Move the Verilog/SystemVerilog module to VHDL."
-                ),
-                "line": 1,
-                "column": 1,
-                "severity": "error",
-            }
-        return {
-            "message": (
-                "Verilog/SystemVerilog is not supported: the simulator compiles VHDL "
-                "only (GHDL). Rewrite the module in VHDL."
-            ),
-            "line": 1,
-            "column": 1,
-            "severity": "error",
-        }
+    """Legacy hook retained for callers; Verilog is translated before GHDL."""
     return None
 
 
@@ -574,7 +570,7 @@ def _sources(vhdl: str, files: List[Dict[str, str]]) -> List[tuple[str, str]]:
         sources: List[tuple[str, str]] = []
         for index, item in enumerate(files):
             name = Path(str(item.get("name") or f"design_{index + 1}.vhd")).name
-            if not name.lower().endswith((".vhd", ".vhdl")):
+            if not name.lower().endswith((".vhd", ".vhdl", ".v", ".sv")):
                 name += ".vhd"
             sources.append((name, str(item.get("content") or "")))
         return sources
@@ -588,6 +584,349 @@ def _parse_sources(sources: List[tuple[str, str]]) -> Design:
         design.entities.extend(parsed.entities)
         design.errors.extend(parsed.errors)
     return design
+
+
+_NON_INST_KW = frozenset({
+    "entity", "configuration", "component", "block", "process",
+    "if", "case", "for", "while", "loop", "generate", "signal",
+    "variable", "constant", "shared", "file", "type", "subtype",
+})
+
+
+def _extract_vhdl_units(content: str) -> List[dict]:
+    """Extract top-level VHDL design units, line spans, and dependency edges."""
+    tokens = tokenize(content)
+    units: List[dict] = []
+    default_ctx_lines: List[str] = []
+    seen_first_unit = False
+    raw_lines = content.splitlines()
+    i = 0
+    n = len(tokens)
+    ctx_start_line: Optional[int] = None
+    ctx_pkgs: set[str] = set()
+    ctx_has_library = False
+
+    def _scan_subprogram_is(idx: int) -> bool:
+        pdepth = 0
+        k = idx + 1
+        while k < n:
+            tk = tokens[k]
+            if tk.is_op("("):
+                pdepth += 1
+            elif tk.is_op(")"):
+                pdepth = max(0, pdepth - 1)
+            elif pdepth == 0:
+                if tk.is_kw("is"):
+                    return True
+                if tk.is_op(";"):
+                    return False
+            k += 1
+        return False
+
+    def _next_kw_among(idx: int, targets: tuple[str, ...]) -> Optional[str]:
+        k = idx + 1
+        while k < n:
+            tk = tokens[k]
+            if tk.is_op(";"):
+                return ";"
+            for t in targets:
+                if tk.is_kw(t):
+                    return t
+            k += 1
+        return None
+
+    while i < n:
+        tok = tokens[i]
+        if tok.is_kw("library", "use") or (
+            tok.is_kw("context") and _next_kw_among(i, ("is",)) != "is"
+        ):
+            if ctx_start_line is None:
+                ctx_start_line = tok.line
+            if tok.is_kw("library"):
+                ctx_has_library = True
+            start_clause = tok.line
+            while i < n and not tokens[i].is_op(";"):
+                if (
+                    tokens[i].is_kw("use")
+                    and i + 3 < n
+                    and tokens[i + 1].kind == "ident"
+                    and tokens[i + 1].value.lower() == "work"
+                    and tokens[i + 2].is_op(".")
+                    and tokens[i + 3].kind == "ident"
+                ):
+                    ctx_pkgs.add(tokens[i + 3].value.lower())
+                i += 1
+            end_clause = tokens[i].line if i < n else raw_lines and len(raw_lines) or start_clause
+            if not seen_first_unit and "work." not in " ".join(
+                raw_lines[start_clause - 1 : end_clause]
+            ).lower():
+                default_ctx_lines.extend(raw_lines[start_clause - 1 : end_clause])
+            i += 1
+            continue
+
+        if tok.is_kw("entity", "architecture", "package", "configuration", "context"):
+            seen_first_unit = True
+            start_line = tok.line
+            kind = tok.value.lower()
+            name = ""
+            entity_of: Optional[str] = None
+            is_pkg_instantiation = False
+
+            if kind == "package" and i + 1 < n and tokens[i + 1].is_kw("body"):
+                kind = "package_body"
+                name = tokens[i + 2].value if i + 2 < n else ""
+            elif kind in ("entity", "package", "context"):
+                name = tokens[i + 1].value if i + 1 < n else ""
+                if kind == "package" and i + 3 < n and tokens[i + 2].is_kw("is") and tokens[i + 3].is_kw("new"):
+                    is_pkg_instantiation = True
+            elif kind in ("architecture", "configuration"):
+                name = tokens[i + 1].value if i + 1 < n else ""
+                if i + 3 < n and tokens[i + 2].is_kw("of"):
+                    entity_of = tokens[i + 3].value
+
+            used_pkgs = set(ctx_pkgs)
+            instantiated: set[str] = set()
+            end_line = len(raw_lines) if raw_lines else start_line
+
+            if is_pkg_instantiation:
+                while i < n and not tokens[i].is_op(";"):
+                    i += 1
+                end_line = tokens[i].line if i < n else end_line
+                i += 1
+            else:
+                # Advance to `is` of unit header so its `is` isn't misread
+                j = i + 1
+                while j < n and not tokens[j].is_kw("is"):
+                    j += 1
+                j = min(j + 1, n)
+                depth = 0
+                while j < n:
+                    tk = tokens[j]
+                    prev = tokens[j - 1]
+                    # Extract `use work.<pkg>` and instantiations inside unit
+                    if (
+                        tk.is_kw("use")
+                        and j + 3 < n
+                        and tokens[j + 1].value.lower() == "work"
+                        and tokens[j + 2].is_op(".")
+                        and tokens[j + 3].kind == "ident"
+                    ):
+                        used_pkgs.add(tokens[j + 3].value.lower())
+                    if (
+                        tk.is_kw("entity")
+                        and j + 3 < n
+                        and tokens[j + 1].value.lower() == "work"
+                        and tokens[j + 2].is_op(".")
+                        and tokens[j + 3].kind == "ident"
+                    ):
+                        instantiated.add(tokens[j + 3].value.lower())
+                    if (
+                        tk.kind == "ident"
+                        and j + 3 < n
+                        and tokens[j + 1].is_op(":")
+                    ):
+                        m = j + 2
+                        if m < n and tokens[m].is_kw("component"):
+                            m += 1
+                        if (
+                            m + 2 < n
+                            and tokens[m].kind == "ident"
+                            and tokens[m].value.lower() not in _NON_INST_KW
+                            and tokens[m + 1].is_kw("generic", "port")
+                            and tokens[m + 2].is_kw("map")
+                        ):
+                            instantiated.add(tokens[m].value.lower())
+
+                    if tk.is_kw("end"):
+                        if depth > 0:
+                            depth -= 1
+                            while j < n and not tokens[j].is_op(";"):
+                                j += 1
+                        else:
+                            while j < n and not tokens[j].is_op(";"):
+                                j += 1
+                            end_line = tokens[j].line if j < n else end_line
+                            j += 1
+                            break
+                    elif not prev.is_kw("end"):
+                        if tk.is_kw("process", "loop", "generate", "block", "record", "units", "protected"):
+                            depth += 1
+                        elif tk.is_kw("component") and not prev.is_op(":"):
+                            depth += 1
+                        elif tk.is_kw("if") and _next_kw_among(j, ("then", "generate")) == "then":
+                            depth += 1
+                        elif tk.is_kw("case") and _next_kw_among(j, ("is", "generate")) == "is":
+                            depth += 1
+                        elif tk.is_kw("function", "procedure") and _scan_subprogram_is(j):
+                            depth += 1
+                    j += 1
+                i = j
+
+            units.append({
+                "kind": kind,
+                "name": name.lower(),
+                "orig_name": name,
+                "entity_of": entity_of.lower() if entity_of else None,
+                "ctx_start_line": ctx_start_line or start_line,
+                "start_line": start_line,
+                "end_line": end_line,
+                "has_library": ctx_has_library,
+                "used_packages": used_pkgs,
+                "instantiated": instantiated,
+                "default_ctx_lines": list(default_ctx_lines),
+            })
+            ctx_start_line = None
+            ctx_pkgs = set()
+            ctx_has_library = False
+            continue
+
+        i += 1
+    return units
+
+
+def _needs_intrafile_split(units: List[dict]) -> bool:
+    """True if any earlier unit in the same file depends on a later unit."""
+    if len(units) < 2:
+        return False
+    first_def: Dict[tuple[str, str], int] = {}
+    for idx, u in enumerate(units):
+        key = (u["kind"], u["name"])
+        if key not in first_def:
+            first_def[key] = idx
+    for idx, u in enumerate(units):
+        for pkg in u["used_packages"]:
+            if first_def.get(("package", pkg), -1) > idx:
+                return True
+        if u["entity_of"] and first_def.get(("entity", u["entity_of"]), -1) > idx:
+            return True
+        for child in u["instantiated"]:
+            if first_def.get(("entity", child), -1) > idx:
+                return True
+    return False
+
+
+def _prepare_sources_for_ghdl(
+    raw_sources: List[tuple[str, str]],
+) -> tuple[List[tuple[str, str]], Dict[str, str]]:
+    """Split out-of-order single files (if needed) and order files topologically."""
+    expanded: List[tuple[str, str, List[dict]]] = []
+    aliases: Dict[str, str] = {}
+
+    for f_idx, (fname, content) in enumerate(raw_sources):
+        units = _extract_vhdl_units(content)
+        if _needs_intrafile_split(units):
+            lines = content.splitlines()
+            for u_idx, u in enumerate(units):
+                c_start = u["ctx_start_line"]
+                s_line = u["start_line"]
+                e_line = max(s_line, min(len(lines), u["end_line"]))
+                if u["has_library"] or not u["default_ctx_lines"] or s_line - 1 < len(u["default_ctx_lines"]):
+                    pad = "\n" * max(0, c_start - 1)
+                    body = "\n".join(lines[c_start - 1 : e_line])
+                    unit_src = pad + body + "\n"
+                else:
+                    ctx_hdr = "\n".join(u["default_ctx_lines"])
+                    pad = "\n" * max(0, s_line - 1 - len(u["default_ctx_lines"]))
+                    body = "\n".join(lines[s_line - 1 : e_line])
+                    unit_src = ctx_hdr + "\n" + pad + body + "\n"
+                split_name = f"__split_{f_idx}_{u_idx}_{fname}"
+                aliases[split_name] = fname
+                expanded.append((split_name, unit_src, [u]))
+        else:
+            expanded.append((fname, content, units))
+
+    # Build dependency graph between compilation items
+    n = len(expanded)
+    pkg_owner: Dict[str, int] = {}
+    ent_owner: Dict[str, int] = {}
+    arch_owners: Dict[str, List[int]] = {}
+    for idx, (_name, _content, units) in enumerate(expanded):
+        for u in units:
+            if u["kind"] == "package" and u["name"] and u["name"] not in pkg_owner:
+                pkg_owner[u["name"]] = idx
+            elif u["kind"] == "entity" and u["name"] and u["name"] not in ent_owner:
+                ent_owner[u["name"]] = idx
+            elif u["kind"] == "architecture" and u["entity_of"]:
+                arch_owners.setdefault(u["entity_of"], []).append(idx)
+
+    adj: List[set[int]] = [set() for _ in range(n)]
+    indeg = [0] * n
+    for idx, (_name, _content, units) in enumerate(expanded):
+        deps: set[int] = set()
+        for u in units:
+            for pkg in u["used_packages"]:
+                if pkg in pkg_owner:
+                    deps.add(pkg_owner[pkg])
+            if u["entity_of"] and u["entity_of"] in ent_owner:
+                deps.add(ent_owner[u["entity_of"]])
+            for child in u["instantiated"]:
+                if child in ent_owner:
+                    deps.add(ent_owner[child])
+                for a_idx in arch_owners.get(child, ()):
+                    deps.add(a_idx)
+        deps.discard(idx)
+        for d in deps:
+            if idx not in adj[d]:
+                adj[d].add(idx)
+                indeg[idx] += 1
+
+    heap = [i for i in range(n) if indeg[i] == 0]
+    heapq.heapify(heap)
+    order: List[int] = []
+    while heap:
+        cur = heapq.heappop(heap)
+        order.append(cur)
+        for nxt in adj[cur]:
+            indeg[nxt] -= 1
+            if indeg[nxt] == 0:
+                heapq.heappush(heap, nxt)
+    if len(order) < n:
+        seen = set(order)
+        for i in range(n):
+            if i not in seen:
+                order.append(i)
+
+    ordered = [(expanded[i][0], expanded[i][1]) for i in order]
+    return ordered, aliases
+
+
+def _rewrite_diagnostic_files(
+    items: List[dict],
+    aliases: Dict[str, str],
+    line_maps: Optional[Dict[str, Dict[int, Tuple[str, int]]]] = None,
+) -> List[dict]:
+    """Restore original uploaded filenames and line numbers on diagnostics."""
+    if not aliases and not line_maps:
+        return items
+    rewritten: List[dict] = []
+    for item in items:
+        copy = dict(item)
+        fpath = str(copy.get("file") or "")
+        base = Path(fpath).name
+        if aliases and base in aliases:
+            copy["file"] = aliases[base]
+            base = Path(aliases[base]).name
+        if line_maps and base in line_maps:
+            vmap = line_maps[base]
+            ln = int(copy.get("line") or 1)
+            mapped = vmap.get(ln)
+            if mapped is None and vmap:
+                prior = [k for k in vmap if k <= ln]
+                mapped = vmap[max(prior)] if prior else next(iter(vmap.values()))
+            if mapped is not None:
+                copy["file"], copy["line"] = mapped
+        rewritten.append(copy)
+    return rewritten
+
+
+def _instantiation_map(sources: List[tuple[str, str]]) -> Dict[str, set[str]]:
+    """Map each entity (lowercase) -> set of child entities instantiated in its arch."""
+    graph: Dict[str, set[str]] = {}
+    for _, content in sources:
+        for u in _extract_vhdl_units(content):
+            if u["kind"] == "architecture" and u["entity_of"]:
+                graph.setdefault(u["entity_of"], set()).update(u["instantiated"])
+    return graph
 
 
 def _pin_warnings(entity, qsf_pinned: Optional[set] = None) -> List[dict]:
@@ -636,6 +975,7 @@ def _process_qsf(
         "top": parsed.top,
         "device": parsed.device,
         "pins": parsed.pins,
+        "bitPins": parsed.bit_pins,
         "ioStandards": parsed.io_standards,
         "files": [name for _, name in parsed.files],
         "unusedPolicy": parsed.unusedPolicy,
@@ -745,6 +1085,9 @@ class _Prep:
     root: str
     tb_source: str
     models: List[dict]
+    aliases: Dict[str, str] = field(default_factory=dict)
+    line_maps: Dict[str, Dict[int, Tuple[str, int]]] = field(default_factory=dict)
+    entities: List[str] = field(default_factory=list)
 
 
 class Simulator:
@@ -778,8 +1121,12 @@ class Simulator:
         top: Optional[str] = None,
         files: Optional[List[Dict[str, str]]] = None,
         request_qsf: Optional[str] = None,
+        strict_pins: bool = False,
     ) -> Dict[str, Any]:
-        sources = _sources(vhdl, files or [])
+        raw_sources = _sources(vhdl, files or [])
+        sources, v_line_maps, v_errors = translate_verilog_sources(raw_sources)
+        if v_errors:
+            return {"ok": False, "entity": None, "board": {}, "errors": v_errors, "warnings": [], "logs": ""}
         combined = "\n".join(content for _, content in sources)
         unsupported = _unsupported_source(combined)
         if unsupported is not None:
@@ -807,16 +1154,18 @@ class Simulator:
             errors.extend(qsf_errors)
             if qsf_top and top is None:
                 top = qsf_top
-        entity = self._select_entity(design, top, required=top is not None)
+        entity = self._select_entity(design, top, required=top is not None, sources=sources)
         if entity is not None and qsf_text is not None:
             port_errors, port_warnings = _validate_qsf_ports(parse_qsf(qsf_text), entity)
             errors.extend(port_errors)
             qsf_warnings.extend(port_warnings)
+        qsf_pins = (qsf_info or {}).get("pins")
+        bit_pins = (qsf_info or {}).get("bitPins")
         if qsf_text is not None and errors:
             return {
                 "ok": False,
                 "entity": entity.as_dict() if entity else None,
-                "board": map_board(entity).as_dict() if entity else {},
+                "board": map_board(entity, qsf_pins, strict_pins=strict_pins, bit_pins=bit_pins).as_dict() if entity else {},
                 "qsf": qsf_info,
                 "errors": errors,
                 "warnings": qsf_warnings,
@@ -836,6 +1185,8 @@ class Simulator:
             return {"ok": False, "entity": None, "board": {}, "qsf": qsf_info,
                     "errors": errors, "warnings": qsf_warnings, "logs": ""}
 
+        entity_names = [e.name for e in design.entities]
+        sources, file_aliases = _prepare_sources_for_ghdl(sources)
         workdir = Path(tempfile.mkdtemp(prefix="cyclone_compile_"))
         try:
             work = workdir / "work"
@@ -848,33 +1199,41 @@ class Simulator:
 
             result = self.ghdl.analyze(paths, work)
             errors.extend(diagnostic.as_dict() for diagnostic in result.diagnostics if diagnostic.severity == "error")
+            errors = _rewrite_diagnostic_files(errors, file_aliases, v_line_maps)
             logs = result.output
             qsf_pinned = set((qsf_info or {}).get("pins", {}))
             warnings = (_nonsynth_warnings(combined) + _pin_warnings(entity, qsf_pinned)
                         + _warnings(result.diagnostics) + _io_warnings(entity)
                         + _resource_warnings(combined)
                         + (qsf_warnings if qsf_text is not None else []))
+
+            warnings = _rewrite_diagnostic_files(warnings, file_aliases, v_line_maps)
             if result.ok:
                 synth = self.ghdl.synthesize(paths, work, entity.name)
-                warnings.extend(_synthesis_warnings(synth))
+                warnings.extend(_rewrite_diagnostic_files(_synthesis_warnings(synth), file_aliases, v_line_maps))
+
+            board_dict = map_board(entity, qsf_pins, strict_pins=strict_pins, bit_pins=bit_pins).as_dict()
             if not result.ok:
                 return {
                     "ok": False,
                     "entity": entity.as_dict(),
-                    "board": map_board(entity).as_dict(),
+                    "board": board_dict,
                     "errors": errors or [{"message": result.output[-2000:], "line": 0, "column": 0, "severity": "error"}],
                     "warnings": warnings,
+                    "entities": entity_names,
                     "logs": logs,
                 }
 
             elaboration = self.ghdl.elaborate(entity.name, work)
             errors.extend(diagnostic.as_dict() for diagnostic in elaboration.diagnostics if diagnostic.severity == "error")
             warnings.extend(_warnings(elaboration.diagnostics))
+            errors = _rewrite_diagnostic_files(errors, file_aliases, v_line_maps)
+            warnings = _rewrite_diagnostic_files(warnings, file_aliases, v_line_maps)
             if not elaboration.ok:
                 return {
                     "ok": False,
                     "entity": entity.as_dict(),
-                    "board": map_board(entity).as_dict(),
+                    "board": board_dict,
                     "errors": errors or [{"message": elaboration.output[-2000:], "line": 0, "column": 0, "severity": "error"}],
                     "warnings": warnings,
                     "logs": logs + "\n" + elaboration.output,
@@ -883,17 +1242,18 @@ class Simulator:
             return {
                 "ok": True,
                 "entity": entity.as_dict(),
-                "board": map_board(entity).as_dict(),
+                "board": board_dict,
                 "qsf": qsf_info,
                 "errors": errors,
                 "warnings": warnings,
+                "entities": entity_names,
                 "logs": logs,
             }
         except GhdlNotFoundError as exc:
             return {
                 "ok": False,
                 "entity": entity.as_dict(),
-                "board": map_board(entity).as_dict(),
+                "board": map_board(entity, qsf_pins, strict_pins=strict_pins, bit_pins=bit_pins).as_dict(),
                 "errors": [{"message": str(exc), "line": 0, "column": 0, "severity": "error"}],
                 "warnings": [],
                 "logs": "",
@@ -902,16 +1262,17 @@ class Simulator:
             shutil.rmtree(workdir, ignore_errors=True)
 
     # -- simulate ---------------------------------------------------------
-    def cancel(self) -> bool:
+    def cancel(self, token: Optional[dict] = None) -> bool:
         """Abort the in-flight GHDL run of this simulator (stop/cancel path).
 
-        Each session owns a fresh Simulator, so "current" is unambiguous.
-        The cancelled run returns a ``cancelled`` CommandResult which the
-        session worker discards (the stop path already emitted sim_stopped).
+        The session passes ITS per-run token; only that run's GHDL child is
+        killed. The cancelled run returns a not-ok result which the session
+        worker discards (the stop path already emitted sim_stopped).
         """
-        return self.ghdl.cancel_current()
+        return self.ghdl.cancel_token(token)
 
-    def simulate(self, request: SimulationRequest) -> Dict[str, Any]:
+    def simulate(self, request: SimulationRequest,
+                 cancel_token: Optional[dict] = None) -> Dict[str, Any]:
         """Simulate a design.
 
         Without ``library_cache`` every call runs the classic isolated flow: a
@@ -921,20 +1282,26 @@ class Simulator:
         pairs skip analysis and the lint pass entirely.  Any cache trouble
         falls back to the isolated flow, so results are identical either way.
         """
-        self.ghdl.reset_cancel()  # fresh run: a prior stop must not poison it
+        # per-run cancel token (ENG-03): the session holds this token and
+        # kills exactly this run via cancel(token) — no shared flag can
+        # poison an unrelated compile or another session's run.  A caller
+        # without a token (REST /api/simulate, CLI) gets a private one.
+        if cancel_token is None:
+            cancel_token = {"cancelled": False, "proc": None}
         if self.library_cache is not None:
             try:
-                return self._simulate_cached(request)
+                return self._simulate_cached(request, cancel_token)
             except Exception:  # pragma: no cover - the cache must never change a result
-                return self._simulate_isolated(request)
+                return self._simulate_isolated(request, cancel_token)
         self.last_cache_outcome = "none"
-        return self._simulate_uncached(request)
+        return self._simulate_uncached(request, cancel_token)
 
-    def _simulate_uncached(self, request: SimulationRequest) -> Dict[str, Any]:
+    def _simulate_uncached(self, request: SimulationRequest,
+                           cancel_token: Optional[dict] = None) -> Dict[str, Any]:
         prep, early = self._prepare(request)
         if early is not None:
             return early
-        return self._ghdl_phase_isolated(prep)
+        return self._ghdl_phase_isolated(prep, cancel_token)
 
     # -- cache bookkeeping ------------------------------------------------
     def warm(self) -> bool:
@@ -1084,17 +1451,18 @@ class Simulator:
         return all(owners.get(unit) == key for unit in entry.get("units", []))
 
     # -- simulate, cached -------------------------------------------------
-    def _simulate_cached(self, request: SimulationRequest) -> Dict[str, Any]:
+    def _simulate_cached(self, request: SimulationRequest,
+                         cancel_token: Optional[dict] = None) -> Dict[str, Any]:
         cache = self.library_cache
         if cache is None:  # pragma: no cover - dispatcher guarantees a cache
-            return self._simulate_uncached(request)
+            return self._simulate_uncached(request, cancel_token)
         # Serialize the whole cached flow per cache directory: ``ghdl -a``
         # rewrites the shared work library file while ``-e``/``-r`` read it.
         with _cache_lock_for(cache):
             if not self._cache_warm_models():
                 self.library_cache = None
                 self._manifest = None
-                return self._simulate_uncached(request)
+                return self._simulate_uncached(request, cancel_token)
             prep, early = self._prepare(request)
             if early is not None:
                 return early
@@ -1110,10 +1478,11 @@ class Simulator:
                     return self._ghdl_phase_isolated(prep)
                 manifest = self._cache_load_manifest()
                 entry = None
-            return self._ghdl_phase_cached(prep, manifest, key, entry)
+            return self._ghdl_phase_cached(prep, manifest, key, entry, cancel_token)
 
     def _ghdl_phase_cached(
-        self, prep: _Prep, manifest: dict, key: str, entry: Optional[dict]
+        self, prep: _Prep, manifest: dict, key: str, entry: Optional[dict],
+        cancel_token: Optional[dict] = None,
     ) -> Dict[str, Any]:
         request = prep.request
         cache = self.library_cache
@@ -1140,7 +1509,7 @@ class Simulator:
                 if conflict:
                     # Another entry owns a unit name with different content;
                     # the shared library cannot hold this case.  Isolated run.
-                    return self._simulate_isolated_prep(prep)
+                    return self._simulate_isolated_prep(prep, cancel_token)
                 # Persist the sources under the cache: GHDL's work library
                 # references them by path at elaborate/run time.
                 key_dir = cache / "sources" / key
@@ -1152,21 +1521,25 @@ class Simulator:
                 (key_dir / "testbench.vhd").write_text(prep.tb_source, encoding="utf-8")
                 analyze_paths = [key_dir / name for name, _content, _units in plan]
                 if analyze_paths:
-                    analyze = self.ghdl.analyze(analyze_paths, work, cwd=workdir)
+                    analyze = self.ghdl.analyze(analyze_paths, work, cwd=workdir, token=cancel_token)
                 else:  # pragma: no cover - defensive: everything already there
                     analyze = CommandResult(ok=True)
                 if _looks_like_cache_corruption(analyze):
                     # GHDL saw a duplicate/redefined unit: the shared library is
                     # not trustworthy.  Wipe it, rebuild, run this case isolated.
                     self._cache_invalidate()
-                    return self._simulate_isolated_prep(prep)
+                    return self._simulate_isolated_prep(prep, cancel_token)
                 errors.extend(diagnostic.as_dict() for diagnostic in analyze.diagnostics if diagnostic.severity == "error")
+                errors = _rewrite_diagnostic_files(errors, prep.aliases, prep.line_maps)
+
                 warnings.extend(_warnings(analyze.diagnostics))
+                warnings = _rewrite_diagnostic_files(warnings, prep.aliases, prep.line_maps)
+
                 logs = analyze.output
                 synth_warnings: List[dict] = []
-                if analyze.ok:
-                    synth = self.ghdl.synthesize(design_paths, work, prep.entity.name, cwd=workdir)
-                    synth_warnings = _synthesis_warnings(synth)
+                if analyze.ok and not prep.request.skip_synth:
+                    synth = self.ghdl.synthesize(design_paths, work, prep.entity.name, cwd=workdir, token=cancel_token)
+                    synth_warnings = _rewrite_diagnostic_files(_synthesis_warnings(synth), prep.aliases, prep.line_maps)
                     warnings.extend(synth_warnings)
                 if not analyze.ok:
                     # Do not record failures: the library may hold partial
@@ -1190,17 +1563,21 @@ class Simulator:
                 self._cache_save_manifest(manifest)
                 self.last_cache_outcome = "miss"
 
-            elaborate = self.ghdl.elaborate(prep.top, work, cwd=workdir)
+            elaborate = self.ghdl.elaborate(prep.top, work, cwd=workdir, token=cancel_token)
             errors.extend(diagnostic.as_dict() for diagnostic in elaborate.diagnostics if diagnostic.severity == "error")
             warnings.extend(_warnings(elaborate.diagnostics))
+            errors = _rewrite_diagnostic_files(errors, prep.aliases, prep.line_maps)
+            warnings = _rewrite_diagnostic_files(warnings, prep.aliases, prep.line_maps)
             logs += "\n" + elaborate.output
             if not elaborate.ok:
                 return self._failure("Elaboration failed", errors, logs, keep, workdir, warnings)
 
             stop_time = max(1.0, float(request.duration) + 2.0 * float(request.clock_period))
-            run = self.ghdl.run(prep.top, work, vcd_file, stop_time, cwd=workdir)
+            run = self.ghdl.run(prep.top, work, vcd_file, stop_time, cwd=workdir, token=cancel_token)
             errors.extend(diagnostic.as_dict() for diagnostic in run.diagnostics if diagnostic.severity == "error")
             warnings.extend(_warnings(run.diagnostics))
+            errors = _rewrite_diagnostic_files(errors, prep.aliases, prep.line_maps)
+            warnings = _rewrite_diagnostic_files(warnings, prep.aliases, prep.line_maps)
             logs += "\n" + run.output
             if not run.ok or not vcd_file.exists():
                 return self._failure("Simulation run failed", errors, logs, keep, workdir, warnings)
@@ -1216,6 +1593,10 @@ class Simulator:
                 root=prep.root,
                 max_cycles=request.max_cycles,
                 duration_cap=float(request.duration),
+                compact=request.compact_board,
+                qsf_pins=(prep.qsf_info or {}).get("pins"),
+                strict_pins=request.strict_pins,
+                bit_pins=(prep.qsf_info or {}).get("bitPins"),
             )
 
             # On-board peripheral decoding (board_spec.md section D/E).
@@ -1244,13 +1625,14 @@ class Simulator:
             result: Dict[str, Any] = {
                 "ok": True,
                 "entity": prep.entity.as_dict(),
-                "board": waveform.get("board", map_board(prep.entity).as_dict()),
+                "board": waveform.get("board", map_board(prep.entity, (prep.qsf_info or {}).get("pins"), strict_pins=request.strict_pins, bit_pins=(prep.qsf_info or {}).get("bitPins")).as_dict()),
                 "top": prep.top,
                 "duration": waveform.get("duration", request.duration),
                 "timeScale": _time_scale(request),
                 "waveforms": waveform,
                 "peripherals": peripherals,
                 "qsf": prep.qsf_info,
+                "entities": prep.entities,
                 "errors": errors,
                 "warnings": warnings,
                 "logs": logs[-4000:],
@@ -1267,16 +1649,18 @@ class Simulator:
             if not keep:
                 shutil.rmtree(workdir, ignore_errors=True)
 
-    def _simulate_isolated(self, request: SimulationRequest) -> Dict[str, Any]:
+    def _simulate_isolated(self, request: SimulationRequest,
+                           cancel_token: Optional[dict] = None) -> Dict[str, Any]:
         """Run one request through the classic isolated temp-workdir flow."""
         prep, early = self._prepare(request)
         if early is not None:
             return early
-        return self._simulate_isolated_prep(prep)
+        return self._simulate_isolated_prep(prep, cancel_token)
 
-    def _simulate_isolated_prep(self, prep: _Prep) -> Dict[str, Any]:
+    def _simulate_isolated_prep(self, prep: _Prep,
+                                cancel_token: Optional[dict] = None) -> Dict[str, Any]:
         self.last_cache_outcome = "fallback"
-        return self._ghdl_phase_isolated(prep)
+        return self._ghdl_phase_isolated(prep, cancel_token)
 
     # -- simulate, shared preparation -------------------------------------
     def _prepare(self, request: SimulationRequest) -> tuple[Optional[_Prep], Optional[Dict[str, Any]]]:
@@ -1285,7 +1669,10 @@ class Simulator:
         Returns (prep, None) on success or (None, failure-result) when the
         request cannot proceed to GHDL at all.
         """
-        sources = _sources(request.vhdl, request.files)
+        raw_sources = _sources(request.vhdl, request.files)
+        sources, v_line_maps, v_errors = translate_verilog_sources(raw_sources)
+        if v_errors:
+            return None, self._failure(v_errors[0]["message"], v_errors)
         combined = "\n".join(content for _, content in sources)
         unsupported = _unsupported_source(combined)
         if unsupported is not None:
@@ -1328,7 +1715,7 @@ class Simulator:
                 )
                 return None, self._failure(f"Top entity '{top_name}' not found", errors, warnings=qsf_warnings)
         else:
-            entity = self._select_entity(design, request.top)
+            entity = self._select_entity(design, request.top, sources=sources)
         if entity is None:
             errors.append(
                 {
@@ -1380,9 +1767,12 @@ class Simulator:
                                 + _nonsynth_warnings(combined) + _pin_warnings(entity, qsf_pinned)
                                 + _io_warnings(entity) + _resource_warnings(combined)
                                 + (qsf_warnings if qsf_text is not None else []))
+
+        ghdl_sources, file_aliases = _prepare_sources_for_ghdl(sources)
+        warnings = _rewrite_diagnostic_files(warnings, file_aliases, v_line_maps)
         prep = _Prep(
             request=request,
-            sources=sources,
+            sources=ghdl_sources,
             combined=combined,
             errors=errors,
             warnings=warnings,
@@ -1393,10 +1783,14 @@ class Simulator:
             root=root,
             tb_source=tb_source,
             models=models,
+            aliases=file_aliases,
+            line_maps=v_line_maps,
+            entities=[e.name for e in design.entities],
         )
         return prep, None
 
-    def _ghdl_phase_isolated(self, prep: _Prep) -> Dict[str, Any]:
+    def _ghdl_phase_isolated(self, prep: _Prep,
+                             cancel_token: Optional[dict] = None) -> Dict[str, Any]:
         """Classic flow: fresh temp workdir, full GHDL cycle per call."""
         request = prep.request
         sources = prep.sources
@@ -1408,7 +1802,8 @@ class Simulator:
         errors = prep.errors
         workdir = Path(tempfile.mkdtemp(prefix="cyclone_sim_"))
         keep = os.environ.get("CYCLESIM_KEEP_DIR", "") not in ("", "0", "false", "False")
-        warnings = prep.warnings
+        warnings = list(prep.warnings)
+        file_aliases = prep.aliases
         try:
             _write_memory_init(workdir, request)
             work = workdir / "work"
@@ -1426,27 +1821,37 @@ class Simulator:
             for f_src, f_dst in zip(model_files(models), model_paths):
                 if not f_dst.exists():
                     shutil.copyfile(ROOT / f_src, f_dst)
-            analyze = self.ghdl.analyze(design_paths + model_paths + [tb_file], work)
+            analyze = self.ghdl.analyze(design_paths + model_paths + [tb_file], work, token=cancel_token)
             errors.extend(diagnostic.as_dict() for diagnostic in analyze.diagnostics if diagnostic.severity == "error")
+            errors = _rewrite_diagnostic_files(errors, prep.aliases, prep.line_maps)
+
             warnings.extend(_warnings(analyze.diagnostics))
+            warnings = _rewrite_diagnostic_files(warnings, prep.aliases, prep.line_maps)
+
             logs = analyze.output
-            if analyze.ok:
+            if analyze.ok and not prep.request.skip_synth:
                 synth = self.ghdl.synthesize(design_paths, work, entity.name)
                 warnings.extend(_synthesis_warnings(synth))
+    
+            warnings = _rewrite_diagnostic_files(warnings, prep.aliases, prep.line_maps)
             if not analyze.ok:
                 return self._failure("VHDL analysis failed", errors, logs, keep, workdir, warnings)
 
-            elaborate = self.ghdl.elaborate(top, work)
+            elaborate = self.ghdl.elaborate(top, work, token=cancel_token)
             errors.extend(diagnostic.as_dict() for diagnostic in elaborate.diagnostics if diagnostic.severity == "error")
             warnings.extend(_warnings(elaborate.diagnostics))
+            errors = _rewrite_diagnostic_files(errors, prep.aliases, prep.line_maps)
+            warnings = _rewrite_diagnostic_files(warnings, prep.aliases, prep.line_maps)
             logs += "\n" + elaborate.output
             if not elaborate.ok:
                 return self._failure("Elaboration failed", errors, logs, keep, workdir, warnings)
 
             stop_time = max(1.0, float(request.duration) + 2.0 * float(request.clock_period))
-            run = self.ghdl.run(top, work, vcd_file, stop_time)
+            run = self.ghdl.run(top, work, vcd_file, stop_time, token=cancel_token)
             errors.extend(diagnostic.as_dict() for diagnostic in run.diagnostics if diagnostic.severity == "error")
             warnings.extend(_warnings(run.diagnostics))
+            errors = _rewrite_diagnostic_files(errors, prep.aliases, prep.line_maps)
+            warnings = _rewrite_diagnostic_files(warnings, prep.aliases, prep.line_maps)
             logs += "\n" + run.output
             if not run.ok or not vcd_file.exists():
                 return self._failure("Simulation run failed", errors, logs, keep, workdir, warnings)
@@ -1454,7 +1859,7 @@ class Simulator:
             try:
                 vcd = parse_vcd(str(vcd_file))
             except Exception as exc:  # pragma: no cover - corrupt VCD
-                return self._failure(f"Could not parse VCD: {exc}", errors, logs, keep, workdir)
+                return self._failure(f"Could not parse VCD: {exc}", errors, logs, keep, workdir, warnings)
 
             waveform, full_transitions = build_waveform(
                 vcd,
@@ -1462,6 +1867,10 @@ class Simulator:
                 root=root,
                 max_cycles=request.max_cycles,
                 duration_cap=float(request.duration),
+                compact=request.compact_board,
+                qsf_pins=(prep.qsf_info or {}).get("pins"),
+                strict_pins=request.strict_pins,
+                bit_pins=(prep.qsf_info or {}).get("bitPins"),
             )
 
             # On-board peripheral decoding (board_spec.md section D/E).
@@ -1490,13 +1899,14 @@ class Simulator:
             result: Dict[str, Any] = {
                 "ok": True,
                 "entity": entity.as_dict(),
-                "board": waveform.get("board", map_board(entity).as_dict()),
+                "board": waveform.get("board", map_board(entity, (prep.qsf_info or {}).get("pins"), strict_pins=request.strict_pins, bit_pins=(prep.qsf_info or {}).get("bitPins")).as_dict()),
                 "top": top,
                 "duration": waveform.get("duration", request.duration),
                 "timeScale": _time_scale(request),
                 "waveforms": waveform,
                 "peripherals": peripherals,
                 "qsf": prep.qsf_info,
+                "entities": prep.entities,
                 "errors": errors,
                 "warnings": warnings,
                 "logs": logs[-4000:],
@@ -1515,17 +1925,46 @@ class Simulator:
 
     # -- helpers ----------------------------------------------------------
     @staticmethod
-    def _select_entity(design, requested: Optional[str], required: bool = False) -> Optional[Entity]:
+    def _select_entity(
+        design,
+        requested: Optional[str],
+        required: bool = False,
+        sources: Optional[List[tuple[str, str]]] = None,
+    ) -> Optional[Entity]:
         if requested:
             for entity in design.entities:
                 if entity.name.lower() == requested.lower():
                     return entity
             if required:
                 return None
-        for entity in design.entities:
-            if not entity.name.lower().startswith("tb_"):
-                return entity
-        return design.entities[0] if design.entities else None
+        candidates = [e for e in design.entities if not e.name.lower().startswith("tb_")]
+        if not candidates:
+            candidates = list(design.entities)
+        if not candidates:
+            return None
+        graph: Dict[str, set[str]] = _instantiation_map(sources) if (len(candidates) > 1 and sources) else {}
+        if len(candidates) > 1 and sources:
+            cand_names = {e.name.lower() for e in candidates}
+            referenced: set[str] = set()
+            for owner, children in graph.items():
+                if owner in cand_names:
+                    referenced.update(children)
+            roots = [e for e in candidates if e.name.lower() not in referenced]
+            if len(roots) == 1:
+                return roots[0]
+            if len(roots) > 1:
+                candidates = roots
+        if len(candidates) > 1:
+            best = max(
+                candidates,
+                key=lambda ent: (
+                    1 if graph.get(ent.name.lower()) else 0,
+                    len(map_board(ent).pins),
+                ),
+            )
+            if graph.get(best.name.lower()) or map_board(best).pins:
+                return best
+        return candidates[0]
 
     @staticmethod
     def _failure(

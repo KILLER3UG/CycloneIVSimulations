@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Cyclone IV Studio — Vite frontend for the RZ-EasyFPGA A2.2 simulator",
   "scripts": {
-    "dev": "vite --port 5173",
+    "dev": "vite --port 8000",
     "build": "vite build",
     "preview": "vite preview",
     "test:unit": "vitest run",

@@ -1,5 +1,25 @@
 // api.js — REST client + WebSocket simulation session for the GHDL backend.
 
+const FALLBACK_ORIGINS = ["http://127.0.0.1:8080", "http://127.0.0.1:8000", "http://127.0.0.1:8765"];
+let detectedBackendOrigin = "";
+
+async function probeBackendOrigin() {
+    for (const origin of FALLBACK_ORIGINS) {
+        try {
+            const res = await fetch(`${origin}/api/board`);
+            if (!res.ok) continue;
+            const bData = await res.json().catch(() => null);
+            if (bData?.ok === true) {
+                detectedBackendOrigin = origin;
+                return origin;
+            }
+        } catch {
+            // Try next candidate backend origin.
+        }
+    }
+    return "";
+}
+
 export class ApiClient {
     constructor({ onError } = {}) {
         this.onError = onError || (() => {});
@@ -7,14 +27,34 @@ export class ApiClient {
 
     async _fetch(path, options) {
         let res;
+        let data = {};
+        let networkErr = null;
+        const prevOrigin = detectedBackendOrigin;
         try {
-            res = await fetch(path, options);
+            res = await fetch(`${detectedBackendOrigin}${path}`, options);
+            data = await res.json().catch(() => ({}));
         } catch (err) {
-            const e = new Error(`Backend unreachable (${path})`);
-            e.network = true;
-            throw e;
+            networkErr = err;
         }
-        const data = await res.json().catch(() => ({}));
+        const badProxy = res && (res.status === 502 || res.status === 503 || res.status === 504);
+        const foreign404 = res && res.status === 404 && data?.ok === undefined;
+        if (networkErr || badProxy || foreign404) {
+            const origin = await probeBackendOrigin();
+            if (origin && (!prevOrigin || origin !== prevOrigin)) {
+                try {
+                    res = await fetch(`${origin}${path}`, options);
+                    data = await res.json().catch(() => ({}));
+                    return { httpOk: res.ok, status: res.status, data };
+                } catch {
+                    // Fall through to report network or status failure below.
+                }
+            }
+            if (networkErr || !res) {
+                const e = new Error(`Backend unreachable (${path})`);
+                e.network = true;
+                throw e;
+            }
+        }
         return { httpOk: res.ok, status: res.status, data };
     }
 
@@ -80,8 +120,10 @@ export class SimSession {
     }
 
     connect() {
-        const proto = location.protocol === "https:" ? "wss" : "ws";
-        const url = `${proto}://${location.host}/ws`;
+        const wsBase = detectedBackendOrigin
+            ? detectedBackendOrigin.replace(/^http/, "ws")
+            : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
+        const url = `${wsBase}/ws`;
         return new Promise((resolve, reject) => {
             let settled = false;
             const ws = new WebSocket(url);

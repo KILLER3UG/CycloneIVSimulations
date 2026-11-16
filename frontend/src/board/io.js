@@ -18,7 +18,7 @@ const SEG_OFFSETS = {
 // real 0.36" digits lean the segment ring like an italic numeral (top to the
 // right): shear x by −k·z, tilt the vertical bars by the same angle
 const DIGIT_SLEW = 0.14;
-export const LIT_COLOR = new THREE.Color(0.6, 6.0, 10.0);    // HDR blue → feeds bloom
+export const LIT_COLOR = new THREE.Color(3.2, 0.03, 0.02);    // HDR red → feeds bloom
 // unlit segments read as pale grey diffuser plastic on the vendor photo
 export const DARK_COLOR = new THREE.Color(0.30, 0.325, 0.36);
 
@@ -215,7 +215,11 @@ export function buildIO(mats, { pinIndex, segBitMap = DEF_SEG_MAP, seed = 42 } =
         const scl = new THREE.Vector3(1, 1, 1);
         const segWorld = [];
         for (let d = 0; d < 4; d += 1) {
-            const digitX = -10.5 + d * 7;
+            // Hardware digit order (schematic trace, Diagrama sheet
+            // "Display 7-Segmentos"): DIG[3]=DIG4→Q1→D1 = LEFTMOST tube;
+            // DIG[0]=DIG1→Q4→D4 = RIGHTMOST tube. The digit index runs
+            // right-to-left on the physical module.
+            const digitX = 10.5 - d * 7;
             for (let bit = 0; bit < 8; bit += 1) {
                 const name = bitToName[bit] || "g";
                 const [ox, oz, kind] = SEG_OFFSETS[name] || SEG_OFFSETS.g;
@@ -276,7 +280,7 @@ export function buildIO(mats, { pinIndex, segBitMap = DEF_SEG_MAP, seed = 42 } =
             const entry = pinOf(`DIG[${d}]`);
             probePoints.push({
                 pinId: entry ? entry.pinId : `DIG[${d}]`, componentId: "DISP1",
-                position: new THREE.Vector3(x - 10.5 + d * 7, BOARD_TOP + 8.4, z),
+                position: new THREE.Vector3(x + 10.5 - d * 7, BOARD_TOP + 8.4, z),
                 label: `DIG${d + 1}`,
             });
         }
@@ -285,6 +289,7 @@ export function buildIO(mats, { pinIndex, segBitMap = DEF_SEG_MAP, seed = 42 } =
             segInst,
             segCurrent: new Float32Array(32),
             segTarget: new Float32Array(32),
+            segHold: new Float32Array(32),
             segActive: new Uint8Array(8),
             digitOn: [1, 1, 1, 1],
             bitToName,

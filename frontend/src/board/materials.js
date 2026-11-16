@@ -47,10 +47,10 @@ export function createMaterials() {
 
         // emissives (per-instance clones where needed)
         ledLens: physical({
-            color: 0xf0f2f4, roughness: 0.18, metalness: 0.0, transparent: true, opacity: 0.92,
-            clearcoat: 0.8, clearcoatRoughness: 0.2, emissive: 0xff2222, emissiveIntensity: 0,
+            color: 0xffd6d6, roughness: 0.18, metalness: 0.0, transparent: true, opacity: 0.92,
+            clearcoat: 0.8, clearcoatRoughness: 0.2, emissive: 0xff1111, emissiveIntensity: 0,
         }),
-        segmentBase: new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: true }),
+        segmentBase: new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }),
     };
 }
 

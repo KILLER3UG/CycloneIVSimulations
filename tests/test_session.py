@@ -481,7 +481,7 @@ def test_replaced_run_never_streams_stale_results():
     left = threading.Event()      # worker 1 returned from simulate()
 
     class BlockingSimulator:
-        def simulate(self, request):
+        def simulate(self, request, cancel_token=None):
             if request.vhdl == "slow":
                 entered.set()
                 release.wait(10.0)

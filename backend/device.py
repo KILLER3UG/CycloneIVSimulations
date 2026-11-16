@@ -173,6 +173,8 @@ _CLOCK_ALIASES = [BOARD["clockPort"]] + list(BOARD.get("clockAliases", [])) + ["
 # the same profile pins so such designs run unmodified.
 _SEGMENT_ALIASES = {"seg", "seg7", "sevenseg", "display", "hex"}
 _DIGIT_ALIASES = {"dig", "dtube", "digit", "tube", "sel", "scan", "com", "anode"}
+# unnumbered BUS aliases: a whole port named like the bus maps onto it
+_SWITCHBUS_ALIASES = {"sw", "dip", "switches", "keys", "buttons"}
 _SCALAR_ALIASES = {
     "s": "KEY", "key": "KEY", "sw": "KEY", "dip": "KEY",
     "btn": "KEY", "button": "KEY", "push": "KEY",
@@ -203,6 +205,13 @@ def resolve_port_pins(name: str, kind: Optional[str] = None) -> Optional[List[st
         return list(pins) if pins else None
     if kind == "digit" and norm in _DIGIT_ALIASES:
         pins = profile.get("DIG")
+        return list(pins) if pins else None
+    if kind in ("switch", "button") and norm in _SWITCHBUS_ALIASES:
+        # the DIP shares the KEY nets on this board (board_spec §3)
+        pins = profile.get("KEY")
+        return list(pins) if pins else None
+    if kind == "led" and norm in {"leds"}:
+        pins = profile.get("LED")
         return list(pins) if pins else None
     if norm in _RESET_ALIASES:
         pins = profile.get(BOARD.get("resetPort", "FPGA_RST"))

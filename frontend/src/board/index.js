@@ -53,7 +53,12 @@ export class Board3D {
         this.design = { leds: "LED", keys: "KEY", dip: "KEY", seg: "SEG", dig: "DIG", buzzer: "FPGA_BUZZER" };
 
         this.power = true;
-        this.running = true;
+        // running = a capture is actively streaming; programmed = a design
+        // was loaded (Run). Outputs hold their state while programmed, like
+        // a real board keeps running its configuration; an unprogrammed
+        // board is inert (keys/DIP still move — they are physical switches).
+        this.running = false;
+        this.programmed = false;
         this.deterministic = false;
         this.rng = mulberry32(0xc1c10);
 
@@ -88,7 +93,11 @@ export class Board3D {
         this.renderer = new THREE.WebGLRenderer({ antialias: this.quality !== "performance", alpha: false });
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
         this.renderer.toneMappingExposure = 1.12;
-        this.renderer.shadowMap.enabled = this.quality !== "performance";
+        this._detectGpu();
+        // A software rasterizer draws every frame on the CPU, spread across
+        // cores — shadow maps and a high pixel ratio multiply that cost and
+        // peg the laptop. Drop them there; a real GPU keeps the full path.
+        this.renderer.shadowMap.enabled = !this.gpuIsSoftware && this.quality !== "performance";
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         // The board is static: render the shadow map once per build/quality
         // change instead of every frame (halves steady-state draw calls).
@@ -98,10 +107,7 @@ export class Board3D {
         this._applyPixelRatio();
     }
 
-    _applyPixelRatio() {
-        const dpr = typeof devicePixelRatio !== "undefined" ? devicePixelRatio : 1;
-        const cap = this.quality === "high" ? 2 : this.quality === "balanced" ? 1.6 : 1;
-        this.renderer.setPixelRatio(Math.min(dpr, cap));
+    _detectGpu() {
         // Report which GPU (or software fallback) actually renders the scene:
         // a "SwiftShader"/"software" answer means hardware acceleration is
         // OFF and every frame is CPU-drawn — the #1 cause of high CPU.
@@ -116,6 +122,15 @@ export class Board3D {
             this.gpuName = "unknown";
             this.gpuIsSoftware = false;
         }
+    }
+
+    _applyPixelRatio() {
+        const dpr = typeof devicePixelRatio !== "undefined" ? devicePixelRatio : 1;
+        // Software rendering: render below native resolution to cut fragment
+        // work (the board is still legible; tests read state, not pixels).
+        const cap = this.gpuIsSoftware ? 0.8
+            : this.quality === "high" ? 2 : this.quality === "balanced" ? 1.6 : 1;
+        this.renderer.setPixelRatio(Math.min(dpr, cap));
     }
 
     _initScene() {
@@ -215,6 +230,17 @@ export class Board3D {
         }
         this.controls.addEventListener("change", () => { this._lastActive = performance.now(); });
         this._raf = requestAnimationFrame(this._loop);
+        // IO state (LED levels, segment persistence, key caps) evolves on a
+        // cheap 10 Hz timer, decoupled from the GPU render rate. Under software
+        // rendering the pixels refresh at ~1 fps, but the state the UI/tests
+        // read stays fresh — and a static board costs almost no CPU.
+        this._ioLast = performance.now();
+        this._ioTimer = setInterval(() => {
+            const now = performance.now();
+            const dt = Math.min(0.1, (now - this._ioLast) / 1000);
+            this._ioLast = now;
+            this._updateIO(now, dt);
+        }, 100);
         this.renderer.render(this.scene, this.camera); // first render → ready
         if (this.container) this.container.dataset.ready = "1";
         return this;
@@ -255,6 +281,7 @@ export class Board3D {
     setDesign(boardMap) {
         if (!boardMap) return;
         Object.assign(this.design, boardMap);
+        this.programmed = true;
     }
 
     // ---------------------------------------------------------- live values ----
@@ -268,7 +295,14 @@ export class Board3D {
         if (!d) return;
         for (let dig = 0; dig < 4; dig += 1) {
             for (let bit = 0; bit < 8; bit += 1) {
-                d.segTarget[dig * 8 + bit] = d.digitOn[dig] && d.segActive[bit] ? 1 : 0;
+                const i = dig * 8 + bit;
+                d.segTarget[i] = d.digitOn[dig] && d.segActive[bit] ? 1 : 0;
+                // Persistence of vision: a segment that was lit stays in the
+                // eye's integration window, so a multiplexed display reads as
+                // all digits lit at once — exactly like the real board. The
+                // hold decays while a capture streams and freezes when it
+                // ends (the board keeps showing its multiplexed image).
+                if (d.segTarget[i]) d.segHold[i] = 1;
             }
         }
     }
@@ -281,11 +315,11 @@ export class Board3D {
             case "led": this.setLedTarget(entry.elementIndex, active); break;
             case "segment":
                 this.io.display.segActive[entry.elementIndex] = active ? 1 : 0;
-                this._recomputeDisplayTargets();
+                this._displayDirty = true;
                 break;
             case "digit":
                 this.io.display.digitOn[entry.elementIndex] = active ? 1 : 0;
-                this._recomputeDisplayTargets();
+                this._displayDirty = true;
                 break;
             case "buzzer": this.io.buzzer.on = active; break;
             case "button": {
@@ -305,6 +339,11 @@ export class Board3D {
     applyCycle(values, { time } = {}) {
         if (!values || !this.io) return;
         this._cycleTime = time;
+        // Digit and segment pins are routed one at a time; recompute the
+        // multiplexed target only ONCE after all pins are applied. Recomputing
+        // mid-cycle would light transient (tube,segment) pairs from a half-updated
+        // state (new segments + previous tube) and pollute the POV hold.
+        this._displayDirty = false;
 
         if (values.pins) {
             for (const [pinId, level] of Object.entries(values.pins)) {
@@ -330,7 +369,7 @@ export class Board3D {
         if (values.buzzer !== undefined) this.io.buzzer.on = !!values.buzzer;
         if (values.digits) {
             values.digits.forEach((v, i) => { this.io.display.digitOn[i] = v ? 1 : 0; });
-            this._recomputeDisplayTargets();
+            this._displayDirty = true;
         }
         if (values.segments) {
             values.segments.forEach((digitBits, dig) => {
@@ -349,7 +388,37 @@ export class Board3D {
                 }
             });
         }
+        if (this._displayDirty) this._recomputeDisplayTargets();
         if (values.power !== undefined) this.setPower(!!values.power);
+    }
+
+    // Paint a compact board image (live input-change refresh). The backend
+    // integrates the multiplexed display over the whole capture and returns
+    // the persistence-of-vision image plus the final LED/buzzer levels, so a
+    // switch flip repaints the board from a few hundred bytes instead of
+    // replaying tens of thousands of per-cycle samples.
+    applyBoardImage(image) {
+        if (!image || !this.io) return;
+        const d = this.io.display;
+        const pov = image.pov || [];
+        for (let i = 0; i < 32; i += 1) {
+            const on = pov[i] ? 1 : 0;
+            // segHold is the rendered persistence-of-vision image; segCurrent is
+            // snapped to it so the integrated image shows immediately. segTarget
+            // is left as the instantaneous scan phase (the slow-scan check reads
+            // it) — the POV never lives there.
+            d.segHold[i] = on;
+            d.segCurrent[i] = on;
+        }
+        // The POV already encodes which segments are lit per tube; keep every
+        // tube enabled so nothing gates the image, and do NOT recompute targets
+        // from digitOn/segActive (that would collapse it to one scan phase).
+        if (Array.isArray(image.digits)) {
+            for (let i = 0; i < 4; i += 1) d.digitOn[i] = image.digits[i] ? 1 : 0;
+        }
+        const leds = image.leds || [];
+        leds.forEach((on, i) => this.setLedTarget(i, !!on));
+        if (typeof image.buzzer === "number") this.io.buzzer.on = !!image.buzzer;
     }
 
     // ------------------------------------------------------------ state ----
@@ -357,9 +426,12 @@ export class Board3D {
         this.power = !!on;
         if (this.powerLed) this.powerLed.target = on ? 1 : 0;
         if (!on) {
+            // Volatile JTAG configuration is lost on power-off (board_spec
+            // §2: .sof is volatile) — the board comes back unprogrammed.
+            this.programmed = false;
             this.io?.leds.forEach((l) => { l.target = 0; });
             const d = this.io?.display;
-            if (d) d.segTarget.fill(0);
+            if (d) { d.segTarget.fill(0); d.segHold.fill(0); }
             if (this.io) this.io.buzzer.on = false;
         }
     }
@@ -378,8 +450,20 @@ export class Board3D {
         this.io.display.segActive.fill(0);
         this.io.display.digitOn = [1, 1, 1, 1];
         this.io.display.segTarget.fill(0);
+        this.io.display.segHold.fill(0);
         this.io.buzzer.on = false;
         this._hideHighlight();
+    }
+
+    // Clear only the 7-seg persistence image so a live refresh rebuilds it
+    // from the new cycles (leaves the key/DIP/LED visuals untouched).
+    resetDisplayHold() {
+        const d = this.io?.display;
+        if (!d) return;
+        d.segActive.fill(0);
+        d.digitOn = [1, 1, 1, 1];
+        d.segTarget.fill(0);
+        d.segHold.fill(0);
     }
 
     // -------------------------------------------------------- interaction ----
@@ -513,8 +597,9 @@ export class Board3D {
     setQuality(q) {
         this.quality = q;
         this._applyPixelRatio();
-        this.renderer.shadowMap.enabled = q !== "performance";
-        this.lights.key.castShadow = q !== "performance";
+        const shadows = !this.gpuIsSoftware && q !== "performance";
+        this.renderer.shadowMap.enabled = shadows;
+        this.lights.key.castShadow = shadows;
         this.scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
         this.renderer.shadowMap.needsUpdate = true;
         if (q === "high") this._ensureComposer();
@@ -625,8 +710,23 @@ export class Board3D {
         // fully idle (desktop sessions stay open for hours — a static board
         // is visually identical at 6 fps and costs ~0.2% CPU).
         const idleMs = now - this._lastActive;
-        const cap = (this.running || this._tween || this._pulse || idleMs < 5000) ? 60
-            : (idleMs < 20000 ? 24 : 6);
+        // Frame-rate tiers. A real GPU renders cheaply, so it keeps the smooth
+        // 60/24/6 ladder. A SOFTWARE rasterizer (headless tests, or hardware
+        // acceleration disabled) draws every frame on the CPU — 60 fps there
+        // saturates a core, starves the editor/init microtasks and makes the
+        // laptop unusable, so it is capped hard (a static board is visually
+        // identical at 1–2 fps). `animating` = a capture streams or the camera
+        // tweens; otherwise the board only needs occasional redraws.
+        const animating = this.running || this._tween || this._pulse;
+        const sw = this.gpuIsSoftware;
+        // SwiftShader spreads ONE frame across many CPU cores, so even a modest
+        // fps keeps several cores busy continuously. Tests read state on the
+        // main thread (not pixels), so software rendering drops to ~1–2 fps —
+        // the board still updates, but the cores idle between frames.
+        const cap = animating ? (sw ? 2 : 60)
+            : idleMs < 3000 ? (sw ? 2 : 60)
+            : idleMs < 20000 ? (sw ? 1 : 24)
+            : (sw ? 1 : 6);
         if (now - this._lastRender < 1000 / cap) return;
         this._lastRender = now;
         this.renderer.info.reset();
@@ -665,8 +765,6 @@ export class Board3D {
             }
         }
 
-        this._updateIO(now, dt);
-
         // dust drift
         if (!this.deterministic && this.running) {
             const pos = this.dust.geometry.getAttribute("position");
@@ -687,11 +785,12 @@ export class Board3D {
         const io = this.io;
         if (!io) return;
         const k = 1 - Math.exp(-dt / 0.045);
+        const live = this.power && this.programmed;
 
         // LED persistence + glow (halos share one Points cloud; per-vertex HDR colour)
         const glowCol = io.glowPoints.geometry.getAttribute("color");
         io.leds.forEach((led, i) => {
-            const target = this.power && this.running ? led.target : 0;
+            const target = live ? led.target : 0;
             led.level += (target - led.level) * (1 - Math.exp(-dt / 0.06));
             led.material.emissiveIntensity = led.level * 2.6;
             glowCol.setXYZ(i, 2.4 * led.level, 0.32 * led.level, 0.1 * led.level);
@@ -704,11 +803,17 @@ export class Board3D {
             this.powerLed.glowMaterial.opacity = this.powerLed.level * 0.8;
         }
 
-        // 7-seg multiplexing: exact per-cycle gating, short persistence glow
+        // 7-seg multiplexing: the rendered image is the persistence-of-vision
+        // hold (segHold), not the instantaneous gate (segTarget, kept for
+        // inspection/tests). The hold decays only while a capture streams;
+        // when the run ends it freezes — the board keeps showing its
+        // multiplexed image, like hardware does.
         const d = io.display;
+        const holdDecay = this.running ? Math.exp(-dt / 0.8) : 1;
         const scratch = this._segColor || (this._segColor = new THREE.Color());
         for (let i = 0; i < 32; i += 1) {
-            const target = this.power && this.running ? d.segTarget[i] : 0;
+            d.segHold[i] *= holdDecay;
+            const target = live ? d.segHold[i] : 0;
             d.segCurrent[i] += (target - d.segCurrent[i]) * k;
             const c = d.segCurrent[i];
             const inst = d.segInst;
@@ -747,7 +852,7 @@ export class Board3D {
         // buzzer shiver
         {
             const bz = io.buzzer;
-            if (bz.on && this.power && this.running && !this.deterministic) {
+            if (bz.on && live && !this.deterministic) {
                 bz.phase += dt * 60;
                 bz.body.position.y = bz.baseY + Math.sin(bz.phase) * 0.05;
             } else {
@@ -761,6 +866,7 @@ export class Board3D {
         if (this._disposed) return;
         this._disposed = true;
         cancelAnimationFrame(this._raf);
+        clearInterval(this._ioTimer);
         this._resizeObserver?.disconnect();
         this.renderer.domElement.removeEventListener("dblclick", this._onDblClick);
         this.controls.dispose();

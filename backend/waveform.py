@@ -153,62 +153,122 @@ def _classify_port(name: str) -> Optional[str]:
     return None
 
 
-def map_board(entity: Entity) -> BoardMap:
+def map_board(
+    entity: Entity,
+    qsf_pins: Optional[Dict[str, List[str]]] = None,
+    strict_pins: bool = False,
+    bit_pins: Optional[Dict[str, Dict[int, str]]] = None,
+) -> BoardMap:
     board = BoardMap()
-    for port in entity.ports:
-        kind = _classify_port(port.name)
-        if kind == "led":
-            board.leds.append(port.name)
-        elif kind == "digit":
-            board.digits.append(port.name)
-        elif kind == "switch":
-            board.switches.append(port.name)
-        elif kind == "button":
-            board.buttons.append(port.name)
-        elif kind == "display":
-            board.displays.append(port.name)
+    if not strict_pins:
+        for port in entity.ports:
+            kind = _classify_port(port.name)
+            if kind == "led":
+                board.leds.append(port.name)
+            elif kind == "digit":
+                board.digits.append(port.name)
+            elif kind == "switch":
+                board.switches.append(port.name)
+            elif kind == "button":
+                board.buttons.append(port.name)
+            elif kind == "display":
+                board.displays.append(port.name)
 
-    board.leds.sort(key=natural_key)
-    board.digits.sort(key=natural_key)
-    board.switches.sort(key=natural_key)
-    board.buttons.sort(key=natural_key)
-    board.displays.sort(key=natural_key)
+        board.leds.sort(key=natural_key)
+        board.digits.sort(key=natural_key)
+        board.switches.sort(key=natural_key)
+        board.buttons.sort(key=natural_key)
+        board.displays.sort(key=natural_key)
 
-    clock = detect_clock(entity)
-    board.clock = clock.name if clock else None
-    reset = detect_reset(entity)
-    if reset:
-        board.reset = reset[0].name
-        board.reset_active_high = reset[1]
+        clock = detect_clock(entity)
+        board.clock = clock.name if clock else None
+        reset = detect_reset(entity)
+        if reset:
+            board.reset = reset[0].name
+            board.reset_active_high = reset[1]
 
     # Attach the real board pin assignment where a port name matches the
     # RZ-EasyFPGA A2.2 profile (LED/KEY/SEG/DIG/CLOCK_50/...), including the
     # textbook aliases (seven_seg->SEG, dtube->DIG, s1..s4->KEY bits, ...).
+    # When strict_pins=True (Pin Planner mode), ONLY explicit pin assignments are applied.
+    port_width = {port.name: max(1, port.width or 1) for port in entity.ports}
     ports_with_pins: set = set()
     pins: Dict[str, List[str]] = {}
-    for name, kind in (
-        *[(n, "led") for n in board.leds],
-        *[(n, "switch") for n in board.switches],
-        *[(n, "button") for n in board.buttons],
-        *[(n, "display") for n in board.displays],
-        *[(n, "digit") for n in board.digits],
-        *([(board.clock, None)] if board.clock else []),
-        *([(board.reset, None)] if board.reset else []),
-    ):
-        match = resolve_port_pins(name, kind)
-        if match:
-            ports_with_pins.add(name)
-            pins[name] = match
+    qsf_lookup = {k.upper(): [str(p).upper() if p else "" for p in v] for k, v in (qsf_pins or {}).items() if v}
+    bit_lookup = {
+        k.upper(): {int(bit): str(pin).upper() for bit, pin in bmap.items() if pin}
+        for k, bmap in (bit_pins or {}).items()
+        if bmap
+    }
+    if qsf_lookup or bit_lookup:
+        led_pins = {str(p).upper() for p in BOARD.get("leds", {}).get("pins", [])}
+        dig_pins = {str(p).upper() for p in BOARD.get("displays", {}).get("pins", {}).get("DIG", [])}
+        seg_pins = {str(p).upper() for p in BOARD.get("displays", {}).get("pins", {}).get("SEG", [])}
+        btn_pins = {str(p).upper() for p in BOARD.get("buttons", {}).get("pins", [])}
+        clk_pin = str(BOARD.get("clockPin") or "").upper()
+        rst_pin = str(BOARD.get("resetPin") or "").upper()
+        for port in entity.ports:
+            w = port_width.get(port.name, 1)
+            bmap = bit_lookup.get(port.name.upper())
+            width_pins: Optional[List[str]] = None
+            if bmap:
+                slots: List[str] = []
+                for offset in range(w):
+                    if port.right is not None and port.left is not None and w > 1:
+                        bit_idx = (port.right + offset) if port.downto else (port.right - offset)
+                    else:
+                        bit_idx = offset
+                    slots.append(bmap.get(bit_idx, bmap.get(offset, "")))
+                if any(slots):
+                    width_pins = slots
+            if width_pins is None:
+                assigned = qsf_lookup.get(port.name.upper())
+                if assigned and any(assigned[:w]):
+                    width_pins = assigned[:w]
+            if not width_pins:
+                continue
+            ports_with_pins.add(port.name)
+            pins[port.name] = width_pins
+            if any(p in led_pins for p in width_pins) and port.name not in board.leds:
+                board.leds.append(port.name)
+            if any(p in dig_pins for p in width_pins) and port.name not in board.digits:
+                board.digits.append(port.name)
+            if any(p in seg_pins for p in width_pins) and port.name not in board.displays:
+                board.displays.append(port.name)
+            if any(p in btn_pins for p in width_pins) and port.name not in board.buttons:
+                board.buttons.append(port.name)
+            if clk_pin and clk_pin in width_pins and not board.clock:
+                board.clock = port.name
+            if rst_pin and rst_pin in width_pins and not board.reset:
+                board.reset = port.name
+                board.reset_active_high = not BOARD.get("resetActiveLow", True)
 
-    # Scalar ports outside the classified groups (textbook "s1".."s4" key
-    # inputs, "led2"-style scalars, a bare "reset") get the alias resolver
-    # too, so designs that avoid vendor bus names still map to real pins.
-    for port in entity.ports:
-        if port.name in ports_with_pins:
-            continue
-        match = resolve_port_pins(port.name, _classify_port(port.name))
-        if match:
-            pins[port.name] = match
+    if not strict_pins:
+        for name, kind in (
+            *[(n, "led") for n in board.leds],
+            *[(n, "switch") for n in board.switches],
+            *[(n, "button") for n in board.buttons],
+            *[(n, "display") for n in board.displays],
+            *[(n, "digit") for n in board.digits],
+            *([(board.clock, None)] if board.clock else []),
+            *([(board.reset, None)] if board.reset else []),
+        ):
+            if name in ports_with_pins:
+                continue
+            match = resolve_port_pins(name, kind)
+            if match:
+                ports_with_pins.add(name)
+                pins[name] = match[: port_width.get(name, len(match))]
+
+        # Scalar ports outside the classified groups (textbook "s1".."s4" key
+        # inputs, "led2"-style scalars, a bare "reset") get the alias resolver
+        # too, so designs that avoid vendor bus names still map to real pins.
+        for port in entity.ports:
+            if port.name in ports_with_pins:
+                continue
+            match = resolve_port_pins(port.name, _classify_port(port.name))
+            if match:
+                pins[port.name] = match[: port_width.get(port.name, len(match))]
     board.pins = pins
     board.profile = BOARD["name"]
     board.clock_hz = BOARD["clockHz"]
@@ -251,6 +311,159 @@ def map_board(entity: Entity) -> BoardMap:
         if board.reset.upper() == profile_reset:
             board.reset_active_high = not BOARD.get("resetActiveLow", False)
     return board
+
+
+# ---------------------------------------------------------------------------
+# Compact board image (live input-change refresh)
+# ---------------------------------------------------------------------------
+
+
+def _as_int(value: Any) -> int:
+    """Coerce a normalized signal value to an int (vectors are already int)."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if text and all(ch in "01" for ch in text):
+            return int(text, 2)
+    return 0
+
+
+def board_image_from_model(model: "WaveformModel", board_map: "BoardMap") -> dict:
+    """Persistence-of-vision board image computed straight from transitions.
+
+    Only the display/digit signals are sampled on the clock edges (a targeted
+    merge-join), so the whole ~20 MB cycle materialisation is skipped — a
+    switch flip repaints the board from a few hundred bytes in a few ms.
+
+    Returns ``{"pov": [32], "digits": [4], "leds": [...], "buzzer": 0|1}``:
+
+    * ``pov`` — for each of the four tubes and eight segments, whether the
+      segment was ever lit while its tube was selected over the capture (the
+      image the eye integrates on a multiplexed display).
+    * ``digits`` — the final digit-enable state (which tubes are selected).
+    * ``leds`` / ``buzzer`` — the final steady-state output levels.
+
+    Polarity, segment/digit mapping and undriven-digit handling all come from
+    the board profile (``board.json``), so this matches the 3D board exactly.
+    """
+    cfg = board_map.display_config or {}
+    seg_active_low = bool(cfg.get("segmentActiveLow", True))
+    dig_active_low = bool(cfg.get("digitActiveLow", True))
+    n_dig = int(cfg.get("count") or len(board_map.digits) or 4)
+    n_seg = 8
+    pov = [0] * (n_dig * n_seg)
+
+    pins = board_map.pins or {}
+    led_pin_idx = {str(p).upper(): i for i, p in enumerate(BOARD.get("leds", {}).get("pins", []))}
+    dig_pin_idx = {str(p).upper(): i for i, p in enumerate(BOARD.get("displays", {}).get("pins", {}).get("DIG", []))}
+    seg_pin_idx = {str(p).upper(): i for i, p in enumerate(BOARD.get("displays", {}).get("pins", {}).get("SEG", []))}
+    buz_pin = str((BOARD.get("buzzer") or {}).get("pin") or "").upper()
+
+    # Collect explicit (port, src_bit, hw_idx) routes from board_map.pins so partial or
+    # custom Pin Planner assignments drive the exact hardware LED/segment/digit pins.
+    seg_routes: List[Tuple[str, int, int]] = []
+    dig_routes: List[Tuple[str, int, int]] = []
+    led_routes: Dict[int, Tuple[str, int]] = {}
+    buz_route: Optional[Tuple[str, int]] = None
+    has_pin_routes = any(pins.values())
+    if has_pin_routes:
+        for port, plist in pins.items():
+            for bit, raw_pin in enumerate(plist or []):
+                pin = str(raw_pin or "").upper()
+                if not pin:
+                    continue
+                if pin in seg_pin_idx:
+                    seg_routes.append((port, bit, seg_pin_idx[pin]))
+                elif pin in dig_pin_idx:
+                    dig_routes.append((port, bit, dig_pin_idx[pin]))
+                elif pin in led_pin_idx:
+                    led_routes[led_pin_idx[pin]] = (port, bit)
+                elif buz_pin and pin == buz_pin:
+                    buz_route = (port, bit)
+    else:
+        for port in board_map.displays:
+            for bit in range(n_seg):
+                seg_routes.append((port, bit, bit))
+        for port in board_map.digits:
+            for bit in range(n_dig):
+                dig_routes.append((port, bit, bit))
+        led_cursor = 0
+        for port in board_map.leds:
+            w = len(pins.get(port, [])) or 1
+            for bit in range(w):
+                if led_cursor < len(led_pin_idx):
+                    led_routes[led_cursor] = (port, bit)
+                    led_cursor += 1
+
+    def _values_at(signal: Optional["WaveformSignal"], times: List[float], n: int) -> List[int]:
+        """Merge-join a signal's transitions onto ``n`` clock edges."""
+        out = [0] * n
+        if signal is None or not signal.transitions:
+            return out
+        trans = signal.transitions
+        ti = 0
+        cur = _as_int(trans[0][1])
+        nt = len(trans)
+        for i, t in enumerate(times):
+            while ti < nt and trans[ti][0] <= t:
+                cur = _as_int(trans[ti][1])
+                ti += 1
+            out[i] = cur
+        return out
+
+    times = model.clock_times(limit=model.max_cycles)
+    n = len(times)
+    last_dig = [1] * n_dig if (seg_routes or dig_routes) else [0] * n_dig
+    if n and (seg_routes or dig_routes):
+        needed_ports = {p for p, _, _ in seg_routes} | {p for p, _, _ in dig_routes}
+        port_vals = {p: _values_at(model.signal(p), times, n) for p in needed_ports}
+        for i in range(n):
+            seg_active = [0] * n_seg
+            for port, src_bit, seg_idx in seg_routes:
+                level = (port_vals[port][i] >> src_bit) & 1
+                if (level == 0) == seg_active_low:
+                    seg_active[seg_idx] = 1
+            dig_on = [0] * n_dig
+            any_dig = bool(dig_routes)
+            for port, src_bit, dig_idx in dig_routes:
+                level = (port_vals[port][i] >> src_bit) & 1
+                if (level == 0) == dig_active_low:
+                    dig_on[dig_idx] = 1
+            if not any_dig and seg_routes:
+                dig_on = [1] * n_dig  # static display: all tubes share the lines
+            last_dig = dig_on
+            for d in range(n_dig):
+                if not dig_on[d]:
+                    continue
+                base = d * n_seg
+                for bit in range(n_seg):
+                    if seg_active[bit]:
+                        pov[base + bit] = 1
+
+    # Final LED / buzzer levels (steady state at the end of the capture).
+    final_vals = model.final_values()
+    led_cfg = board_map.led_config or {}
+    led_active_low = bool(led_cfg.get("activeLow", True))
+    n_board_leds = len(led_pin_idx) or 4
+    leds: List[int] = [0] * n_board_leds
+    for led_idx, (port, src_bit) in led_routes.items():
+        if 0 <= led_idx < n_board_leds:
+            level = (_as_int(final_vals.get(port)) >> src_bit) & 1
+            leds[led_idx] = 1 if ((level == 0) == led_active_low) else 0
+
+    buzzer = 0
+    if buz_route is not None:
+        bport, bbit = buz_route
+        buzzer = 1 if ((_as_int(final_vals.get(bport)) >> bbit) & 1) == 0 else 0
+    elif not has_pin_routes:
+        buzzer_port = (BOARD.get("buzzer") or {}).get("port")
+        if buzzer_port and buzzer_port in final_vals:
+            buzzer = 1 if _as_int(final_vals.get(buzzer_port)) == 0 else 0
+
+    return {"pov": pov, "digits": last_dig, "leds": leds, "buzzer": buzzer}
 
 
 # ---------------------------------------------------------------------------
@@ -327,8 +540,8 @@ class WaveformSignal:
             return self.transitions[0][1]
         return self.transitions[index - 1][1]
 
-    def to_dict(self) -> dict:
-        return {
+    def to_dict(self, compact: bool = False) -> dict:
+        data = {
             "name": self.name,
             "path": self.path,
             "scope": self.scope,
@@ -338,13 +551,18 @@ class WaveformSignal:
             "typeName": self.type_name,
             "isPort": self.is_port,
             "isInternal": self.is_internal,
-            "transitions": [
+        }
+        # Compact (live-refresh) runs never draw a waveform, so the per-signal
+        # transition lists (~1.5 s of decimation for a 36-signal design) are
+        # pure waste — omit them and keep only the signal metadata.
+        if not compact:
+            data["transitions"] = [
                 [time, _normalize_value(value)]
                 for time, value in _decimate_transitions(
                     self.transitions, MAX_SERIALIZED_TRANSITIONS
                 )
-            ],
-        }
+            ]
+        return data
 
 
 class WaveformModel:
@@ -479,24 +697,49 @@ class WaveformModel:
         times = self.clock_times(limit=self.max_cycles)
         if not times:
             return []
+        # Merge-join: walk each signal's transitions once alongside the sorted
+        # clock times instead of bisecting per (signal, time) — the old
+        # per-cycle bisect was O(signals * cycles * log transitions) and
+        # dominated the run cost (~0.7 s for 65k cycles). Equivalent to
+        # value_at: the value of the last transition at or before each time.
+        n = len(times)
+        per_signal: Dict[str, List[Any]] = {}
+        for signal in self.signals:
+            vals = [0] * n
+            trans = signal.transitions
+            if trans:
+                ti = 0
+                cur = trans[0][1]
+                nt = len(trans)
+                for i, t in enumerate(times):
+                    while ti < nt and trans[ti][0] <= t:
+                        cur = trans[ti][1]
+                        ti += 1
+                    vals[i] = _normalize_value(cur)
+            per_signal[signal.name] = vals
         cycles: List[dict] = []
-        for index, time in enumerate(times):
-            values: Dict[str, Any] = {}
-            for signal in self.signals:
-                values[signal.name] = _normalize_value(signal.value_at(time))
-            cycles.append({"cycle": index, "time": time, "values": values})
+        for i, t in enumerate(times):
+            cycles.append({
+                "cycle": i,
+                "time": t,
+                "values": {name: per_signal[name][i] for name in per_signal},
+            })
         return cycles
 
     # -- serialization ----------------------------------------------------
-    def to_dict(self) -> dict:
+    def to_dict(self, cycles: Optional[List[dict]] = None, compact: bool = False) -> dict:
         duration = self.duration_cap if self.duration_cap is not None else self.vcd.duration_ns
-        return {
+        data = {
             "timescaleNs": self.vcd.timescale_ns,
             "duration": duration,
-            "signals": [signal.to_dict() for signal in self.signals],
-            "cycles": self.cycles(),
+            "signals": [signal.to_dict(compact=compact) for signal in self.signals],
             "final": self.final_values(),
         }
+        # Compact (live-refresh) runs omit the per-cycle samples — the client
+        # repaints from the board image, not by replaying cycles.
+        if not compact:
+            data["cycles"] = self.cycles() if cycles is None else cycles
+        return data
 
 
 def build_waveform(
@@ -505,6 +748,10 @@ def build_waveform(
     root: Optional[str] = None,
     max_cycles: int = 256,
     duration_cap: Optional[float] = None,
+    compact: bool = False,
+    qsf_pins: Optional[Dict[str, List[str]]] = None,
+    strict_pins: bool = False,
+    bit_pins: Optional[Dict[str, Dict[int, str]]] = None,
 ) -> tuple[dict, Dict[str, List[Tuple[float, Any]]]]:
     """Build the UI payload plus the full transition lists.
 
@@ -513,10 +760,26 @@ def build_waveform(
     client (audit N2); ``transitions_by_name`` carries the complete,
     normalized lists for the post-run peripheral decoders (UART / buzzer /
     VGA), which must never see a decimated timeline.
+
+    With ``compact=True`` the ``cycles`` samples are omitted and a tiny
+    ``boardImage`` (persistence-of-vision display + final LED/buzzer state) is
+    attached instead, for the live input-change refresh path.
     """
     model = WaveformModel(vcd, entity, root, max_cycles=max_cycles, duration_cap=duration_cap)
-    data = model.to_dict()
-    data["board"] = map_board(entity).as_dict()
+    board_map = map_board(entity, qsf_pins, strict_pins=strict_pins, bit_pins=bit_pins)
+    if compact:
+        # Skip materialising the ~65k cycle dicts: the board image is computed
+        # straight from the transitions, and the client paints that instead.
+        data = model.to_dict(cycles=[], compact=True)
+    else:
+        cycles = model.cycles()
+        data = model.to_dict(cycles=cycles, compact=False)
+    data["board"] = board_map.as_dict()
+    # Persistence-of-vision display image + final LED/buzzer state. Computed
+    # from the transitions for both paths (a few ms) so the client can settle
+    # the multiplexed display to the exact integrated image — identical whether
+    # the run streamed cycles or was a compact refresh.
+    data["boardImage"] = board_image_from_model(model, board_map)
     transitions = {
         signal.name.upper(): [
             (time, _normalize_value(value)) for time, value in signal.transitions

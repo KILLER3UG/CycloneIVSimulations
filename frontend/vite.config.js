@@ -1,4 +1,6 @@
 import { defineConfig } from "vite";
+import { spawn } from "node:child_process";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Vite config for the Cyclone IV Studio frontend.
@@ -20,8 +22,48 @@ const MONACO_WORKER_FILE = fileURLToPath(
   new URL("./node_modules/monaco-editor/esm/vs/editor/editor.worker.js", import.meta.url),
 );
 
+async function isBackendReady() {
+  try {
+    const res = await fetch("http://127.0.0.1:8080/api/board", {
+      signal: AbortSignal.timeout(800),
+    });
+    if (!res.ok) return false;
+    const data = await res.json().catch(() => null);
+    return data?.ok === true;
+  } catch {
+    return false;
+  }
+}
+
+function cyclone4AutoBackend() {
+  return {
+    name: "cyclone4-auto-backend",
+    async configureServer(server) {
+      if (await isBackendReady()) return;
+      const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
+      const child = spawn(
+        process.env.PYTHON || "python",
+        ["-m", "uvicorn", "backend.server:app", "--host", "127.0.0.1", "--port", "8080", "--reload"],
+        { cwd: repoRoot, stdio: "ignore", windowsHide: true },
+      );
+      child.on("error", () => {});
+      server.httpServer?.once("close", () => {
+        try {
+          child.kill();
+        } catch {}
+      });
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        if (await isBackendReady()) break;
+        await new Promise((r) => setTimeout(r, 150));
+      }
+    },
+  };
+}
+
 export default defineConfig({
   root: fileURLToPath(new URL(".", import.meta.url)),
+  plugins: [cyclone4AutoBackend()],
   resolve: {
     alias: [{ find: MONACO_WORKER_ID, replacement: MONACO_WORKER_FILE }],
   },
@@ -34,13 +76,14 @@ export default defineConfig({
     outDir: "dist",
   },
   server: {
+    port: 8000,
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8000",
+        target: "http://127.0.0.1:8080",
         changeOrigin: false,
       },
       "/ws": {
-        target: "ws://127.0.0.1:8000",
+        target: "ws://127.0.0.1:8080",
         ws: true,
       },
     },

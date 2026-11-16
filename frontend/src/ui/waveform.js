@@ -69,6 +69,25 @@ export function createWaveformView(host, { onValuesAt } = {}) {
     let drag = null;
 
     // -------------------------------------------------------------- data ---
+    // Cycles arrive in time order; binary search keeps draw()/valueAt O(log n)
+    // instead of scanning the whole capture (which was quadratic when every
+    // 32-cycle batch redrew the canvas).
+    function lowerBound(t) {
+        let lo = 0, hi = cycles.length;
+        while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (cycles[mid].time < t) lo = mid + 1; else hi = mid;
+        }
+        return lo;
+    }
+
+    let drawQueued = false;
+    function scheduleDraw() {
+        if (drawQueued) return;
+        drawQueued = true;
+        requestAnimationFrame(() => { drawQueued = false; draw(); });
+    }
+
     function setSignals(list) {
         signals = list || [];
         visible = new Set(
@@ -77,7 +96,7 @@ export function createWaveformView(host, { onValuesAt } = {}) {
         );
         if (!visible.size && signals.length) visible.add(signals[0].name);
         renderSignalPicker();
-        draw();
+        scheduleDraw();
     }
 
     function setData(newCycles, totalHint) {
@@ -86,23 +105,23 @@ export function createWaveformView(host, { onValuesAt } = {}) {
         const span = Math.max(duration, 1);
         view = { t0: 0, t1: span };
         empty.classList.toggle("hidden", cycles.length > 0);
-        draw();
+        scheduleDraw();
     }
 
     function addCycles(more) {
         if (!more?.length) return;
-        cycles = cycles.concat(more);
+        for (const c of more) cycles.push(c);
         duration = cycles[cycles.length - 1].time;
         if (view.t1 >= duration - (more[more.length - 1].time - more[0].time) - 1e-6) view.t1 = duration;
         empty.classList.add("hidden");
-        draw();
+        scheduleDraw();
     }
 
     function ensureVisible(name) {
         if (!visible.has(name)) { visible.add(name); renderSignalPicker(); }
     }
 
-    function setCursor(t) { cursorTime = t; draw(); }
+    function setCursor(t) { cursorTime = t; scheduleDraw(); }
 
     // ------------------------------------------------------------- picker --
     function renderSignalPicker() {
@@ -116,7 +135,7 @@ export function createWaveformView(host, { onValuesAt } = {}) {
                 <span class="wave-sig-name" title="${s.name}">${s.name}${s.width > 1 ? ` [${s.width}]` : ""}</span>`;
             row.querySelector("input").addEventListener("change", (e) => {
                 if (e.target.checked) visible.add(s.name); else visible.delete(s.name);
-                draw();
+                scheduleDraw();
             });
             signalsEl.appendChild(row);
         }
@@ -128,7 +147,7 @@ export function createWaveformView(host, { onValuesAt } = {}) {
         }
         visible.add(name);
         renderSignalPicker();
-        draw();
+        scheduleDraw();
     }
 
     // -------------------------------------------------------------- draw ---
@@ -142,7 +161,7 @@ export function createWaveformView(host, { onValuesAt } = {}) {
         canvas.style.width = canvasW + "px";
         canvas.style.height = canvasH + "px";
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        draw();
+        scheduleDraw();
     }
 
     function visibleSignals() {
@@ -150,12 +169,9 @@ export function createWaveformView(host, { onValuesAt } = {}) {
     }
 
     function valueAt(signal, time) {
-        let v = cycles.length ? cycles[0].values[signal.name] : undefined;
-        for (const c of cycles) {
-            if (c.time <= time) v = c.values[signal.name];
-            else break;
-        }
-        return v;
+        if (!cycles.length) return undefined;
+        const i = lowerBound(time + 1e-9) - 1;
+        return cycles[Math.max(0, i)].values[signal.name];
     }
 
     function draw() {
@@ -237,8 +253,8 @@ export function createWaveformView(host, { onValuesAt } = {}) {
                 ctx.beginPath();
                 ctx.moveTo(LABEL_W, y);
                 let lastX = LABEL_W;
-                for (const c of cycles) {
-                    if (c.time < t0) continue;
+                for (let ci = lowerBound(t0); ci < cycles.length; ci += 1) {
+                    const c = cycles[ci];
                     if (c.time > t1) break;
                     const v = c.values[signal.name];
                     const high = v === 1 || v === "1";
@@ -265,8 +281,8 @@ export function createWaveformView(host, { onValuesAt } = {}) {
                 let prevVal = valueAt(signal, t0);
                 let lastTextX = -1000;
                 ctx.font = "10px ui-monospace, Consolas, monospace";
-                for (const c of cycles) {
-                    if (c.time < t0) continue;
+                for (let ci = lowerBound(t0); ci < cycles.length; ci += 1) {
+                    const c = cycles[ci];
                     if (c.time > t1) break;
                     const v = c.values[signal.name];
                     if (v === prevVal) continue;
@@ -344,12 +360,12 @@ export function createWaveformView(host, { onValuesAt } = {}) {
         if (t1 > max) { t0 -= t1 - max; t1 = max; }
         if (t0 < 0) { t0 = 0; t1 = Math.min(max, span); }
         view = { t0, t1: Math.max(t1, t0 + 1e-3) };
-        draw();
+        scheduleDraw();
     }
 
     function fit() {
         view = { t0: 0, t1: Math.max(duration, 1) };
-        draw();
+        scheduleDraw();
     }
 
     function eventTime(e) {
@@ -370,7 +386,7 @@ export function createWaveformView(host, { onValuesAt } = {}) {
         cursorTime = eventTime(e);
         drag = { x: e.clientX, t0: view.t0, t1: view.t1 };
         onValuesAt?.(cursorTime);
-        draw();
+        scheduleDraw();
     });
 
     window.addEventListener("mousemove", (e) => {
@@ -386,7 +402,7 @@ export function createWaveformView(host, { onValuesAt } = {}) {
             if (t1 > max) { t0 -= t1 - max; t1 = max; }
             if (t0 < 0) t0 = 0;
             view = { t0, t1: Math.max(t1, t0 + 1e-3) };
-            draw();
+            scheduleDraw();
             return;
         }
         const rect = canvas.getBoundingClientRect();
@@ -398,7 +414,7 @@ export function createWaveformView(host, { onValuesAt } = {}) {
         const t = eventTime(e);
         if (Math.abs(t - cursorTime) > (view.t1 - view.t0) / (canvasW * 2)) {
             cursorTime = t;
-            draw();
+            scheduleDraw();
         }
         const sigs = visibleSignals().slice(0, 10);
         tooltip.innerHTML = `<div class="wt-time">t = ${fmtTime(t)}</div>` + sigs.map((s) => {

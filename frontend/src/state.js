@@ -39,7 +39,6 @@ export function createStore() {
         power: true,
         status: "idle", // idle | compiling | programming | running | paused | error
         statusDetail: "",
-        programmingMode: "jtag", // jtag | as
         leftOpen: true,
         rightOpen: true,
         bottomOpen: true,
@@ -60,17 +59,14 @@ export function createStore() {
         entity: null, // { name, ports: [{name, direction, type, width}] }
         compileResult: null,
         problems: [], // [{severity, message, file, line, column}]
-        pinCheck: { unknown: [], blocked: false, override: false },
+        pinCheck: { unknown: [], blocked: false, override: true },
         topEntity: "",
-
-        // simulation setup
-        simSetup: { duration: 1000, clockPeriod: 10, resetCycles: 2, resetActiveLow: true },
-        stimuli: {}, // portName → {kind, value, period}
 
         // live session
         session: null, // SimSession
         running: false,
         paused: false,
+        refreshing: false, // live input-change refresh (no recompile)
         programmed: false, // first successful run happened
         signals: [], // [{name, width, direction}]
         cycles: [], // [{cycle, time, values}]

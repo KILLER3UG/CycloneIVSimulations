@@ -465,7 +465,9 @@ def test_detect_reset_exact_names_and_no_false_matches():
     from backend.testbench_gen import detect_reset
     from backend.vhdl_parser import parse
 
-    # an exact _RESET_NAMES port is matched; "rst" defaults to active-high
+    # an exact _RESET_NAMES port is matched; a bare "rst" defaults to
+    # active-high by name convention (the bare-API heuristic). The board's
+    # active-low RESET key is applied by the UI via explicit resetActiveHigh.
     vhdl_rst = """
 entity rst_exact is
     port (rst : in std_logic; busy : out std_logic);
@@ -473,7 +475,7 @@ end entity;
 """
     detected = detect_reset(parse(vhdl_rst).primary)
     assert detected is not None and detected[0].name == "rst"
-    assert detected[1] is True, "rst (no _n suffix) is active-high"
+    assert detected[1] is True, "rst (no _n suffix) is active-high by name convention"
 
     # reset-like names that are NOT resets must not be hijacked
     for port_name in ("reset_req", "reset_done", "soft_rst_ctrl", "rst_status"):

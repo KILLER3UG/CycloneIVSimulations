@@ -5,7 +5,7 @@ Examples
     python -m backend doctor
     python -m backend examples
     python -m backend run examples/counter.vhd --duration 200 --cycles 16
-    python -m backend serve --port 8000
+    python -m backend serve --port 8080
 """
 
 from __future__ import annotations
@@ -158,7 +158,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     serve = sub.add_parser("serve", help="start the HTTP/WebSocket server")
     serve.add_argument("--host", default="127.0.0.1")
-    serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument("--port", type=int, default=8080)
     serve.add_argument("--reload", action="store_true")
     serve.add_argument("--log-level", default="info")
     serve.set_defaults(func=_cmd_serve)

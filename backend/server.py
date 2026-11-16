@@ -192,9 +192,28 @@ def example(example_id: str):
     return _error_response(f"Unknown example '{example_id}'", 404)
 
 
+def _extract_vhdl(payload: Dict[str, Any]) -> str:
+    """Return primary HDL source from ``vhdl`` or fall back to non-empty ``files``."""
+    vhdl = payload.get("vhdl") or ""
+    if isinstance(vhdl, str) and vhdl.strip():
+        return vhdl
+    for item in payload.get("files") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").lower()
+        content = item.get("content")
+        if content is None:
+            content = item.get("vhdl")
+        if isinstance(content, str) and content.strip() and (
+            not name or name.endswith((".vhd", ".vhdl", ".v", ".sv"))
+        ):
+            return content
+    return vhdl if isinstance(vhdl, str) else ""
+
+
 @app.post("/api/compile")
 def compile_endpoint(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
-    vhdl = payload.get("vhdl", "")
+    vhdl = _extract_vhdl(payload)
     if not vhdl.strip():
         return _error_response("No VHDL source provided")
     top = payload.get("top") or None
@@ -202,14 +221,21 @@ def compile_endpoint(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
         simulator = get_simulator()
     except GhdlNotFoundError as exc:
         return _error_response(str(exc), 503)
-    result = simulator.compile_source(vhdl, top, payload.get("files"), payload.get("qsf"))
+    strict_pins = bool(payload.get("strictPins", payload.get("strict_pins", False)))
+    result = simulator.compile_source(
+        vhdl,
+        top,
+        payload.get("files"),
+        payload.get("qsf"),
+        strict_pins=strict_pins,
+    )
     status = 200 if result.get("ok") else 400
     return JSONResponse(status_code=status, content=result)
 
 
 @app.post("/api/simulate")
 def simulate_endpoint(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
-    vhdl = payload.get("vhdl", "")
+    vhdl = _extract_vhdl(payload)
     if not vhdl.strip():
         return _error_response("No VHDL source provided")
     try:
@@ -336,7 +362,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
 
 async def _ws_compile(websocket: WebSocket, simulator: Simulator, message: dict) -> None:
-    vhdl = message.get("vhdl", "")
+    vhdl = _extract_vhdl(message)
     if not vhdl.strip():
         await websocket.send_json({"type": "error", "message": "No VHDL source provided"})
         return
@@ -353,7 +379,7 @@ async def _ws_compile(websocket: WebSocket, simulator: Simulator, message: dict)
 
 
 async def _ws_simulate(websocket: WebSocket, simulator: Simulator, message: dict) -> None:
-    vhdl = message.get("vhdl", "")
+    vhdl = _extract_vhdl(message)
     if not vhdl.strip():
         await websocket.send_json({"type": "error", "message": "No VHDL source provided"})
         return

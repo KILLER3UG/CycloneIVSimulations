@@ -42,11 +42,13 @@ export function createInteractions(board, host, h) {
         if (ud.kind === "button" && /^S[1-4]$/.test(ud.componentId || "")) {
             const index = Number(ud.componentId.slice(1)) - 1;
             board.pressKey(index, true);
+            h.onKeyPress?.(index, true);
             pressed = { type: "key", index };
             return true;
         }
         if (ud.kind === "reset") {
             board.pressReset(true);
+            h.onResetPress?.(true);
             pressed = { type: "reset" };
             return true;
         }
@@ -61,8 +63,14 @@ export function createInteractions(board, host, h) {
     });
 
     window.addEventListener("pointerup", () => {
-        if (pressed?.type === "key") board.pressKey(pressed.index, false);
-        if (pressed?.type === "reset") board.pressReset(false);
+        if (pressed?.type === "key") {
+            board.pressKey(pressed.index, false);
+            h.onKeyPress?.(pressed.index, false);
+        }
+        if (pressed?.type === "reset") {
+            board.pressReset(false);
+            h.onResetPress?.(false);
+        }
         pressed = null;
     });
 
@@ -123,23 +131,4 @@ export function createInteractions(board, host, h) {
     dom.addEventListener("pointerleave", () => tip.classList.add("hidden"));
 
     return { tooltip: tip };
-}
-
-// "Not programmed" overlay shown over the board until the first run.
-export function createBoardOverlay(host) {
-    const el = document.createElement("div");
-    el.className = "board-overlay";
-    el.innerHTML = `
-        <div class="board-overlay-card">
-            <span class="bo-icon">${`<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1.5"/><rect x="9.5" y="9.5" width="5" height="5" rx="0.5"/><line x1="9" y1="2.5" x2="9" y2="6"/><line x1="15" y1="2.5" x2="15" y2="6"/><line x1="9" y1="18" x2="9" y2="21.5"/><line x1="15" y1="18" x2="15" y2="21.5"/><line x1="2.5" y1="9" x2="6" y2="9"/><line x1="2.5" y1="15" x2="6" y2="15"/><line x1="18" y1="9" x2="21.5" y2="9"/><line x1="18" y1="15" x2="21.5" y2="15"/></svg>`}</span>
-            <div>
-                <b>Not programmed</b>
-                <span>Compile a design and press Run to configure the FPGA.</span>
-            </div>
-        </div>`;
-    host.appendChild(el);
-    return {
-        hide() { el.classList.add("hidden"); },
-        show() { el.classList.remove("hidden"); },
-    };
 }

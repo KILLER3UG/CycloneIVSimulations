@@ -1,10 +1,10 @@
-// toolbar.js — top toolbar: power, run/pause/stop/reset/step, the compile
-// pipeline (Analyze → Compile → Pin check → Program → Run), status badge,
-// theme toggle and help. Camera presets live on the board overlay (index.html).
+// toolbar.js — top toolbar: power, pause/stop/reset/step, the compile
+// pipeline (Analyze → Compile → Pin check → Program → Simulate), status badge,
+// theme toggle, licenses/about, and help. Header has no Compile or Run button.
 
 import { icon } from "./icons.js";
 
-const STEPS = ["Analyze", "Compile", "Pin check", "Program", "Run"];
+const STEPS = ["Analyze", "Compile", "Pin check", "Program", "Simulate"];
 
 export function createToolbar(root, h) {
     root.classList.add("toolbar");
@@ -16,14 +16,7 @@ export function createToolbar(root, h) {
         </div>
         <div class="tb-group tb-center">
             <button class="icon-btn tb-power" data-act="power" aria-label="Board power" aria-pressed="true" title="Board power (P)">${icon("power")}</button>
-            <div class="run-wrap">
-                <button class="btn btn-primary tb-run" data-act="run" title="Compile + upload + run (Ctrl+Enter)">${icon("play")}<span>Run</span></button>
-                <button class="btn btn-primary tb-run-caret" data-act="runmenu" aria-label="Programming mode" aria-haspopup="true">${icon("chevron")}</button>
-                <div class="run-menu hidden" role="menu">
-                    <button type="button" role="menuitem" data-mode="jtag"><strong>Program (JTAG, volatile)</strong><small>configure the FPGA directly; image is lost on power-off</small></button>
-                    <button type="button" role="menuitem" data-mode="as"><strong>Program flash (AS, persistent)</strong><small>write the EPCS16 configuration flash &mdash; simulated</small></button>
-                </div>
-            </div>
+            <span class="tb-sep"></span>
             <button class="icon-btn" data-act="pause" aria-label="Pause simulation" title="Pause">${icon("pause")}</button>
             <button class="icon-btn" data-act="stop" aria-label="Stop simulation" title="Stop (Esc)">${icon("stop")}</button>
             <button class="icon-btn" data-act="reset" aria-label="Reset simulation cursor" title="Reset cursor to cycle 0">${icon("reset")}</button>
@@ -36,6 +29,7 @@ export function createToolbar(root, h) {
             <span class="status-badge st-idle" id="status-badge" role="status">
                 ${icon("info")}<span id="status-text">Idle</span>
             </span>
+            <button type="button" class="btn-version" data-act="about" id="tb-version" title="About Cyclone IV Studio &amp; Licenses" aria-label="About and licenses">v0.1.0</button>
             <button class="icon-btn" data-act="theme" aria-label="Toggle dark theme" title="Theme (T)">${icon("moon")}</button>
             <button class="icon-btn" data-act="help" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">${icon("help")}</button>
             <button class="icon-btn only-narrow" data-act="right" aria-label="Toggle editor panel" title="Editor">${icon("file")}</button>
@@ -44,8 +38,6 @@ export function createToolbar(root, h) {
 
     const badge = root.querySelector("#status-badge");
     const powerBtn = root.querySelector('[data-act="power"]');
-    const runBtn = root.querySelector('[data-act="run"]');
-    const menu = root.querySelector(".run-menu");
     const pauseBtn = root.querySelector('[data-act="pause"]');
     const stepBtn = root.querySelector('[data-act="step"]');
     const themeBtn = root.querySelector('[data-act="theme"]');
@@ -87,8 +79,6 @@ export function createToolbar(root, h) {
     }
 
     function setRunning(running, paused = false) {
-        runBtn.classList.toggle("running", running && !paused);
-        runBtn.querySelector("span").textContent = running && !paused ? "Running" : "Run";
         pauseBtn.classList.toggle("active", paused);
         pauseBtn.title = paused ? "Resume" : "Pause";
         stepBtn.disabled = running && !paused;
@@ -100,34 +90,28 @@ export function createToolbar(root, h) {
         themeBtn.title = dark ? "Switch to light theme" : "Switch to dark theme";
     }
 
+    function setVersion(v) {
+        const btn = root.querySelector("#tb-version");
+        if (btn && v) btn.textContent = `v${String(v).replace(/^v/i, "")}`;
+    }
+
     root.addEventListener("click", (e) => {
         const btn = e.target.closest("[data-act]");
         if (!btn) return;
-        const modeBtn = e.target.closest("[data-mode]");
-        if (modeBtn) {
-            menu.classList.add("hidden");
-            h.onRunMode?.(modeBtn.dataset.mode);
-            return;
-        }
         switch (btn.dataset.act) {
             case "power": h.onPower?.(); break;
-            case "run": menu.classList.add("hidden"); h.onRun?.(); break;
-            case "runmenu": menu.classList.toggle("hidden"); break;
             case "pause": h.onPause?.(); break;
             case "stop": h.onStop?.(); break;
             case "reset": h.onReset?.(); break;
             case "step": h.onStep?.(); break;
             case "theme": h.onTheme?.(); break;
             case "help": h.onHelp?.(); break;
+            case "about": h.onAbout?.(); break;
             case "left": h.onToggleLeft?.(); break;
             case "right": h.onToggleRight?.(); break;
             default: break;
         }
     });
 
-    document.addEventListener("click", (e) => {
-        if (!e.target.closest(".run-wrap")) menu.classList.add("hidden");
-    });
-
-    return { setStatus, setStep, setPower, setRunning, setTheme, root };
+    return { setStatus, setStep, setPower, setRunning, setTheme, setVersion, root };
 }

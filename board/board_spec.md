@@ -178,6 +178,7 @@ mapping, not the swapped one. [SCH Display sheet, zoom_seg_map, DS (3461BS)]
 | Part | 4-digit common-anode display (12-pin), segments a–g + dp per digit | VERIFIED | SCH, CROP-sevenseg |
 | Digit select | DIG1 = 133, DIG2 = 135, DIG3 = 136, DIG4 = 137 → 10 kΩ base resistors **R46–R49** (DIG1→R49 … DIG4→R46) → **8550 PNP** high-side drivers (Q1–Q4) from 3.3 V | VERIFIED | SCH, CROP-sevenseg |
 | Digit polarity | digit ON when DIG pin = 0 (PNP conducts when its base is pulled low) | VERIFIED | SCH, CROP-sevenseg |
+| Digit order (physical) | **DIG[3] (137) = DIG4 → Q1 → D1 = LEFTMOST tube; DIG[0] (133) = DIG1 → Q4 → D4 = RIGHTMOST tube.** The digit index runs right-to-left on the module (traced collector nesting: DIG4→Q1→D1 … DIG1→Q4→D4, display commons D1/D2/D3/D4 = package pins 12/9/8/6, left→right) | VERIFIED | SCH 5x trace (seg_trace_5x) |
 | Segments | SEG0 = 128, SEG1 = 121, SEG2 = 125, SEG3 = 129, SEG4 = 132, SEG5 = 126, SEG6 = 124, SEG7 = 127 → 220 Ω (R50–R57) → display | VERIFIED | SCH, CROP-sevenseg, INST |
 | Segment polarity | segment lit when SEG pin = 0 (cathode drive; common anode) | VERIFIED | SCH |
 | Segment mapping | SEG0 = a, SEG1 = b, SEG2 = c, SEG3 = d, SEG4 = e, SEG5 = f, SEG6 = g, SEG7 = dp (display pins 11=a, 7=b, 4=c, 2=d, 1=e, 10=f, 5=g, 3=dp; SEG0→R52→pin 11, SEG1→R57→pin 7 — see §0h) | VERIFIED | SCH Display section, zoom_seg_map, DS (3461BS) |

@@ -6,8 +6,8 @@
     "scripts": {
         "dev": "cd frontend && npm run dev",
         "build": "cd frontend && npm run build",
-        "serve": "python -m backend serve --port 8000",
-        "start": "python -m backend serve --port 8000",
+        "serve": "python -m backend serve --port 8080",
+        "start": "python -m backend serve --port 8080",
         "test": "python tests/run_all.py",
         "shot:board": "cd frontend && node scripts/board-shot.mjs",
         "shot:ui": "cd frontend && node scripts/ui-verify.mjs"

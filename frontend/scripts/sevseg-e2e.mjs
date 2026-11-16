@@ -14,7 +14,7 @@ import { fileURLToPath as _fileURLToPath } from "node:url";
 const __dirname_ps = _dirname(_fileURLToPath(import.meta.url));
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, basename } from "node:path";
 
 const EDGE_CANDIDATES = [
     "C:/Program Files/Google/Chrome/Application/chrome.exe",
@@ -31,23 +31,31 @@ mkdirSync(OUT, { recursive: true });
 // k = not s (active-low keys); phase p3..p0 from cnt(15 downto 14).
 // IMPORTANT: the segment lines sa..sg are NOT gated by ge in this design —
 // they keep driving the phase pattern; only the digit enables are gated.
-// All four keys closed (stimulus 0) -> ge = 1; cnt < 16384 -> phase p3:
+// Capture window = 65546 cycles (reset + one full 65536-cycle scan rotation):
+// cnt at the end = 65546 mod 65536 = 10 -> cnt(15:14) = 00 -> phase p3.
+// All four keys closed (stimulus 0) -> ge = 1:
 //   tube index 3 selected -> dtube = 0b0111 = 7;
-//   glyph sa..sg = p3 pattern: a,b,c,d,f,g on -> seven_seg = bit4 set = 16.
+//   glyph p3: a,b,c,d,f,g on -> seven_seg = not(0b1110111) = 16.
 // S1 open (stimulus 1) -> ge = 0 -> every tube unselected: dtube = 0b1111
 //   = 15 (display dark — the functional check); seven_seg keeps the p3
 //   pattern = 16 (invisible on hardware with no tube selected).
-// (First E2E pass expected 127 here — wrong: I had assumed ge gates the
-// segments too. Corrected with root cause; the assertion stays strict.)
 const EXPECT = {
-    allClosed_short: { dtube: 7, seven_seg: 16 },   // 2000 cycles, all in p3
-    s1Open: { dtube: 15, seven_seg: 16 },           // tubes off, segments idle
+    allClosed_short: { dtube: 7, seven_seg: 16 },   // digit 3 shown, glyph p3
+    s1Open: { dtube: 15, seven_seg: 16 },           // ge=0: no tube selected
     s1ClosedAgain: { dtube: 7, seven_seg: 16 },
 };
 
 const exe = EDGE_CANDIDATES.find((p) => existsSync(p));
 const profileDir = mkdtempSync(join(tmpdir(), "sevseg-e2e-"));
 const PORT = 9334;
+// Guaranteed cleanup even on a mid-run crash: reap this test's headless
+// browsers (matched by the sevseg-e2e- temp-profile prefix, which also covers
+// the retry's fresh profile). Leaked SwiftShader browsers peg a CPU core.
+function reapOwnBrowser() {
+    const ps = `Get-CimInstance Win32_Process -Filter "Name='chrome.exe' OR Name='msedge.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine -match 'sevseg-e2e-' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`;
+    try { spawnSync("powershell", ["-NoProfile", "-Command", ps], { stdio: "ignore" }); } catch { /* ignore */ }
+}
+process.on("exit", reapOwnBrowser);
 // snapshot pre-existing browser PIDs — the exit reap kills ONLY newcomers
 // (probe-spawned browsers, incl. relaunch roots that lost their marker flags)
 const BEFORE_PIDS = spawnSync("powershell", ["-NoProfile", "-Command",
@@ -144,11 +152,8 @@ const loaded = await page.evaluate(async () => {
 });
 step("example listed + loaded", !!loaded, JSON.stringify(loaded));
 
-// 2 — run 2000 cycles (short: stays inside phase p3) and wait for completion
-await page.evaluate(() => {
-    document.getElementById("ss-duration").value = "20000";
-    window.__cyclone.run();
-});
+// 2 — run with the fixed 1.5 ms capture and wait for completion
+await page.evaluate(() => window.__cyclone.run());
 let done = false;
 for (let i = 0; i < 60 && !done; i++) {
     await wait(1000);
@@ -192,7 +197,7 @@ const run2 = await page.evaluate(() => {
 step(
     "S1 open -> display disabled (auto re-run)",
     done2 && run2.dtube === EXPECT.s1Open.dtube && run2.seven_seg === EXPECT.s1Open.seven_seg && run2.s1 === 1,
-    `dtube=${run2.dtube} (exp 15) seven_seg=${run2.seven_seg} (exp 127) s1=${run2.s1}`,
+    `dtube=${run2.dtube} (exp ${EXPECT.s1Open.dtube}) seven_seg=${run2.seven_seg} (exp ${EXPECT.s1Open.seven_seg}) s1=${run2.s1}`,
 );
 await page.screenshot({ path: join(OUT, "04-sevseg-dark.png") });
 
@@ -213,7 +218,7 @@ const run3 = await page.evaluate(() => {
 step(
     "S1 closed again -> tube lights again",
     done3 && run3.dtube === EXPECT.s1ClosedAgain.dtube && run3.seven_seg === EXPECT.s1ClosedAgain.seven_seg,
-    `dtube=${run3.dtube} (exp 7) seven_seg=${run3.seven_seg} (exp 16)`,
+    `dtube=${run3.dtube} (exp ${EXPECT.s1ClosedAgain.dtube}) seven_seg=${run3.seven_seg} (exp ${EXPECT.s1ClosedAgain.seven_seg})`,
 );
 
 results.expect = EXPECT;

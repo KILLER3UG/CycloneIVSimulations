@@ -157,6 +157,7 @@ class GhdlTool:
                  timeout: Optional[float] = None) -> None:
         self.executable = executable or find_ghdl()
         self.std = std
+        self._version_cache: Optional[str] = None
         env_timeout = os.environ.get("GHDL_TIMEOUT", "").strip()
         if timeout is None and env_timeout:
             try:
@@ -164,12 +165,12 @@ class GhdlTool:
             except ValueError:
                 timeout = None
         self.timeout = float(timeout) if timeout and timeout > 0 else None
-        # Stop/cancel support (ENG-03): the currently running GHDL child is
-        # registered so ``cancel_current()`` can kill it mid-run. A fresh
-        # Simulator instance owns a fresh tool, so "current" is unambiguous.
-        self._cancel_lock = threading.Lock()
-        self._cancel_requested = False
-        self._current_child: Optional[subprocess.Popen] = None
+        # Stop/cancel support (ENG-03): every run registers its GHDL child
+        # under a per-run cancel TOKEN (a small dict owned by the caller —
+        # usually one per simulation session). Killing a token kills exactly
+        # that run; no shared flag can poison an unrelated run's compile.
+        self._children_lock = threading.Lock()
+        self._active_children: Dict[int, subprocess.Popen] = {}
 
     def _run_timeout(self, stop_time_ns: float) -> float:
         """Timeout for a simulation run: explicit override, else scaled."""
@@ -181,9 +182,14 @@ class GhdlTool:
 
     # -- introspection ----------------------------------------------------
     def version(self) -> str:
-        result = self._run([self.executable, "--version"], cwd=None)
-        first = result.stdout.splitlines()[0] if result.stdout else "unknown"
-        return first.strip()
+        # The GHDL version never changes for a given executable, so cache it:
+        # every WebSocket connect calls health() -> version(), and spawning
+        # `ghdl --version` each time added ~200 ms to every live refresh.
+        if self._version_cache is None:
+            result = self._run([self.executable, "--version"], cwd=None)
+            first = result.stdout.splitlines()[0] if result.stdout else "unknown"
+            self._version_cache = first.strip()
+        return self._version_cache
 
     # -- commands ---------------------------------------------------------
     @staticmethod
@@ -200,6 +206,7 @@ class GhdlTool:
         work: str = "work",
         cwd: Optional[Path] = None,
         extra_flags: Optional[Iterable[str]] = None,
+        token: Optional[dict] = None,
     ) -> CommandResult:
         args = [
             self.executable,
@@ -212,10 +219,11 @@ class GhdlTool:
         args.extend(str(f) for f in files)
         if extra_flags:
             args.extend(str(f) for f in extra_flags)
-        return self._run(args, cwd=self._resolve_cwd(cwd, workdir))
+        return self._run(args, cwd=self._resolve_cwd(cwd, workdir), token=token)
 
     def elaborate(
-        self, top: str, workdir: Path, work: str = "work", cwd: Optional[Path] = None
+        self, top: str, workdir: Path, work: str = "work", cwd: Optional[Path] = None,
+        token: Optional[dict] = None,
     ) -> CommandResult:
         args = [
             self.executable,
@@ -226,7 +234,7 @@ class GhdlTool:
             "-Werror=binding",
             top,
         ]
-        return self._run(args, cwd=self._resolve_cwd(cwd, workdir))
+        return self._run(args, cwd=self._resolve_cwd(cwd, workdir), token=token)
 
     def synthesize(
         self,
@@ -235,6 +243,7 @@ class GhdlTool:
         top: str,
         work: str = "work",
         cwd: Optional[Path] = None,
+        token: Optional[dict] = None,
     ) -> CommandResult:
         """Run GHDL's synthesis front-end.
 
@@ -251,7 +260,7 @@ class GhdlTool:
         ]
         args.extend(str(f) for f in files)
         args.extend(["-e", top])
-        return self._run(args, cwd=self._resolve_cwd(cwd, workdir))
+        return self._run(args, cwd=self._resolve_cwd(cwd, workdir), token=token)
 
     def run(
         self,
@@ -262,6 +271,7 @@ class GhdlTool:
         work: str = "work",
         extra: Optional[Iterable[str]] = None,
         cwd: Optional[Path] = None,
+        token: Optional[dict] = None,
     ) -> CommandResult:
         stop = max(1, int(round(stop_time_ns)))
         args = [
@@ -277,57 +287,50 @@ class GhdlTool:
         if extra:
             args.extend(extra)
         return self._run(args, cwd=self._resolve_cwd(cwd, workdir),
-                         timeout=self._run_timeout(stop_time_ns))
+                         timeout=self._run_timeout(stop_time_ns), token=token)
 
     # -- stop/cancel (ENG-03) ---------------------------------------------
-    def reset_cancel(self) -> None:
-        """Clear the cancel flag before starting a fresh run."""
-        with self._cancel_lock:
-            self._cancel_requested = False
+    def cancel_token(self, token: dict) -> bool:
+        """Kill the GHDL child registered under ``token`` (stop path).
 
-    def cancel_current(self) -> bool:
-        """Kill the running GHDL child, if any. Returns True when killed."""
-        with self._cancel_lock:
-            self._cancel_requested = True
-            child = self._current_child
-        if child is not None and child.poll() is None:
+        The token's ``cancelled`` flag makes that run's result come back as
+        not-ok; the calling session discards it (sim_stopped was already
+        emitted). Returns True when a live child was killed.
+        """
+        proc = token.get("proc") if isinstance(token, dict) else None
+        if proc is not None and proc.poll() is None:
+            token["cancelled"] = True
             try:
-                child.kill()
+                proc.kill()
                 return True
             except OSError:
                 return False
+        token["cancelled"] = True
         return False
 
-    @property
-    def cancel_requested(self) -> bool:
-        return self._cancel_requested
-
-    def _cancelled_result(self, args: Sequence[str]) -> CommandResult:
-        return CommandResult(
-            ok=False,
-            stderr="simulation cancelled",
-            returncode=-2,
-            command=list(args),
-            cancelled=True,
-        )
-
+    # -- internals --------------------------------------------------------
+    # -- internals --------------------------------------------------------
     # -- internals --------------------------------------------------------
     def _run(self, args: Sequence[str], cwd: Optional[Path],
-             timeout: Optional[float] = None) -> CommandResult:
+             timeout: Optional[float] = None,
+             token: Optional[dict] = None) -> CommandResult:
         effective = float(timeout) if timeout is not None else (self.timeout or 60.0)
-        with self._cancel_lock:
-            if self._cancel_requested:
-                return self._cancelled_result(args)
-            proc = subprocess.Popen(
-                list(args),
-                cwd=str(cwd) if cwd else None,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
-            self._current_child = proc
+        if isinstance(token, dict) and token.get("cancelled"):
+            return self._cancelled_result(args)
+        proc = subprocess.Popen(
+            list(args),
+            cwd=str(cwd) if cwd else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        child_id = id(proc)
+        with self._children_lock:
+            self._active_children[child_id] = proc
+        if isinstance(token, dict):
+            token["proc"] = proc
         timed_out = False
         try:
             completed_stdout, completed_stderr = proc.communicate(timeout=effective)
@@ -343,9 +346,10 @@ class GhdlTool:
                 command=list(args),
             )
         finally:
-            with self._cancel_lock:
-                self._current_child = None
-                cancel_hit = self._cancel_requested
+            with self._children_lock:
+                self._active_children.pop(child_id, None)
+            cancel_hit = bool(isinstance(token, dict) and token.get("cancelled")
+                              and proc.returncode not in (0, None))
 
         if timed_out:
             is_run = "-r" in args

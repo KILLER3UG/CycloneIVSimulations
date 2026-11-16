@@ -39,6 +39,7 @@ class QsfResult:
     device: Optional[str] = None
     files: List[Tuple[str, str]] = field(default_factory=list)  # (kind, name)
     pins: Dict[str, List[str]] = field(default_factory=dict)    # base port -> [PIN_nn, ...]
+    bit_pins: Dict[str, Dict[int, str]] = field(default_factory=dict)  # base port -> {bit_idx: PIN_nn}
     io_standards: Dict[str, str] = field(default_factory=dict)
     unusedPolicy: Optional[str] = None
     errors: List[dict] = field(default_factory=list)
@@ -125,6 +126,7 @@ def parse_qsf(text: str) -> QsfResult:
             result.pins.setdefault(actual_key, [])
             if pin not in result.pins[actual_key]:
                 result.pins[actual_key].append(pin)
+            result.bit_pins.setdefault(actual_key, {})[0 if bit is None else bit] = pin
             seen_pins[slot] = pin
             seen_slots[slot] = line_no
             seen_pin_targets[pin] = slot

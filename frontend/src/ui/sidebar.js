@@ -1,10 +1,22 @@
-// sidebar.js — left sidebar: Peripherals / Pin Map / Examples tabs + search,
-// and the pinned board-specs card (mockup: part, VERIFIED, summary, All specs).
+// sidebar.js — left sidebar: collapsible header, Peripherals / Pin Planner /
+// Examples tabs + search, live pin values, QSF import/export, and board specs.
 
 import { icon } from "./icons.js";
-import { dialog } from "./toast.js";
+import { dialog, toast } from "./toast.js";
+import {
+    IO_STANDARDS,
+    buildPinCatalog,
+    expandEntityNodes,
+    exportPlannerToQsf,
+    getEntityAssignments,
+    loadPlannerStore,
+    normalizePin,
+    parseQsfToPlanner,
+    setEntityAssignments,
+    suggestBoardDefaults,
+    validateAssignments,
+} from "../pinPlanner.js";
 
-// Attachable module catalog (virtual modules — UI-level binding to a port).
 const ATTACHABLE = [
     { id: "ledbar", name: "LED bar", icon: "slider", desc: "8 discrete LEDs", width: 8 },
     { id: "lcd", name: "1602 LCD", icon: "lcd", desc: "character display", width: 8 },
@@ -12,16 +24,26 @@ const ATTACHABLE = [
     { id: "bargraph", name: "Bargraph", icon: "activity", desc: "10-level meter", width: 10 },
 ];
 
+function escHtml(s) {
+    return String(s ?? "").replace(/[&<>"']/g, (ch) => (
+        { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]
+    ));
+}
+
 export function createSidebar(root, h) {
     root.classList.add("sidebar");
     root.innerHTML = `
+        <div class="sb-head" title="Board peripherals & Pin Planner">
+            <span class="sb-head-title">${icon("chip")}<span>Board</span></span>
+            <button class="icon-btn" type="button" data-act="collapse-left" title="Collapse left sidebar" aria-label="Collapse left sidebar">${icon("chevron")}</button>
+        </div>
         <div class="sb-search">
             <span class="sb-search-icon">${icon("search")}</span>
             <input id="sb-search" type="text" placeholder="Search components or pins" aria-label="Search components or pins">
         </div>
         <div class="sb-tabs" role="tablist">
             <button class="sb-tab active" data-tab="periph" role="tab" aria-selected="true">Peripherals</button>
-            <button class="sb-tab" data-tab="pinmap" role="tab" aria-selected="false">Pin Map</button>
+            <button class="sb-tab" data-tab="pinmap" role="tab" aria-selected="false">Pin Planner</button>
             <button class="sb-tab" data-tab="examples" role="tab" aria-selected="false">Examples</button>
         </div>
         <div class="sb-body">
@@ -33,6 +55,7 @@ export function createSidebar(root, h) {
         <div class="sb-speccard" id="sb-speccard"></div>
     `;
 
+    const collapseBtn = root.querySelector('[data-act="collapse-left"]');
     const search = root.querySelector("#sb-search");
     const panes = {
         periph: root.querySelector('[data-pane="periph"]'),
@@ -43,12 +66,46 @@ export function createSidebar(root, h) {
     const specCard = root.querySelector("#sb-speccard");
     const attached = []; // {id, def, port}
     let profile = null;
-    let entity = null;
+    let catalog = buildPinCatalog(null);
+    let plannerStore = loadPlannerStore();
+    let entity = null; // top-level entity { name, ports }
+    let nodes = [];
+    let assignments = {};
     let liveValues = {};
     let examples = [];
 
+    // --------------------------------------------------------- collapse ----
+    function setCollapsed(collapsed) {
+        root.classList.toggle("collapsed", collapsed);
+        if (collapseBtn) {
+            const label = collapsed ? "Expand left sidebar" : "Collapse left sidebar";
+            collapseBtn.title = label;
+            collapseBtn.setAttribute("aria-label", label);
+        }
+        h.onCollapsed?.(collapsed);
+    }
+
+    function expand() {
+        setCollapsed(false);
+    }
+
+    root.querySelector(".sb-head").addEventListener("click", (e) => {
+        const btn = e.target.closest('[data-act="collapse-left"]');
+        if (btn) {
+            if (document.body.classList.contains("drawer-left")) {
+                document.body.classList.remove("drawer-left");
+                document.getElementById("drawer-backdrop")?.setAttribute("hidden", "");
+                setCollapsed(false);
+            } else {
+                setCollapsed(!root.classList.contains("collapsed"));
+            }
+            return;
+        }
+        if (root.classList.contains("collapsed")) expand();
+    });
+
     // ------------------------------------------------------------- search --
-    search.addEventListener("input", () => {
+    function applySearch() {
         const q = search.value.trim().toLowerCase();
         root.querySelectorAll(".sb-item").forEach((el) => {
             const hay = (el.dataset.search || "").toLowerCase();
@@ -58,23 +115,27 @@ export function createSidebar(root, h) {
             const any = g.querySelector(".sb-item:not(.hidden)");
             g.classList.toggle("hidden", !any && !g.dataset.always);
         });
-        // pins: filter the Pin Map rows on the same query
         root.querySelectorAll(".pin-row").forEach((tr) => {
             const hay = (tr.dataset.search || "").toLowerCase();
             tr.classList.toggle("hidden", !!q && !hay.includes(q));
         });
-    });
+    }
+    search.addEventListener("input", applySearch);
+
+    function showTab(key) {
+        root.querySelectorAll(".sb-tab").forEach((t) => {
+            const on = t.dataset.tab === key;
+            t.classList.toggle("active", on);
+            t.setAttribute("aria-selected", String(on));
+        });
+        for (const [k, pane] of Object.entries(panes)) {
+            pane.classList.toggle("hidden", k !== key);
+        }
+    }
 
     root.querySelector(".sb-tabs").addEventListener("click", (e) => {
         const tab = e.target.closest(".sb-tab");
-        if (!tab) return;
-        root.querySelectorAll(".sb-tab").forEach((t) => {
-            t.classList.toggle("active", t === tab);
-            t.setAttribute("aria-selected", String(t === tab));
-        });
-        for (const [key, pane] of Object.entries(panes)) {
-            pane.classList.toggle("hidden", key !== tab.dataset.tab);
-        }
+        if (tab) showTab(tab.dataset.tab);
     });
 
     // -------------------------------------------------------- peripherals --
@@ -111,40 +172,40 @@ export function createSidebar(root, h) {
         p.appendChild(group("FPGA", "chip", [
             {
                 id: "U5", name: b.fpga || dev.part || "EP4CE6E22C8N",
-                desc: `${dev.package || "EQFP-144"} \u00b7 ${dev.logicElements ? dev.logicElements.toLocaleString() + " LE" : "Cyclone IV E"}`,
+                desc: `${dev.package || "EQFP-144"} · ${dev.logicElements ? dev.logicElements.toLocaleString() + " LE" : "Cyclone IV E"}`,
                 icon: "chip", onSelect: () => showInfo(fpgaInfo()),
             },
         ], true));
 
         p.appendChild(group("Clock / reset", "activity", [
-            { id: "X1", name: "50 MHz oscillator", desc: b.clockPin ? `X1 \u00b7 ${b.clockPin}` : "X1 \u00b7 PIN_23", icon: "activity", onSelect: () => showInfo(clockInfo()) },
-            { id: "RESET", name: "RESET key", desc: b.resetPin ? `${b.resetPin} \u00b7 active-${b.resetActiveLow === false ? "high" : "low"}` : "PIN_25 \u00b7 active-low", icon: "reset", onSelect: () => showInfo(resetInfo()) },
+            { id: "X1", name: "50 MHz oscillator", desc: b.clockPin ? `X1 · ${b.clockPin}` : "X1 · PIN_23", icon: "activity", onSelect: () => showInfo(clockInfo()) },
+            { id: "RESET", name: "RESET key", desc: b.resetPin ? `${b.resetPin} · active-${b.resetActiveLow === false ? "high" : "low"}` : "PIN_25 · active-low", icon: "reset", onSelect: () => showInfo(resetInfo()) },
         ], true));
 
         p.appendChild(group("User I/O", "toggle", [
-            { id: "LED1", name: "LED1\u2013LED4", desc: b.leds ? `${b.leds.count} \u00d7 red \u00b7 ${b.leds.activeLow ? "active-low" : "active-high"}` : "4 red LEDs", icon: "slider", onSelect: () => showInfo(ledsInfo()) },
-            { id: "S1", name: "Keys KEY1\u2013KEY4", desc: b.buttons ? `${b.buttons.count} tact \u00b7 ${b.buttons.activeLow ? "active-low" : "active-high"}` : "4 tact keys", icon: "toggle", onSelect: () => showInfo(buttonsInfo()) },
-            { id: "SW2", name: "DIP switch SW2", desc: b.switches ? `${b.switches.count}-pos \u00b7 shares KEY nets` : "4-pos", icon: "slider", onSelect: () => showInfo(dipInfo()) },
+            { id: "LED1", name: "LED1–LED4", desc: b.leds ? `${b.leds.count} × red · ${b.leds.activeLow ? "active-low" : "active-high"}` : "4 red LEDs", icon: "slider", onSelect: () => showInfo(ledsInfo()) },
+            { id: "S1", name: "Keys KEY1–KEY4", desc: b.buttons ? `${b.buttons.count} tact · ${b.buttons.activeLow ? "active-low" : "active-high"}` : "4 tact keys", icon: "toggle", onSelect: () => showInfo(buttonsInfo()) },
+            { id: "SW2", name: "DIP switch SW2", desc: b.switches ? `${b.switches.count}-pos · shares KEY nets` : "4-pos", icon: "slider", onSelect: () => showInfo(dipInfo()) },
             { id: "DISP1", name: "7-segment display", desc: b.displays?.part || "4-digit multiplexed", icon: "lcd", onSelect: () => showInfo(displayInfo()) },
-            { id: "SP1", name: "Buzzer SP1", desc: b.buzzer ? `${b.buzzer.type} \u00b7 ${b.buzzer.pin}` : "passive \u00b7 PIN_110", icon: "activity", onSelect: () => showInfo(buzzerInfo()) },
+            { id: "SP1", name: "Buzzer SP1", desc: b.buzzer ? `${b.buzzer.type} · ${b.buzzer.pin}` : "passive · PIN_110", icon: "activity", onSelect: () => showInfo(buzzerInfo()) },
         ], true));
 
         p.appendChild(group("Memories", "ram", [
-            { id: "U6", name: "HY57V641620 SDRAM", desc: "U6 \u00b7 TSOP-II 54 \u00b7 64 Mbit", icon: "ram", onSelect: () => showInfo(sdramInfo()) },
-            { id: "U7", name: "EPCS16 config flash", desc: b.config?.flash || "U7 \u00b7 AS serial flash", icon: "ram", onSelect: () => showInfo(flashInfo()) },
-            { id: "U8", name: "AT24C08 EEPROM", desc: "U8 \u00b7 I2C 0x50 \u00b7 1 KB", icon: "ram", onSelect: () => showInfo(eepromInfo()) },
+            { id: "U6", name: "HY57V641620 SDRAM", desc: "U6 · TSOP-II 54 · 64 Mbit", icon: "ram", onSelect: () => showInfo(sdramInfo()) },
+            { id: "U7", name: "EPCS16 config flash", desc: b.config?.flash || "U7 · AS serial flash", icon: "ram", onSelect: () => showInfo(flashInfo()) },
+            { id: "U8", name: "AT24C08 EEPROM", desc: "U8 · I2C 0x50 · 1 KB", icon: "ram", onSelect: () => showInfo(eepromInfo()) },
         ], true));
 
         p.appendChild(group("Connectors", "cable", [
             { id: "J1", name: "DC power jack", desc: b.inputVoltage ? `${b.inputVoltage} input` : "5 V input", icon: "plug", onSelect: () => showInfo(powerInfo()) },
-            { id: "USB", name: "USB / UART", desc: b.uart?.transceiver || "MAX3232E \u00b7 DB9", icon: "cable", onSelect: () => showInfo(uartInfo()) },
-            { id: "VGA", name: "VGA DB15", desc: b.vga ? `${b.vga.colors} colours \u00b7 1-bit RGB` : "8 colours", icon: "monitor", onSelect: () => showInfo(vgaInfo()) },
-            { id: "PS2", name: "PS/2 port", desc: b.ps2 ? "6-pin DIN \u00b7 open-collector" : "keyboard/mouse", icon: "cable", onSelect: () => showInfo(ps2Info()) },
-            { id: "JTAG", name: "JTAG header", desc: "10-pin \u00b7 volatile programming", icon: "plug", onSelect: () => showInfo(jtagInfo()) },
+            { id: "USB", name: "USB / UART", desc: b.uart?.transceiver || "MAX3232E · DB9", icon: "cable", onSelect: () => showInfo(uartInfo()) },
+            { id: "VGA", name: "VGA DB15", desc: b.vga ? `${b.vga.colors} colours · 1-bit RGB` : "8 colours", icon: "monitor", onSelect: () => showInfo(vgaInfo()) },
+            { id: "PS2", name: "PS/2 port", desc: b.ps2 ? "6-pin DIN · open-collector" : "keyboard/mouse", icon: "cable", onSelect: () => showInfo(ps2Info()) },
+            { id: "JTAG", name: "JTAG header", desc: "10-pin · volatile programming", icon: "plug", onSelect: () => showInfo(jtagInfo()) },
         ], true));
 
         p.appendChild(group("Headers", "globe", [
-            { id: "P1", name: "P1 expansion header", desc: b.headers?.P1?.size || "19\u00d72 \u00b7 2.54 mm", icon: "globe", onSelect: () => showInfo(headerInfo("P1")) },
+            { id: "P1", name: "P1 expansion header", desc: b.headers?.P1?.size || "19×2 · 2.54 mm", icon: "globe", onSelect: () => showInfo(headerInfo("P1")) },
             { id: "P2", name: "P2 expansion header", desc: b.headers?.P2?.size || "IO header", icon: "globe", onSelect: () => showInfo(headerInfo("P2")) },
         ], true));
 
@@ -165,21 +226,21 @@ export function createSidebar(root, h) {
     };
 
     const fpgaInfo = () => ({
-        title: `FPGA \u2014 ${profile?.device?.part || "EP4CE6E22C8N"}`,
+        title: `FPGA — ${profile?.device?.part || "EP4CE6E22C8N"}`,
         body: kv([
             ["Family", profile?.device?.family || "Cyclone IV E"],
             ["Package", profile?.device?.package || "EQFP-144"],
             ["Speed grade", profile?.device?.speedGrade || "8"],
             ["Logic elements", (profile?.device?.logicElements || 6272).toLocaleString()],
             ["M9K blocks", `${profile?.device?.m9kBlocks || 30} (${profile?.device?.m9kKbit || 270} Kbit)`],
-            ["Multipliers 18\u00d718", profile?.device?.multipliers18x18 || 15],
+            ["Multipliers 18×18", profile?.device?.multipliers18x18 || 15],
             ["PLLs", profile?.device?.plls || 2],
             ["User I/O", profile?.device?.userIo || 91],
             ["Core voltage", profile?.device?.coreVoltage || "1.2 V"],
         ]) + facts(["F01", "F02", "F03", "F04"]),
     });
     const clockInfo = () => ({
-        title: "Clock \u2014 X1 50 MHz oscillator",
+        title: "Clock — X1 50 MHz oscillator",
         body: kv([
             ["Frequency", `${((profile?.board?.clockHz || 50000000) / 1e6).toFixed(0)} MHz`],
             ["FPGA pin", profile?.board?.clockPin || "PIN_23"],
@@ -188,46 +249,46 @@ export function createSidebar(root, h) {
         ]) + facts(["F05"]),
     });
     const resetInfo = () => ({
-        title: "Reset \u2014 RESET key",
+        title: "Reset — RESET key",
         body: kv([
             ["FPGA pin", profile?.board?.resetPin || "PIN_25"],
             ["Polarity", profile?.board?.resetActiveLow === false ? "active-high" : "active-low (shorts to GND)"],
-            ["Pull-up", profile?.board?.resetPullup || "R2 10 k\u03a9 + C10 100 nF"],
+            ["Pull-up", profile?.board?.resetPullup || "R2 10 kΩ + C10 100 nF"],
         ]) + facts(["F06"]),
     });
     const ledsInfo = () => ({
-        title: "LED1\u2013LED4",
+        title: "LED1–LED4",
         body: kv([
             ["Count", profile?.board?.leds?.count || 4],
             ["Pins", (profile?.board?.leds?.pins || ["PIN_87", "PIN_86", "PIN_85", "PIN_84"]).join(", ")],
             ["Polarity", profile?.board?.leds?.activeLow ? "active-low (lit = 0)" : "active-high"],
-            ["Driver", profile?.board?.leds?.wiring || "anodes to 3.3 V, cathodes via 470 \u03a9"],
+            ["Driver", profile?.board?.leds?.wiring || "anodes to 3.3 V, cathodes via 470 Ω"],
         ]) + facts(["F09"]),
     });
     const buttonsInfo = () => ({
-        title: "Keys KEY1\u2013KEY4",
+        title: "Keys KEY1–KEY4",
         body: kv([
             ["Count", profile?.board?.buttons?.count || 4],
             ["Pins", (profile?.board?.buttons?.pins || ["PIN_88", "PIN_89", "PIN_90", "PIN_91"]).join(", ")],
-            ["Polarity", profile?.board?.buttons?.activeLow ? "active-low (pressed = 0)" : "active-high"],
-            ["Series R", profile?.board?.buttons?.seriesResistor || "220 \u03a9 (R34\u2013R37)"],
+            ["Polarity", profile?.board?.buttons?.activeLow ? "active-low (pressed = 0, open = 1)" : "active-high"],
+            ["Pull-ups", profile?.board?.buttons?.pullup || "10 kΩ to 3.3 V (R38–R41)"],
         ]) + facts(["F07", "F08"]),
     });
     const dipInfo = () => ({
         title: "DIP switch SW2",
         body: kv([
             ["Positions", profile?.board?.switches?.count || 4],
-            ["Nets", "shared with KEY1\u2013KEY4 (pins 88\u201391)"],
+            ["Nets", "shared with KEY1–KEY4 (pins 88–91)"],
             ["ON level", `closed = ${profile?.board?.switches?.onValue ?? 0}`],
-            ["Pull-up", profile?.board?.switches?.pullup || "10 k\u03a9 (R42\u2013R45)"],
+            ["Pull-up", profile?.board?.switches?.pullup || "10 kΩ (R42–R45)"],
         ]) + facts(["F08"]),
     });
     const displayInfo = () => ({
-        title: "7-segment display \u2014 DISP1",
+        title: "7-segment display — DISP1",
         body: kv([
             ["Part", profile?.board?.displays?.part || "4-digit common-anode, 12-pin"],
             ["Segments", `SEG[7..0] ${JSON.stringify(profile?.board?.displays?.segBitMap || {})}`],
-            ["Digit select", `DIG[3..0] \u00b7 ${profile?.board?.displays?.digitActiveLow ? "active-low" : "active-high"}`],
+            ["Digit select", `DIG[3..0] · ${profile?.board?.displays?.digitActiveLow ? "active-low" : "active-high"}`],
             ["Drivers", profile?.board?.displays?.digitResistors || "8550 PNP high-side"],
         ]) + facts([]),
     });
@@ -241,15 +302,15 @@ export function createSidebar(root, h) {
         ]) + facts([]),
     });
     const sdramInfo = () => ({
-        title: "SDRAM \u2014 U6 HY57V641620",
+        title: "SDRAM — U6 HY57V641620",
         body: kv([
-            ["Organisation", `${profile?.board?.sdram?.banks || 4} banks \u00d7 ${profile?.board?.sdram?.dataBits || 16} bit`],
+            ["Organisation", `${profile?.board?.sdram?.banks || 4} banks × ${profile?.board?.sdram?.dataBits || 16} bit`],
             ["Refresh", `${profile?.board?.sdram?.refreshCycles || 4096} cycles / ${profile?.board?.sdram?.refreshMs || 64} ms`],
             ["Model", "pin map only (no timing model)"],
         ]) + facts([]),
     });
     const flashInfo = () => ({
-        title: "Configuration flash \u2014 U7",
+        title: "Configuration flash — U7",
         body: kv([
             ["Part", profile?.board?.config?.flash || "EPCS16"],
             ["Size", `${((profile?.board?.config?.flashSizeBits || 16777216) / 1048576).toFixed(0)} Mbit`],
@@ -259,44 +320,44 @@ export function createSidebar(root, h) {
     const eepromInfo = () => {
         const bus = (profile?.board?.i2c?.buses || []).find((x) => /eeprom/i.test(x.name)) || {};
         return {
-            title: "EEPROM \u2014 U8 AT24C08",
+            title: "EEPROM — U8 AT24C08",
             body: kv([
                 ["Bus", `${bus.scl || "PIN_99"} / ${bus.sda || "PIN_98"}`],
                 ["Address", `0x${(bus.device?.address || 0x50).toString(16)}`],
-                ["Size", `${bus.device?.bytes || 1024} B \u00b7 page ${bus.device?.pageSize || 16} B`],
-                ["WP", "tied to VCC \u2014 writes blocked, reads work"],
+                ["Size", `${bus.device?.bytes || 1024} B · page ${bus.device?.pageSize || 16} B`],
+                ["WP", "tied to VCC — writes blocked, reads work"],
             ]) + facts([]),
         };
     };
     const powerInfo = () => ({
-        title: "Power input \u2014 J1",
+        title: "Power input — J1",
         body: kv([
             ["Input", profile?.board?.inputVoltage || "5 V DC"],
-            ["Rails", (profile?.board?.rails || []).map((r) => `${r.net || r.name} ${r.voltage || ""}`).join(" \u00b7 ") || "3.3 V / 1.2 V"],
+            ["Rails", (profile?.board?.rails || []).map((r) => `${r.net || r.name} ${r.voltage || ""}`).join(" · ") || "3.3 V / 1.2 V"],
             ["Switch", "SW1 self-locking latching button"],
         ]) + facts([]),
     });
     const uartInfo = () => ({
-        title: "UART \u2014 MAX3232E",
+        title: "UART — MAX3232E",
         body: kv([
             ["Transceiver", profile?.board?.uart?.transceiver || "MAX3232E"],
-            ["Pins", `TXD ${profile?.board?.uart?.pins?.UART_TXD || "PIN_114"} \u00b7 RXD ${profile?.board?.uart?.pins?.UART_RXD || "PIN_115"}`],
+            ["Pins", `TXD ${profile?.board?.uart?.pins?.UART_TXD || "PIN_114"} · RXD ${profile?.board?.uart?.pins?.UART_RXD || "PIN_115"}`],
             ["DB9", profile?.board?.uart?.db9Note || "TX=7 RX=8 GND=5 (non-standard)"],
         ]) + facts([]),
     });
     const vgaInfo = () => ({
-        title: "VGA \u2014 DB15",
+        title: "VGA — DB15",
         body: kv([
             ["Colour depth", `${profile?.board?.vga?.colors || 8} colours (1-bit RGB)`],
-            ["Sync", `HS ${profile?.board?.vga?.pins?.VGA_HSYNC || "PIN_101"} \u00b7 VS ${profile?.board?.vga?.pins?.VGA_VSYNC || "PIN_103"}`],
-            ["Resistors", profile?.board?.vga?.resistors || "R/G/B 1 k\u03a9"],
+            ["Sync", `HS ${profile?.board?.vga?.pins?.VGA_HSYNC || "PIN_101"} · VS ${profile?.board?.vga?.pins?.VGA_VSYNC || "PIN_103"}`],
+            ["Resistors", profile?.board?.vga?.resistors || "R/G/B 1 kΩ"],
         ]) + facts([]),
     });
     const ps2Info = () => ({
         title: "PS/2 port",
         body: kv([
             ["Connector", profile?.board?.ps2?.connector || "6-pin DIN"],
-            ["Pins", `CLK ${profile?.board?.ps2?.pins?.PS_CLOCK || "PIN_119"} \u00b7 DATA ${profile?.board?.ps2?.pins?.PS_DATA || "PIN_120"}`],
+            ["Pins", `CLK ${profile?.board?.ps2?.pins?.PS_CLOCK || "PIN_119"} · DATA ${profile?.board?.ps2?.pins?.PS_DATA || "PIN_120"}`],
             ["Bus", profile?.board?.ps2?.bus || "open-collector, idle high"],
         ]) + facts([]),
     });
@@ -311,7 +372,7 @@ export function createSidebar(root, h) {
     const headerInfo = (id) => ({
         title: `${id} expansion header`,
         body: kv([
-            ["Size", profile?.board?.headers?.[id]?.size || "2\u00d7n \u00b7 2.54 mm"],
+            ["Size", profile?.board?.headers?.[id]?.size || "2×n · 2.54 mm"],
             ["Note", profile?.board?.headers?.[id]?.note || "power rails + FPGA I/O"],
         ]) + facts([]),
     });
@@ -343,17 +404,17 @@ export function createSidebar(root, h) {
             ["Family", dev.family], ["Part", dev.part], ["Package", dev.package],
             ["Speed grade", dev.speedGrade], ["Logic elements", (dev.logicElements || 6272).toLocaleString()],
             ["M9K blocks", `${dev.m9kBlocks || 30} (${dev.m9kKbit || 270} Kbit)`],
-            ["Multipliers 18\u00d718", dev.multipliers18x18 || 15], ["PLLs", dev.plls || 2],
+            ["Multipliers 18×18", dev.multipliers18x18 || 15], ["PLLs", dev.plls || 2],
             ["User I/O", dev.userIo || 91], ["I/O standard", dev.defaultIoStandard],
             ["Core voltage", dev.coreVoltage],
         ].filter(([, v]) => v !== undefined && v !== null)
             .map(([k, v]) => `<div class="ic-row"><span>${k}</span><b>${v}</b></div>`).join("");
-        const facts = (profile?.facts || []).map((f) =>
+        const factsHtml = (profile?.facts || []).map((f) =>
             `<div class="ic-fact"><span class="tag ${/VERIFIED/.test(f.tag) ? "tag-ok" : "tag-warn"}">${f.tag}</span>${f.statement}</div>`
         ).join("");
         dialog({
-            title: `Board specs \u2014 ${dev.part || "EP4CE6E22C8N"}`,
-            body: `<div class="ic-title">Device</div>${rows}<div class="ic-title" style="margin-top:12px">Verified board facts</div><div class="ic-facts">${facts || "<div class='bp-empty'>No facts loaded.</div>"}</div>`,
+            title: `Board specs — ${dev.part || "EP4CE6E22C8N"}`,
+            body: `<div class="ic-title">Device</div>${rows}<div class="ic-title" style="margin-top:12px">Verified board facts</div><div class="ic-facts">${factsHtml || "<div class='bp-empty'>No facts loaded.</div>"}</div>`,
             actions: [{ label: "Close", kind: "primary" }],
             wide: true,
         });
@@ -367,7 +428,7 @@ export function createSidebar(root, h) {
         } else {
             const port = pickPort(def);
             attached.push({ def, port });
-            h.log?.(`Attached ${def.name}${port ? " \u2192 " + port : " (no output port \u2014 bind one below)"}`, "info");
+            h.log?.(`Attached ${def.name}${port ? " → " + port : " (no output port — bind one below)"}`, "info");
         }
         renderAttachedChips();
         h.onAttachedChanged?.(attached);
@@ -377,7 +438,7 @@ export function createSidebar(root, h) {
         if (!entity) return "";
         const outs = entity.ports.filter((p) => p.direction !== "in");
         const pref = outs.find((p) => p.name.toLowerCase().includes(def.id === "ledbar" ? "led" : def.id));
-        return pref ? pref.name : (outs[0] ? outs.name ?? outs[0].name : "");
+        return pref ? pref.name : (outs[0] ? outs[0].name : "");
     }
 
     function renderAttachedChips() {
@@ -391,11 +452,11 @@ export function createSidebar(root, h) {
         holder.innerHTML = attached.length
             ? attached.map((a, i) => `
                 <div class="attach-chip" data-i="${i}">
-                    <span>${a.def.name}${a.port ? " \u2192 " + a.port : ""}</span>
+                    <span>${a.def.name}${a.port ? " → " + a.port : ""}</span>
                     <b class="attach-val" data-id="${a.def.id}">--</b>
-                    <button type="button" aria-label="Detach ${a.def.name}">\u00d7</button>
+                    <button type="button" aria-label="Detach ${a.def.name}">×</button>
                 </div>`).join("")
-            : `<div class="attach-empty">No modules attached \u2014 pick one above.</div>`;
+            : `<div class="attach-empty">No modules attached — pick one above.</div>`;
         holder.querySelectorAll(".attach-chip button").forEach((btn) => {
             btn.addEventListener("click", () => {
                 attached.splice(Number(btn.closest(".attach-chip").dataset.i), 1);
@@ -411,72 +472,240 @@ export function createSidebar(root, h) {
             if (!el) continue;
             const v = liveValues[a.port] ?? liveValues[String(a.port).toUpperCase()];
             const num = typeof v === "number" ? v : parseInt(String(v), 10) || 0;
-            if (a.def.id === "servo") el.textContent = `${Math.round((num / 255) * 180 - 90)}\u00b0`;
+            if (a.def.id === "servo") el.textContent = `${Math.round((num / 255) * 180 - 90)}°`;
             else if (a.def.id === "lcd") el.textContent = "0x" + (num & 0xff).toString(16).toUpperCase();
             else el.textContent = `${num} / ${(1 << a.def.width) - 1}`;
         }
     }
 
-    // ------------------------------------------------------------ pin map --
-    function renderPinMap() {
+    // -------------------------------------------------------- pin planner --
+    function refreshPinValidationUI() {
+        const res = validateAssignments(nodes, assignments, catalog);
+        const infoEl = panes.pinmap.querySelector("#pp-summary");
+        if (infoEl) {
+            infoEl.textContent = entity?.name
+                ? `${entity.name}: ${res.assignedCount}/${nodes.length} pinned`
+                : "No top-level entity";
+        }
+        const errByNode = new Map();
+        for (const err of res.errors) {
+            const m = /'([^']+)'/.exec(err.message);
+            if (m) errByNode.set(m[1], err.message);
+            const m2 = /and '([^']+)'/.exec(err.message);
+            if (m2) errByNode.set(m2[1], err.message);
+        }
+        panes.pinmap.querySelectorAll(".pin-row[data-node]").forEach((tr) => {
+            const nName = tr.dataset.node;
+            const hasLoc = !!String(assignments[nName]?.location || "").trim();
+            const errMsg = errByNode.get(nName);
+            tr.classList.toggle("pp-row-err", Boolean(errMsg));
+            tr.classList.toggle("pp-row-warn", !hasLoc && !errMsg);
+            tr.title = errMsg || (!hasLoc ? "Unassigned — does nothing on the board" : `${nName} -> ${assignments[nName].location}`);
+        });
+        return res;
+    }
+
+    function persistAndNotify() {
+        if (entity?.name) {
+            setEntityAssignments(plannerStore, entity.name, assignments);
+        }
+        refreshPinValidationUI();
+        updatePinValues();
+        h.onPinAssignmentsChanged?.(getPinPlan());
+    }
+
+    function renderPinPlanner() {
         const p = panes.pinmap;
         p.innerHTML = "";
-        const table = document.createElement("table");
-        table.className = "pin-table";
-        table.innerHTML = `<thead><tr><th>Pin</th><th>Signal</th><th>Dir</th><th>Value</th></tr></thead><tbody></tbody>`;
-        const tbody = table.querySelector("tbody");
-        const pinMap = profile?.pinMap || {};
-        const dirOf = (signal) => {
-            const base = signal.replace(/\[\d+\]$/, "");
-            const port = entity?.ports?.find((x) => x.name.toLowerCase() === base.toLowerCase());
-            if (port) return port.direction === "in" ? "in" : "out";
-            if (/^(LED|SEG|DIG|VGA|UART_TXD|LCD|FPGA_BUZZER|SDRAM|LDQM|UDQM)/i.test(signal)) return "out";
-            if (/^(KEY|SW|RESET|CLK|CLOCK|FPGA_RST|UART_RXD|PS_|IR)/i.test(signal)) return "in";
-            return "\u2014";
-        };
-        const rows = [];
-        for (const [signal, pins] of Object.entries(pinMap)) {
-            const list = Array.isArray(pins) ? pins : [pins];
-            list.forEach((pin, idx) => {
-                rows.push({ pin, signal: list.length > 1 ? `${signal} [${idx}]` : signal, key: signal, idx });
-            });
+        catalog = buildPinCatalog(profile);
+
+        // Top toolbar: Apply board defaults / Clear / Import .qsf / Export .qsf
+        const bar = document.createElement("div");
+        bar.className = "pp-bar";
+        bar.innerHTML = `
+            <div class="pp-bar-top">
+                <span class="pp-summary" id="pp-summary">${entity?.name ? `${escHtml(entity.name)}: 0/${nodes.length} pinned` : "No top-level entity"}</span>
+            </div>
+            <div class="pp-actions">
+                <button type="button" class="btn pp-btn" id="pp-defaults" title="Fill assignments matching known board port names">Apply board defaults</button>
+                <button type="button" class="btn pp-btn" id="pp-clear" title="Clear pin assignments for this entity">Clear</button>
+                <button type="button" class="btn pp-btn" id="pp-import" title="Import .qsf pin assignments">Import .qsf</button>
+                <button type="button" class="btn pp-btn" id="pp-export" title="Export assignments as .qsf">Export .qsf</button>
+                <input type="file" id="pp-qsf-file" accept=".qsf" class="hidden">
+            </div>
+            <datalist id="pp-pin-datalist">
+                ${catalog.list.map((c) => `<option value="${escHtml(c.pin)}" label="${escHtml(c.pin)} — ${escHtml(c.label)}"></option>`).join("")}
+            </datalist>
+        `;
+        p.appendChild(bar);
+
+        bar.querySelector("#pp-defaults").addEventListener("click", () => {
+            if (!nodes.length) return;
+            assignments = suggestBoardDefaults(nodes, profile, assignments);
+            persistAndNotify();
+            renderPinPlanner();
+            h.log?.(`Applied board default pins for ${entity?.name || "top entity"}`, "ok");
+        });
+        bar.querySelector("#pp-clear").addEventListener("click", () => {
+            assignments = {};
+            persistAndNotify();
+            renderPinPlanner();
+            h.log?.(`Cleared pin assignments for ${entity?.name || "top entity"}`, "info");
+        });
+        const qsfInput = bar.querySelector("#pp-qsf-file");
+        bar.querySelector("#pp-import").addEventListener("click", () => qsfInput.click());
+        qsfInput.addEventListener("change", (e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                importQsfText(String(reader.result || ""), file.name);
+            };
+            reader.readAsText(file);
+        });
+        bar.querySelector("#pp-export").addEventListener("click", () => {
+            const devPart = profile?.device?.quartusDevice || "EP4CE6E22C8";
+            const qsfText = exportPlannerToQsf(entity?.name || "top", nodes, assignments, devPart);
+            const blob = new Blob([qsfText], { type: "text/plain;charset=utf-8" });
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = `${entity?.name || "project"}.qsf`;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+            h.log?.(`Exported ${nodes.length} node rules to ${a.download}`, "ok");
+        });
+
+        if (!nodes.length) {
+            const empty = document.createElement("div");
+            empty.className = "sb-empty";
+            empty.textContent = "Open or create an entity/module with ports to assign board pins.";
+            p.appendChild(empty);
+            return;
         }
-        rows.sort((a, b) => a.pin.localeCompare(b.pin, undefined, { numeric: true }));
-        for (const r of rows) {
+
+        const table = document.createElement("table");
+        table.className = "pin-table pp-table";
+        table.innerHTML = `<thead><tr><th>Node Name</th><th>Dir</th><th>Location</th><th>I/O Std</th><th>Val</th></tr></thead><tbody></tbody>`;
+        const tbody = table.querySelector("tbody");
+
+        const optionsHtml = `<option value="">Unassigned</option>`
+            + catalog.list.map((c) => {
+                const tag = c.priority > 0 ? `${c.pin} — ${c.label}` : c.pin;
+                return `<option value="${escHtml(c.pin)}">${escHtml(tag)}</option>`;
+            }).join("")
+            + `<option value="__custom__" hidden>Custom</option>`;
+
+        for (const n of nodes) {
+            const entry = assignments[n.nodeName] || { location: "", ioStandard: "3.3-V LVTTL" };
+            const curLoc = normalizePin(entry.location || "");
             const tr = document.createElement("tr");
             tr.className = "pin-row";
-            tr.dataset.search = `${r.pin} ${r.signal}`.toLowerCase();
-            tr.dataset.pin = r.pin;
-            tr.dataset.key = r.key;
-            tr.dataset.idx = r.idx;
-            tr.innerHTML = `<td class="pin-id">${r.pin}</td><td>${r.signal}</td><td class="pin-dir">${dirOf(r.signal)}</td><td class="pin-val" data-v="--">--</td>`;
-            tr.addEventListener("click", () => {
+            tr.dataset.node = n.nodeName;
+            tr.dataset.port = n.portName;
+            tr.dataset.bitOffset = String(n.bitOffset || 0);
+            tr.dataset.pin = curLoc;
+            tr.dataset.search = `${n.nodeName} ${n.direction} ${curLoc} ${catalog.byPin.get(curLoc)?.label || ""}`.toLowerCase();
+
+            tr.innerHTML = `
+                <td class="pin-id" title="${escHtml(n.nodeName)}">${escHtml(n.nodeName)}</td>
+                <td class="pin-dir">${escHtml(n.direction === "input" ? "in" : n.direction === "output" ? "out" : "io")}</td>
+                <td class="pp-loc-cell">
+                    <div class="pp-loc-wrap">
+                        <select class="pp-loc-select" aria-label="Pin dropdown for ${escHtml(n.nodeName)}">${optionsHtml}</select>
+                        <input type="text" class="pp-loc-input" list="pp-pin-datalist" value="${escHtml(entry.location || "")}" placeholder="Unassigned" spellcheck="false" aria-label="Pin location for ${escHtml(n.nodeName)}">
+                    </div>
+                </td>
+                <td>
+                    <select class="pp-std-select" aria-label="I/O Standard for ${escHtml(n.nodeName)}">
+                        ${IO_STANDARDS.map((s) => `<option value="${escHtml(s)}"${s === (entry.ioStandard || "3.3-V LVTTL") ? " selected" : ""}>${escHtml(s)}</option>`).join("")}
+                    </select>
+                </td>
+                <td class="pin-val" data-v="--">--</td>
+            `;
+
+            const locSel = tr.querySelector(".pp-loc-select");
+            const locInp = tr.querySelector(".pp-loc-input");
+            const stdSel = tr.querySelector(".pp-std-select");
+
+            const syncSelectFromVal = (pinVal) => {
+                const norm = normalizePin(pinVal);
+                if (!norm) locSel.value = "";
+                else if (catalog.byPin.has(norm)) locSel.value = norm;
+                else locSel.value = "__custom__";
+            };
+            syncSelectFromVal(curLoc);
+
+            locSel.addEventListener("change", () => {
+                if (locSel.value === "__custom__") return;
+                const val = locSel.value;
+                locInp.value = val;
+                tr.dataset.pin = val;
+                assignments[n.nodeName] = { location: val, ioStandard: stdSel.value };
+                tr.dataset.search = `${n.nodeName} ${n.direction} ${val} ${catalog.byPin.get(val)?.label || ""}`.toLowerCase();
+                if (val) h.onHighlightPin?.(val);
+                persistAndNotify();
+            });
+            locInp.addEventListener("input", () => {
+                const raw = locInp.value.trim();
+                const norm = normalizePin(raw);
+                syncSelectFromVal(norm);
+                tr.dataset.pin = norm;
+                assignments[n.nodeName] = { location: norm || raw, ioStandard: stdSel.value };
+                tr.dataset.search = `${n.nodeName} ${n.direction} ${norm} ${catalog.byPin.get(norm)?.label || ""}`.toLowerCase();
+                persistAndNotify();
+            });
+            stdSel.addEventListener("change", () => {
+                assignments[n.nodeName] = { location: locInp.value.trim(), ioStandard: stdSel.value };
+                persistAndNotify();
+            });
+            tr.addEventListener("click", (e) => {
+                if (e.target.closest("input, select, button")) return;
                 p.querySelectorAll("tr.selected").forEach((x) => x.classList.remove("selected"));
                 tr.classList.add("selected");
-                h.onHighlightPin?.(r.pin);
+                const pin = tr.dataset.pin;
+                if (pin) h.onHighlightPin?.(pin);
             });
             tbody.appendChild(tr);
         }
         p.appendChild(table);
+        refreshPinValidationUI();
         updatePinValues();
+        applySearch();
+    }
+
+    function importQsfText(qsfText, sourceName = "project.qsf") {
+        const imported = parseQsfToPlanner(qsfText, nodes);
+        const count = Object.keys(imported).length;
+        if (!count) {
+            toast(`No pin location assignments found in ${sourceName}`, { kind: "warn" });
+            return 0;
+        }
+        assignments = { ...assignments, ...imported };
+        persistAndNotify();
+        renderPinPlanner();
+        h.log?.(`Imported ${count} pin assignment(s) from ${sourceName} into Pin Planner`, "ok");
+        toast(`Imported ${count} pin assignment(s) from ${sourceName}`, { kind: "ok" });
+        return count;
     }
 
     function updatePinValues() {
-        const fmt = (v) => (v === undefined || v === null ? "--" : String(v));
-        panes.pinmap.querySelectorAll(".pin-row").forEach((tr) => {
-            const key = tr.dataset.key;
-            const idx = Number(tr.dataset.idx);
-            let v = liveValues[key];
+        panes.pinmap.querySelectorAll(".pin-row[data-port]").forEach((tr) => {
+            const port = tr.dataset.port;
+            const offset = Number(tr.dataset.bitOffset || 0);
+            let v = liveValues[port];
             if (v === undefined) {
-                const alt = Object.keys(liveValues).find((k) => k.toLowerCase() === key.toLowerCase());
+                const alt = Object.keys(liveValues).find((k) => k.toLowerCase() === port.toLowerCase());
                 if (alt) v = liveValues[alt];
             }
             let text = "--";
-            if (typeof v === "number") text = String((v >>> idx) & 1);
-            else if (typeof v === "string") text = idx === 0 ? v.toUpperCase() : "--";
+            if (typeof v === "number") text = String((v >>> offset) & 1);
+            else if (typeof v === "string") text = offset === 0 ? v.toUpperCase() : "--";
             const cell = tr.querySelector(".pin-val");
-            cell.textContent = text;
-            cell.classList.toggle("v1", text === "1");
+            if (cell) {
+                cell.textContent = text;
+                cell.classList.toggle("v1", text === "1");
+            }
         });
     }
 
@@ -508,11 +737,50 @@ export function createSidebar(root, h) {
     // -------------------------------------------------------------- api ----
     function setProfile(p) {
         profile = p;
+        catalog = buildPinCatalog(profile);
         renderPeripherals();
-        renderPinMap();
+        renderPinPlanner();
         renderSpecsCard();
     }
-    function setEntity(e) { entity = e; renderPinMap(); renderAttachedChips(); }
+
+    function setEntity(e) {
+        const sameEntity = entity?.name && e?.name && entity.name.toLowerCase() === e.name.toLowerCase();
+        entity = e;
+        nodes = expandEntityNodes(entity);
+        if (!sameEntity) {
+            assignments = entity?.name ? getEntityAssignments(plannerStore, entity.name) : {};
+        } else if (entity?.name) {
+            assignments = { ...getEntityAssignments(plannerStore, entity.name), ...assignments };
+        }
+        renderPinPlanner();
+        renderAttachedChips();
+    }
+
+    function getPinPlan() {
+        const validation = validateAssignments(nodes, assignments, catalog);
+        const portPins = {};
+        const bitPins = {};
+        for (const n of nodes) {
+            const pin = validation.validByNode.get(n.nodeName);
+            if (!pin) continue;
+            if (!bitPins[n.portName]) bitPins[n.portName] = {};
+            const bitKey = n.bit !== null ? n.bit : 0;
+            bitPins[n.portName][bitKey] = pin;
+            if (!portPins[n.portName]) portPins[n.portName] = new Array(n.width || 1).fill("");
+            portPins[n.portName][n.bitOffset || 0] = pin;
+        }
+        return {
+            entity,
+            nodes,
+            assignments: { ...assignments },
+            catalog,
+            validation,
+            portPins,
+            bitPins,
+            qsfText: exportPlannerToQsf(entity?.name || "top", nodes, assignments, profile?.device?.quartusDevice || "EP4CE6E22C8"),
+        };
+    }
+
     function setExamples(list) { examples = list || []; renderExamples(); }
     function setLiveValues(values) {
         liveValues = values || {};
@@ -522,7 +790,11 @@ export function createSidebar(root, h) {
     function setFilter(q) { search.value = q; search.dispatchEvent(new Event("input")); }
 
     renderPeripherals();
-    renderPinMap();
+    renderPinPlanner();
 
-    return { setProfile, setEntity, setExamples, setLiveValues, setFilter, root };
+    return {
+        setProfile, setEntity, setExamples, setLiveValues, setFilter,
+        getPinPlan, importQsfText, showTab,
+        setCollapsed, expand, root,
+    };
 }

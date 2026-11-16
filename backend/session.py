@@ -118,12 +118,14 @@ class SimSession:
         # cannot be "un-stopped" by the next start clearing a shared flag.
         self._run_seq = 0
         self._stop_event = threading.Event()
+        self._cancel_token: dict = {"cancelled": False, "proc": None}
         # Bumped whenever the stream is (re)started; a stream task exits as
         # soon as its generation no longer matches the session's.
         self._generation = 0
 
         self._cycles: List[dict] = []
         self._final: Dict[str, Any] = {}
+        self._board_image: Optional[Dict[str, Any]] = None
         self._signals: List[dict] = []
         self._board: Dict[str, Any] = {}
         self._entity: Dict[str, Any] = {}
@@ -204,10 +206,11 @@ class SimSession:
             self._run_started = None
             self._run_emitted = 0
             self._generation += 1
+            self._cancel_token = {"cancelled": False, "proc": None}
             self._pump_task = self._loop.create_task(self._pump(queue, run_id))
         self._thread = threading.Thread(
             target=self._worker,
-            args=(dict(request), self._loop, queue, run_id, stop_event),
+            args=(dict(request), self._loop, queue, run_id, stop_event, self._cancel_token),
             name=f"sim-session-{id(self):x}",
             daemon=True,
         )
@@ -238,10 +241,20 @@ class SimSession:
             thread = self._thread
             pump_task = self._pump_task
             self._pump_task = None
-        # ENG-03: kill the in-flight GHDL child so a stopped session does not
-        # keep simulating in the background for up to its own 900 s budget.
+        # Emit sim_stopped BEFORE the cancel/pump teardown: any in-flight
+        # cycle_batch (already pulled by the pump) may still land on the
+        # wire afterwards, and the strict stop ordering the UI and the QA
+        # tests rely on must hold (sim_stopped last).
+        if was_active:
+            await self._safe_emit(
+                {"type": "sim_stopped", "cursor": cursor, "totalCycles": total}
+            )
+        # ENG-03: kill the in-flight GHDL child via THIS session's per-run
+        # cancel token — a stopped session no longer simulates in the
+        # background for up to its own 900 s budget, and no other session's
+        # run can be hit by the kill (tokens are per-run).
         try:
-            self._simulator.cancel()
+            self._simulator.cancel(self._cancel_token)
         except Exception:  # defensive: never block the stop path
             pass
         # Audit N1: cancel the pump task so a replaced/stopped run can never
@@ -262,10 +275,6 @@ class SimSession:
                 thread.join(self._join_timeout)
             if thread.is_alive():
                 logger.warning("simulation worker thread did not exit within %ss", self._join_timeout)
-        if was_active:
-            await self._safe_emit(
-                {"type": "sim_stopped", "cursor": cursor, "totalCycles": total}
-            )
 
     # -- playback control --------------------------------------------------
 
@@ -371,6 +380,7 @@ class SimSession:
         queue: asyncio.Queue,
         run_id: int,
         stop_event: threading.Event,
+        cancel_token: dict,
     ) -> None:
         """Run Simulator.simulate unchanged and post one result event."""
 
@@ -383,7 +393,7 @@ class SimSession:
 
         try:
             sim_request = SimulationRequest.from_dict(request)
-            result = self._simulator.simulate(sim_request)
+            result = self._simulator.simulate(sim_request, cancel_token)
         except Exception as exc:  # defensive: simulate() usually returns errors
             post("error", {"message": f"Simulation failed: {exc}", "errors": []})
             return
@@ -424,7 +434,15 @@ class SimSession:
                 "board": result.get("board") or {},
                 "entity": result.get("entity") or {},
                 "final": waveforms.get("final") or {},
+                # Compact refresh (no cycles): the persistence-of-vision board
+                # image the client paints directly, so an input change does not
+                # ship ~20 MB of per-cycle samples.
+                "boardImage": waveforms.get("boardImage") or None,
                 "clockNs": float(sim_request.clock_period),
+                # Peripheral decode of THIS run (UART/buzzer/VGA/model dumps):
+                # the client must not re-simulate to fetch them — a second
+                # GHDL run per Run click burned a core for nothing.
+                "peripherals": result.get("peripherals") or {},
             },
         )
 
@@ -470,6 +488,7 @@ class SimSession:
             self._board = payload["board"]
             self._entity = payload["entity"]
             self._final = payload["final"]
+            self._board_image = payload.get("boardImage")
             self._clock_ns = payload["clockNs"]
             self._cursor = 0
             self._state = "running"
@@ -482,6 +501,12 @@ class SimSession:
                 "signals": self._signals,
                 "board": self._board,
                 "entity": self._entity,
+                "peripherals": payload.get("peripherals") or {},
+                # Compact refresh (board-only result): no per-cycle replay, the
+                # client paints the board image in sim_done. True only when
+                # there are no cycles to stream (a full run still streams, even
+                # though it also carries the board image for the settled view).
+                "compactBoard": len(self._cycles) == 0,
             }
         )
         await self._stream(generation)
@@ -507,6 +532,8 @@ class SimSession:
                             "final": self._final,
                             "totalCycles": len(self._cycles),
                         }
+                        if self._board_image is not None:
+                            done_message["boardImage"] = self._board_image
                         emit_done = True
                     else:
                         count, delay = self._pacing_locked()

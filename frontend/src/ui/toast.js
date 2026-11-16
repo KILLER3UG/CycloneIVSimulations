@@ -12,17 +12,32 @@ function ensureHost() {
     return host;
 }
 
-export function toast(message, { kind = "info", timeout = 3200 } = {}) {
+export function toast(message, { kind = "info", timeout = 3200, action = null } = {}) {
     const el = document.createElement("div");
     el.className = `toast toast-${kind}`;
     el.setAttribute("role", "status");
-    el.textContent = message;
-    ensureHost().appendChild(el);
-    requestAnimationFrame(() => el.classList.add("show"));
-    setTimeout(() => {
+    const msgSpan = document.createElement("span");
+    msgSpan.textContent = message;
+    el.appendChild(msgSpan);
+    const dismiss = () => {
         el.classList.remove("show");
         setTimeout(() => el.remove(), 260);
-    }, timeout);
+    };
+    if (action?.label) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "toast-action";
+        btn.textContent = action.label;
+        btn.addEventListener("click", () => {
+            action.onClick?.();
+            dismiss();
+        });
+        el.appendChild(btn);
+    }
+    ensureHost().appendChild(el);
+    requestAnimationFrame(() => el.classList.add("show"));
+    const timer = setTimeout(dismiss, timeout);
+    el.addEventListener("click", () => clearTimeout(timer), { once: true });
 }
 
 export function dialog({ title, body, actions = [], wide = false }) {
@@ -59,7 +74,7 @@ export function dialog({ title, body, actions = [], wide = false }) {
 
 export function cheatSheet() {
     const rows = [
-        ["Ctrl+Enter", "Compile + run (Program)"],
+        ["Ctrl+Enter", "Compile & load onto board"],
         ["Esc", "Stop the running simulation"],
         ["\u2190 / \u2192", "Step \u22121 / +1 cycle (while paused)"],
         ["+ / \u2212", "Zoom the 3D board in / out"],
@@ -68,6 +83,7 @@ export function cheatSheet() {
         ["P", "Toggle board power"],
         ["T", "Toggle light / dark theme"],
         ["Ctrl+B", "Toggle left sidebar"],
+        ["Ctrl+\\", "Toggle right sidebar"],
         ["Ctrl+Alt+B", "Toggle bottom panel"],
     ];
     const table = document.createElement("table");
