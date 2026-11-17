@@ -425,7 +425,8 @@ const dipLatchedState = [false, false, false, false];
 let keyNetBindings = [null, null, null, null]; // index 0..3 -> [{ portName, bitOffset, width }] | null
 
 function keyPinList() {
-    const pins = S.profile?.board?.buttons?.pins || ["PIN_88", "PIN_89", "PIN_90", "PIN_91"];
+    // board.json is the only source of KEY pin numbers (A1: no fallback map).
+    const pins = S.profile?.board?.buttons?.pins || [];
     return pins.map((p) => String(p).toUpperCase());
 }
 

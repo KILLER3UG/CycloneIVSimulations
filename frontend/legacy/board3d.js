@@ -1118,7 +1118,8 @@ export class Board3D {
         const disp = board.displayConfig || {};
         this.segActiveLow = disp.segmentActiveLow !== false;
         this.digitActiveLow = disp.digitActiveLow !== false;
-        this.segBitMap = disp.segBitMap || { b: 0, a: 1, c: 2, d: 3, e: 4, f: 5, g: 6, dp: 7 };
+        // board.json wins; legacy fallback = SEG0=a … SEG7=dp.
+        this.segBitMap = disp.segBitMap || { a: 0, b: 1, c: 2, d: 3, e: 4, f: 5, g: 6, dp: 7 };
     }
 
     clearFrame() {
@@ -1240,7 +1241,7 @@ export class Board3D {
         const unknown = typeof value === "string" && /[xz]/i.test(value);
         const v = toInt(value);
         const lit = clamp(intensity, 0, 1);
-        const map = this.segBitMap || { b: 0, a: 1, c: 2, d: 3, e: 4, f: 5, g: 6, dp: 7 };
+        const map = this.segBitMap || { a: 0, b: 1, c: 2, d: 3, e: 4, f: 5, g: 6, dp: 7 };
         const activeLow = this.segActiveLow;
         let count = 0;
         for (let i = 0; i < 7; i += 1) {

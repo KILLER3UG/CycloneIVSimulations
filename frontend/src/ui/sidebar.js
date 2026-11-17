@@ -178,8 +178,8 @@ export function createSidebar(root, h) {
         ], true));
 
         p.appendChild(group("Clock / reset", "activity", [
-            { id: "X1", name: "50 MHz oscillator", desc: b.clockPin ? `X1 · ${b.clockPin}` : "X1 · PIN_23", icon: "activity", onSelect: () => showInfo(clockInfo()) },
-            { id: "RESET", name: "RESET key", desc: b.resetPin ? `${b.resetPin} · active-${b.resetActiveLow === false ? "high" : "low"}` : "PIN_25 · active-low", icon: "reset", onSelect: () => showInfo(resetInfo()) },
+            { id: "X1", name: "50 MHz oscillator", desc: b.clockPin ? `X1 · ${b.clockPin}` : "X1 · 50 MHz", icon: "activity", onSelect: () => showInfo(clockInfo()) },
+            { id: "RESET", name: "RESET key", desc: b.resetPin ? `${b.resetPin} · active-${b.resetActiveLow === false ? "high" : "low"}` : "RESET · active-low", icon: "reset", onSelect: () => showInfo(resetInfo()) },
         ], true));
 
         p.appendChild(group("User I/O", "toggle", [
@@ -187,7 +187,7 @@ export function createSidebar(root, h) {
             { id: "S1", name: "Keys KEY1–KEY4", desc: b.buttons ? `${b.buttons.count} tact · ${b.buttons.activeLow ? "active-low" : "active-high"}` : "4 tact keys", icon: "toggle", onSelect: () => showInfo(buttonsInfo()) },
             { id: "SW2", name: "DIP switch SW2", desc: b.switches ? `${b.switches.count}-pos · shares KEY nets` : "4-pos", icon: "slider", onSelect: () => showInfo(dipInfo()) },
             { id: "DISP1", name: "7-segment display", desc: b.displays?.part || "4-digit multiplexed", icon: "lcd", onSelect: () => showInfo(displayInfo()) },
-            { id: "SP1", name: "Buzzer SP1", desc: b.buzzer ? `${b.buzzer.type} · ${b.buzzer.pin}` : "passive · PIN_110", icon: "activity", onSelect: () => showInfo(buzzerInfo()) },
+            { id: "SP1", name: "Buzzer SP1", desc: b.buzzer ? `${b.buzzer.type} · ${b.buzzer.pin}` : "passive · SP1", icon: "activity", onSelect: () => showInfo(buzzerInfo()) },
         ], true));
 
         p.appendChild(group("Memories", "ram", [
@@ -243,7 +243,7 @@ export function createSidebar(root, h) {
         title: "Clock — X1 50 MHz oscillator",
         body: kv([
             ["Frequency", `${((profile?.board?.clockHz || 50000000) / 1e6).toFixed(0)} MHz`],
-            ["FPGA pin", profile?.board?.clockPin || "PIN_23"],
+            ["FPGA pin", profile?.board?.clockPin || "—"],
             ["Port alias", `${profile?.board?.clockPort || "CLOCK_50"} / FPGA_CLK / CLK`],
             ["Source", profile?.board?.clockSource || "active oscillator, 3.3 V"],
         ]) + facts(["F05"]),
@@ -251,7 +251,7 @@ export function createSidebar(root, h) {
     const resetInfo = () => ({
         title: "Reset — RESET key",
         body: kv([
-            ["FPGA pin", profile?.board?.resetPin || "PIN_25"],
+            ["FPGA pin", profile?.board?.resetPin || "—"],
             ["Polarity", profile?.board?.resetActiveLow === false ? "active-high" : "active-low (shorts to GND)"],
             ["Pull-up", profile?.board?.resetPullup || "R2 10 kΩ + C10 100 nF"],
         ]) + facts(["F06"]),
@@ -260,7 +260,7 @@ export function createSidebar(root, h) {
         title: "LED1–LED4",
         body: kv([
             ["Count", profile?.board?.leds?.count || 4],
-            ["Pins", (profile?.board?.leds?.pins || ["PIN_87", "PIN_86", "PIN_85", "PIN_84"]).join(", ")],
+            ["Pins", (profile?.board?.leds?.pins || []).join(", ") || "—"],
             ["Polarity", profile?.board?.leds?.activeLow ? "active-low (lit = 0)" : "active-high"],
             ["Driver", profile?.board?.leds?.wiring || "anodes to 3.3 V, cathodes via 470 Ω"],
         ]) + facts(["F09"]),
@@ -269,7 +269,7 @@ export function createSidebar(root, h) {
         title: "Keys KEY1–KEY4",
         body: kv([
             ["Count", profile?.board?.buttons?.count || 4],
-            ["Pins", (profile?.board?.buttons?.pins || ["PIN_88", "PIN_89", "PIN_90", "PIN_91"]).join(", ")],
+            ["Pins", (profile?.board?.buttons?.pins || []).join(", ") || "—"],
             ["Polarity", profile?.board?.buttons?.activeLow ? "active-low (pressed = 0, open = 1)" : "active-high"],
             ["Pull-ups", profile?.board?.buttons?.pullup || "10 kΩ to 3.3 V (R38–R41)"],
         ]) + facts(["F07", "F08"]),
@@ -296,7 +296,7 @@ export function createSidebar(root, h) {
         title: "Buzzer SP1",
         body: kv([
             ["Type", profile?.board?.buzzer?.type || "passive"],
-            ["Pin", profile?.board?.buzzer?.pin || "PIN_110"],
+            ["Pin", profile?.board?.buzzer?.pin || "—"],
             ["Polarity", profile?.board?.buzzer?.activeLow ? "active-low drive" : "active-high"],
             ["Status", profile?.board?.buzzer?.typeConfidence || "unverified on real hardware"],
         ]) + facts([]),
@@ -322,7 +322,7 @@ export function createSidebar(root, h) {
         return {
             title: "EEPROM — U8 AT24C08",
             body: kv([
-                ["Bus", `${bus.scl || "PIN_99"} / ${bus.sda || "PIN_98"}`],
+                ["Bus", `${bus.scl || "—"} / ${bus.sda || "—"}`],
                 ["Address", `0x${(bus.device?.address || 0x50).toString(16)}`],
                 ["Size", `${bus.device?.bytes || 1024} B · page ${bus.device?.pageSize || 16} B`],
                 ["WP", "tied to VCC — writes blocked, reads work"],
@@ -341,7 +341,7 @@ export function createSidebar(root, h) {
         title: "UART — MAX3232E",
         body: kv([
             ["Transceiver", profile?.board?.uart?.transceiver || "MAX3232E"],
-            ["Pins", `TXD ${profile?.board?.uart?.pins?.UART_TXD || "PIN_114"} · RXD ${profile?.board?.uart?.pins?.UART_RXD || "PIN_115"}`],
+            ["Pins", `TXD ${profile?.board?.uart?.pins?.UART_TXD || "—"} · RXD ${profile?.board?.uart?.pins?.UART_RXD || "—"}`],
             ["DB9", profile?.board?.uart?.db9Note || "TX=7 RX=8 GND=5 (non-standard)"],
         ]) + facts([]),
     });
@@ -349,7 +349,7 @@ export function createSidebar(root, h) {
         title: "VGA — DB15",
         body: kv([
             ["Colour depth", `${profile?.board?.vga?.colors || 8} colours (1-bit RGB)`],
-            ["Sync", `HS ${profile?.board?.vga?.pins?.VGA_HSYNC || "PIN_101"} · VS ${profile?.board?.vga?.pins?.VGA_VSYNC || "PIN_103"}`],
+            ["Sync", `HS ${profile?.board?.vga?.pins?.VGA_HSYNC || "—"} · VS ${profile?.board?.vga?.pins?.VGA_VSYNC || "—"}`],
             ["Resistors", profile?.board?.vga?.resistors || "R/G/B 1 kΩ"],
         ]) + facts([]),
     });
@@ -357,7 +357,7 @@ export function createSidebar(root, h) {
         title: "PS/2 port",
         body: kv([
             ["Connector", profile?.board?.ps2?.connector || "6-pin DIN"],
-            ["Pins", `CLK ${profile?.board?.ps2?.pins?.PS_CLOCK || "PIN_119"} · DATA ${profile?.board?.ps2?.pins?.PS_DATA || "PIN_120"}`],
+            ["Pins", `CLK ${profile?.board?.ps2?.pins?.PS_CLOCK || "—"} · DATA ${profile?.board?.ps2?.pins?.PS_DATA || "—"}`],
             ["Bus", profile?.board?.ps2?.bus || "open-collector, idle high"],
         ]) + facts([]),
     });

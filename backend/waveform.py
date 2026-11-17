@@ -279,7 +279,7 @@ def map_board(
         "activeLow": BOARD["leds"].get("activeLow", False),
         "count": BOARD["leds"].get("count", len(board.leds)),
         "seriesResistor": BOARD["leds"].get("seriesResistor"),
-        # LED index -> package pin (e.g. "0" -> "PIN_87"), from board.json.
+        # LED index -> package pin (e.g. index 0 -> PIN_87), from board.json.
         "pins": {str(index): pin for index, pin in enumerate(BOARD["leds"].get("pins", []))},
     }
     board.display_config = {

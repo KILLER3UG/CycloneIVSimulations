@@ -5,12 +5,11 @@
 
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
-import { LAYOUT, BOARD_TOP, worldX, worldZ } from "./layout.js";
+import { LAYOUT, BOARD_TOP, SEG_BIT_MAP_FALLBACK, worldX, worldZ } from "./layout.js";
 import { createCanvas, canvasTexture, glowTexture } from "./util.js";
 
-// SEG0=a … SEG7=dp (verified: SEG0→R52→display pin 11 = segment a).
-// The profile's segBitMap always wins; this is only the last-resort fallback.
-const DEF_SEG_MAP = { a: 0, b: 1, c: 2, d: 3, e: 4, f: 5, g: 6, dp: 7 };
+// Segment geometry only — the bit map itself comes from board.json via
+// layout.js (SEG_BIT_MAP_FALLBACK is the single exported fallback).
 const SEG_OFFSETS = {
     a: [0, -4.4, "h"], b: [2.4, -2.2, "v"], c: [2.4, 2.2, "v"], d: [0, 4.4, "h"],
     e: [-2.4, 2.2, "v"], f: [-2.4, -2.2, "v"], g: [0, 0, "h"], dp: [3.7, 5.6, "dp"],
@@ -22,7 +21,7 @@ export const LIT_COLOR = new THREE.Color(3.2, 0.03, 0.02);    // HDR red → fee
 // unlit segments read as pale grey diffuser plastic on the vendor photo
 export const DARK_COLOR = new THREE.Color(0.30, 0.325, 0.36);
 
-export function buildIO(mats, { pinIndex, segBitMap = DEF_SEG_MAP, seed = 42 } = {}) {
+export function buildIO(mats, { pinIndex, segBitMap = SEG_BIT_MAP_FALLBACK, seed = 42 } = {}) {
     const group = new THREE.Group();
     group.name = "io";
     const pickables = [];

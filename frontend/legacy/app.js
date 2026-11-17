@@ -849,8 +849,10 @@ import { Board3D } from "./board3d.js";
             cell.classList.toggle("on", lit);
         });
 
+        // board.json is authoritative; the fallback is only the legacy
+        // viewer's last-resort geometry (SEG0=a … SEG7=dp).
         const segMap = (state.board && state.board.displayConfig && state.board.displayConfig.segBitMap)
-            || { b: 0, a: 1, c: 2, d: 3, e: 4, f: 5, g: 6, dp: 7 };
+            || { a: 0, b: 1, c: 2, d: 3, e: 4, f: 5, g: 6, dp: 7 };
         const segActiveLow = !(state.board && state.board.displayConfig && state.board.displayConfig.segmentActiveLow === false);
         dom.board.querySelectorAll(".seven-seg").forEach((svg) => {
             const group = svg.closest(".board-group");

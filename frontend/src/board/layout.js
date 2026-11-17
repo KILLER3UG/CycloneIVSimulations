@@ -19,6 +19,15 @@ export const BOARD_TOP = PCB_OUTLINE.thickness;
 export const worldX = (mm) => mm - PCB_OUTLINE.w / 2;
 export const worldZ = (mm) => mm - PCB_OUTLINE.d / 2;
 
+// Physical segment order for the 3461BS-style display: SEG0=a … SEG7=dp
+// (verified against the Display sheet: SEG0→R52→pin 11 = segment a).
+// This is the SINGLE fallback definition — board.json `displays.segBitMap`
+// always wins. With no profile there are no pin routes, so this fallback only
+// gives the unconfigured board geometry; it cannot drive any hardware.
+export const SEG_BIT_MAP_FALLBACK = Object.freeze({
+    a: 0, b: 1, c: 2, d: 3, e: 4, f: 5, g: 6, dp: 7,
+});
+
 export const KIND = Object.freeze({
     FPGA: "fpga",
     HEADER: "header",
@@ -468,7 +477,9 @@ export function buildPinIndex(profile) {
         componentId: "SW2", elementIndex: i, kind: "switch", polarity: pol(b.switches?.activeLow),
     }));
     const segPins = b.displays?.pins?.SEG || [];
-    const segMap = b.displays?.segBitMap || { a: 0, b: 1, c: 2, d: 3, e: 4, f: 5, g: 6, dp: 7 };
+    // board.json is the only source of the bit map; the fallback is the single
+    // exported constant above (no duplicate map literal here).
+    const segMap = b.displays?.segBitMap || SEG_BIT_MAP_FALLBACK;
     const bitToName = Object.fromEntries(Object.entries(segMap).map(([n, bit]) => [bit, n]));
     segPins.forEach((p, i) => add(p, {
         componentId: "DISP1", elementIndex: i, kind: "segment",
