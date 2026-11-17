@@ -143,17 +143,14 @@ def dif_06() -> str:
     return f"NVC available: {out.stdout.splitlines()[0] if out.stdout else nvc}"
 
 
-@case("VER-01", "29", "Verilog upload produces a clear unsupported-language error", "Verilog",
-      "a .v file via files[] or vhdl -> 'Verilog/SystemVerilog is not supported', never a crash")
+@case("VER-01", "29", "Verilog upload compiles and simulates on both paths", "Verilog",
+      "a .v file via files[] and inline Verilog are translated and simulated")
 def ver_01() -> str:
     from backend.simulator import SimulationRequest
     verilog = "module diff_ver(input a, output y); assign y = ~a; endmodule"
     result = simulator().simulate(SimulationRequest.from_dict({
         "files": [{"name": "diff_ver.v", "content": verilog}], "duration": 10}))
-    check(result.get("ok") is False, "Verilog file simulated successfully")
-    text = errors_text(result).lower()
-    check("verilog" in text, f"error does not name Verilog: {text[:150]}")
+    check(result.get("ok") is True, f"files[] Verilog rejected: {errors_text(result)[:200]}")
     result2 = simulator().simulate(SimulationRequest.from_dict({"vhdl": verilog, "duration": 10}))
-    check(result2.get("ok") is False and "verilog" in errors_text(result2).lower(),
-          "inline Verilog not rejected clearly")
-    return "Verilog rejected clearly on both the files[] and vhdl paths"
+    check(result2.get("ok") is True, f"inline Verilog rejected: {errors_text(result2)[:200]}")
+    return "Verilog compiled and simulated on both the files[] and vhdl paths"

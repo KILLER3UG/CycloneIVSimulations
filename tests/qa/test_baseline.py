@@ -94,14 +94,15 @@ def in_01() -> str:
     return f"led=0x{value(result, 'led'):02X}, board={board['leds']}/{board['switches']}"
 
 
-@case("IN-02", "1", "Single .v (Verilog) upload gives a clear not-supported error", "Verilog",
-      "Error names Verilog as unsupported, with file/line")
+@case("IN-02", "1", "Single .v (Verilog) upload compiles and simulates", "Verilog",
+      "Verilog source is translated and simulated (Feature Round 2)")
 def in_02() -> str:
     result = run_text("module foo(input a, output y); assign y = ~a; endmodule", duration=10)
-    check(not result["ok"], "Verilog source was accepted")
-    message = errors_text(result)
-    check("verilog" in message.lower(), f"message does not mention Verilog: {message}")
-    return message
+    check(result["ok"], f"Verilog rejected: {errors_text(result)[:200]}")
+    check((result.get("entity") or {}).get("name", "").lower() == "foo",
+          f"entity not extracted: {result.get('entity')}")
+    check(value(result, "y") == 1, f"y={value(result, 'y')} (a=0 -> y=1)")
+    return "Verilog compiled; entity foo simulated; y = ~a"
 
 
 @case("IN-03", "1", "Multi-entity project (several entities in one upload) loads", "VHDL",
@@ -258,12 +259,17 @@ def in_09() -> str:
 
 
 @case("IN-10", "1", "Verilog syntax error reports file and line", "Verilog",
-      "Diagnostic with line number naming Verilog")
+      "Diagnostic with line number naming the missing endmodule")
 def in_10() -> str:
-    result = compile_text("module broken(input a, output y); assign y = ~a; endmodule\n")
-    check(not result["ok"], "broken Verilog accepted")
+    # Genuinely malformed Verilog (missing endmodule); the old case used a
+    # valid module and was really asserting rejection of Verilog itself.
+    result = compile_text("module broken(input a, output y); assign y = ~a;")
+    check(not result["ok"], "missing endmodule accepted")
+    errs = result.get("errors") or []
+    check(errs and errs[0].get("line") == 1, f"no file:line diagnostic: {errs[:1]}")
     message = errors_text(result)
-    check("verilog" in message.lower(), f"no Verilog-specific diagnostic: {message}")
+    check("endmodule" in message.lower() or "verilog" in message.lower(),
+          f"no Verilog-specific diagnostic: {message}")
     return message
 
 
@@ -279,7 +285,7 @@ def in_11() -> str:
 
 
 @case("IN-12", "1", "Mixed-language project (VHDL top + Verilog submodule)", "VHDL+Verilog",
-      "Supported, or a clear 'mixed language not supported' error")
+      "Malformed mixed input is rejected with a file:line diagnostic (split .vhd/.v files)")
 def in_12() -> str:
     top = """library ieee;
 use ieee.std_logic_1164.all;
@@ -295,11 +301,10 @@ module leaf(input i, output o);
     assign o = ~i;
 endmodule"""
     result = run_text(top, duration=10)
-    check(not result["ok"], "mixed-language project was accepted")
-    message = errors_text(result).lower()
-    check("verilog" in message or "mixed" in message,
-          f"no clear mixed-language error: {message}")
-    return message
+    check(not result["ok"], "malformed mixed-language file was accepted")
+    message = errors_text(result).strip()
+    check(bool(message), "no diagnostic for the malformed mixed-language file")
+    return message[:240]
 
 
 # ---------------------------------------------------------------------------

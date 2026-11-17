@@ -1109,6 +1109,11 @@ class Simulator:
         self._manifest: Optional[dict] = None
         self._models_key: Optional[str] = None
         self._ghdl_version: Optional[str] = None
+        # ENG-03B: cancel() may be called without a token (QA/CLI). Track the
+        # active run's token and a cancel flag so a stop during analysis is
+        # honoured too, not only once the GHDL child exists.
+        self._active_token: Optional[dict] = None
+        self._cancel_requested = False
 
     # -- health -----------------------------------------------------------
     def health(self) -> dict:
@@ -1272,8 +1277,16 @@ class Simulator:
         The session passes ITS per-run token; only that run's GHDL child is
         killed. The cancelled run returns a not-ok result which the session
         worker discards (the stop path already emitted sim_stopped).
+
+        When no token is supplied (QA / CLI), the simulator's own active token
+        is used; if no child exists yet, a cancel flag makes the worker abort
+        at the next phase boundary (ENG-03B).
         """
-        return self.ghdl.cancel_token(token)
+        self._cancel_requested = True
+        tok = token if token is not None else self._active_token
+        if not isinstance(tok, dict):
+            return False
+        return self.ghdl.cancel_token(tok)
 
     def simulate(self, request: SimulationRequest,
                  cancel_token: Optional[dict] = None) -> Dict[str, Any]:
@@ -1292,19 +1305,27 @@ class Simulator:
         # without a token (REST /api/simulate, CLI) gets a private one.
         if cancel_token is None:
             cancel_token = {"cancelled": False, "proc": None}
-        if self.library_cache is not None:
-            try:
-                return self._simulate_cached(request, cancel_token)
-            except Exception:  # pragma: no cover - the cache must never change a result
-                return self._simulate_isolated(request, cancel_token)
-        self.last_cache_outcome = "none"
-        return self._simulate_uncached(request, cancel_token)
+        self._cancel_requested = False
+        self._active_token = cancel_token
+        try:
+            if self.library_cache is not None:
+                try:
+                    return self._simulate_cached(request, cancel_token)
+                except Exception:  # pragma: no cover - the cache must never change a result
+                    return self._simulate_isolated(request, cancel_token)
+            self.last_cache_outcome = "none"
+            return self._simulate_uncached(request, cancel_token)
+        finally:
+            if self._active_token is cancel_token:
+                self._active_token = None
 
     def _simulate_uncached(self, request: SimulationRequest,
                            cancel_token: Optional[dict] = None) -> Dict[str, Any]:
         prep, early = self._prepare(request)
         if early is not None:
             return early
+        if self._cancel_requested:
+            return self._failure("Simulation cancelled")
         return self._ghdl_phase_isolated(prep, cancel_token)
 
     # -- cache bookkeeping ------------------------------------------------

@@ -306,6 +306,11 @@ class GhdlTool:
         emitted). Returns True when a live child was killed.
         """
         proc = token.get("proc") if isinstance(token, dict) else None
+        if not isinstance(token, dict):
+            # No GHDL child has been registered yet (still analyzing/elaborating,
+            # or the run already finished). Nothing to kill — report False
+            # instead of raising (ENG-03B).
+            return False
         if proc is not None and proc.poll() is None:
             token["cancelled"] = True
             try:
