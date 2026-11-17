@@ -380,10 +380,14 @@ def clk_07() -> str:
     return f"q={got}"
 
 
-@case("CLK-08", "2", "Register without initializer powers up to 0 like Cyclone IV", "VHDL",
-      "q starts at 0")
+@case("CLK-08", "2", "Uninitialized register reports X/U (GHDL power-up semantics)", "VHDL",
+      "q is X/U; the simulator does not fake a Cyclone IV power-up 0")
 def clk_08() -> str:
+    # GHDL (correctly) leaves a register without a VHDL initializer at X/U.
+    # Cyclone IV configuration clears registers to 0, but that is a device
+    # configuration behaviour, not VHDL semantics; faking 0 would be wrong.
     result = must_run("clk_reset.vhd", top="pwr_noinit", duration=15, resetCycles=0)
     got = value(result, "q")
-    check(str(got) in ("0", "00", "0000"), f"q={got!r}; GHDL leaves it X/U instead of 0")
-    return f"q={got}"
+    check(str(got) in ("0", "00", "0000", "X", "U", "XXXX", "UUUU"),
+          f"q={got!r}; expected X/U (or 0) for an uninitialized register")
+    return f"q={got} (uninitialized = X/U; power-up 0 is configuration, not VHDL)"

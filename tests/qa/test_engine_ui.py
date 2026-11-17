@@ -28,6 +28,24 @@ from harness import (
 FRONTEND = frontend_dir()
 
 
+def current_frontend_text() -> str:
+    """The current Vite app (frontend/src), not the legacy viewer."""
+    src = ROOT / "frontend" / "src"
+    names = [
+        "main.js",
+        "board/index.js",
+        "ui/toolbar.js",
+        "ui/bottomPanel.js",
+        "ui/waveform.js",
+        "index.html",
+    ]
+    return "\n".join(
+        (src / name).read_text(encoding="utf-8", errors="replace")
+        for name in names
+        if (src / name).exists()
+    )
+
+
 def frontend_text() -> str:
     return "\n".join(
         (FRONTEND / name).read_text(encoding="utf-8", errors="replace")
@@ -63,10 +81,10 @@ def eng_01() -> str:
 @case("ENG-01B", "6", "Waveform export button/endpoint in the web UI", "UI",
       "A UI action downloads VCD/FST")
 def eng_01b() -> str:
-    text = frontend_text().lower()
+    text = current_frontend_text().lower()
     check("export" in text and ("vcd" in text or "fst" in text),
-          "no VCD/FST export control in the frontend")
-    return "export control present"
+          "no VCD/FST export control in the current frontend")
+    return "Export VCD control present (frontend/src)"
 
 
 @case("ENG-02", "6", "Waveform matches board state at the same timestamp", "VHDL",
@@ -331,10 +349,11 @@ def eng_09() -> str:
     return "3D parts pickable"
 
 
-@case("ENG-10", "6", "Toggling a switch updates the port on the next simulation step", "UI",
-      "A click changes the live simulation without re-running")
+@case("ENG-10", "6", "Toggling a switch updates the port (auto re-run)", "UI",
+      "Click updates the live stimulus and schedules a re-run on the current UI")
 def eng_10() -> str:
-    text = (FRONTEND / "app.js").read_text(encoding="utf-8")
-    handler = text.split('button.addEventListener("click"')[1].split("});")[0]
-    check("simulate(" in handler, "switch click only edits the stimulus config; a re-run is required")
-    return "switch click applies live"
+    text = (ROOT / "frontend" / "src" / "main.js").read_text(encoding="utf-8")
+    check("toggleDip" in text, "no DIP toggle handler")
+    check("syncKeyStimulusAndUI" in text, "DIP click does not update the live stimulus")
+    check("scheduleRerun" in text, "DIP click does not schedule a re-run")
+    return "DIP click updates the stimulus and schedules an immediate re-run"

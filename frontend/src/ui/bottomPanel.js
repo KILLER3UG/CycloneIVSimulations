@@ -29,7 +29,11 @@ export function createBottomPanel(root, h) {
         <div class="bp-body">
             <div class="bp-main">
                 <div class="bp-pane hidden" data-pane="wave">
-                    <div class="probe-bar" id="probe-bar"><span class="probe-hint">Click a pin on the 3D board to probe it.</span></div>
+                    <div class="probe-bar" id="probe-bar">
+                        <span class="probe-hint">Click a pin on the 3D board to probe it.</span>
+                        <span class="bp-flex"></span>
+                        <button type="button" class="btn bp-btn" id="bp-export-vcd" title="Download the captured waveform as VCD">${icon("download")}<span>Export VCD</span></button>
+                    </div>
                     <div class="wave-wrap" id="wave-wrap"></div>
                 </div>
                 <div class="bp-pane hidden" data-pane="problems">
@@ -138,6 +142,7 @@ export function createBottomPanel(root, h) {
         logEl.innerHTML = "";
         logRows.length = 0;
     });
+    root.querySelector("#bp-export-vcd")?.addEventListener("click", () => h.onExportVcd?.());
 
     function stamp() {
         const d = new Date();

@@ -18,6 +18,7 @@ import { dialog, toast, cheatSheet } from "./ui/toast.js";
 import { icon } from "./ui/icons.js";
 import { audio } from "./audio.js";
 import { detectDownCounter, measureBuzzer, noteSeconds } from "./buzzerModel.js";
+import { buildVcd } from "./vcdExport.js";
 
 const store = createStore();
 const S = store.state;
@@ -316,6 +317,7 @@ function initComponents() {
     bottom = createBottomPanel($("bottompanel"), {
         onOpenProblem: openProblem,
         onValuesAt: (t) => { S.simTimeNs = t; },
+        onExportVcd: exportVcd,
     });
 
     const statsEl = document.createElement("div");
@@ -746,6 +748,32 @@ function flushPendingUi() {
         pendingCycles = [];
     }
     sidebar.setLiveValues(S.liveValues);
+}
+
+// ENG-01B: download the captured waveform as a standard VCD (GTKWave etc.).
+function exportVcd() {
+    const signals = S.signals || [];
+    const cycles = Array.from(cyclesMap.values()).sort((a, b) => a.cycle - b.cycle);
+    if (!cycles.length) {
+        toast("No waveform to export — compile and run first", { kind: "warn" });
+        return;
+    }
+    const durationNs = Number(cycles[cycles.length - 1].time) || Number(S.simTimeNs) || 0;
+    const text = buildVcd(signals, cycles, {
+        timescaleNs: Number(S.clockNs) || 20,
+        durationNs,
+    });
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "waveform.vcd";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    log(`Exported waveform.vcd (${cycles.length} cycles)`, "ok");
+    toast("Exported waveform.vcd", { kind: "info" });
 }
 
 let sessionGen = 0;
