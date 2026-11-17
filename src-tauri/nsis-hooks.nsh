@@ -19,3 +19,10 @@
   nsExec::Exec 'taskkill /F /IM ghdl.exe /T'
   Sleep 800
 !macroend
+
+!macro NSIS_HOOK_POSTUNINSTALL
+  ; The uninstaller manifest does not remove the bundled sidecar resources
+  ; (board/models/examples/ghdl/frontend). Remove the whole app directory so
+  ; no residual files block a later reinstall.
+  RMDir /r "$INSTDIR"
+!macroend

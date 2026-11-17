@@ -69,6 +69,19 @@ STOP 1B fixed the last 5 baseline failures (and 4 stale Verilog expectations):
 | ENG-01B | Export VCD button (`frontend/src/vcdExport.js`) |
 | ENG-10 | switch click auto re-run asserted |
 
+## STOP 2 — packaging verification
+
+- `tauri-build.log` — `npx tauri build` (NSIS, 49.35 MiB installer)
+- `SHA256SUMS.txt` — installer SHA-256 (`ca97e2d3…9702`)
+- `sidecar-offline-smoke.log` — frozen backend run from a **path with spaces**:
+  doctor OK (GHDL resolved from the bundle), buzz1 800 Hz, Verilog `blink_v`
+  simulated without Icarus
+- `stop2-app-running.png` — installed app running with the live backend
+- `stop2-clean-vm-checklist.md` — scripted clean-VM sequence + results
+  (install → launch → buzz1/buzz_4tone → Verilog → close → upgrade → uninstall;
+  all PASS; uninstall fully removes the app directory via the POSTUNINSTALL
+  hook and leaves no `cyclone-backend.exe`/`ghdl.exe` behind)
+
 ## STOP 1B — generic countdown (no signal-name hardcoding)
 
 `_detect_down_counter` (backend) and `detectDownCounter` (frontend) measure the
