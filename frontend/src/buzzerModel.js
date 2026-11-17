@@ -76,6 +76,16 @@ export function measureBuzzer(edges, clockNs = DEFAULT_CLOCK_NS, activeLow = tru
  * `terminal * clockNs / 1e9` seconds. Returns null when no signal
  * decrements by exactly 1 per clock cycle.
  */
+/**
+ * Detect a loaded down-counter generically (no signal-name filter).
+ *
+ * For every internal integer signal we measure the dominant negative step
+ * per clock and the longest run of that step. ``cycles = terminal / step`` is
+ * the note length. The longest candidate wins, so ``cnt_delay``,
+ * ``sec_counter`` or any other name works.
+ *
+ * @returns {{name:string, terminal:number, step:number, cycles:number, run:number}|null}
+ */
 export function detectDownCounter(cycles, minTerminal = 1000) {
     if (!Array.isArray(cycles) || cycles.length < 3) return null;
     const names = new Set();
@@ -84,31 +94,55 @@ export function detectDownCounter(cycles, minTerminal = 1000) {
     }
     const candidates = [];
     for (const name of names) {
-        if (!/counter|_cnt|cnt$|count/i.test(name)) continue;
         const values = cycles.map((c) => Number(c.values?.[name]));
         if (values.some((v) => !Number.isFinite(v))) continue;
-        let run = 0;
-        let best = 0;
+        const steps = [];
+        const counts = new Map();
         for (let i = 0; i < values.length - 1; i += 1) {
-            if (values[i] - values[i + 1] === 1) {
+            const s = values[i + 1] - values[i]; // down-counter -> negative
+            steps.push(s);
+            if (s < 0) counts.set(s, (counts.get(s) || 0) + 1);
+        }
+        if (!counts.size) continue;
+        let step = null;
+        let bestCount = -1;
+        for (const [s, c] of counts) {
+            if (c > bestCount) { step = s; bestCount = c; }
+        }
+        let run = 0;
+        let bestRun = 0;
+        let bestStart = 0;
+        let start = 0;
+        for (let i = 0; i < steps.length; i += 1) {
+            if (steps[i] === step) {
+                if (run === 0) start = i;
                 run += 1;
-                best = Math.max(best, values[i]);
-            } else if (values[i + 1] !== values[i]) {
+                if (run > bestRun) { bestRun = run; bestStart = start; }
+            } else {
                 run = 0;
             }
         }
-        if (run >= 2 && best >= minTerminal) {
-            candidates.push({ name, terminal: best, run });
+        if (bestRun < 2) continue;
+        const terminal = values[bestStart];
+        if (!Number.isFinite(terminal) || terminal < minTerminal) continue;
+        const stepMag = Math.abs(step);
+        // +1: the load cycle is part of the note.
+        const noteCycles = Math.round(terminal / stepMag) + 1;
+        if (noteCycles > 0) {
+            candidates.push({ name, terminal, step: stepMag, cycles: noteCycles, run: bestRun });
         }
     }
     if (!candidates.length) return null;
-    candidates.sort((a, b) => b.terminal - a.terminal || b.run - a.run);
-    return { name: candidates[0].name, terminal: candidates[0].terminal };
+    candidates.sort((a, b) => b.cycles - a.cycles || b.run - a.run);
+    return candidates[0];
 }
 
-/** Seconds of tone remaining for a loaded down-counter at the 50 MHz clock. */
-export function noteSeconds(counterTerminal, clockNs = DEFAULT_CLOCK_NS) {
-    const n = Number(counterTerminal);
+/** Seconds of tone for a counter descriptor or a raw terminal cycle count. */
+export function noteSeconds(counter, clockNs = DEFAULT_CLOCK_NS) {
+    const cycles = typeof counter === "object" && counter !== null
+        ? (counter.cycles ?? counter.terminal)
+        : counter;
+    const n = Number(cycles);
     if (!Number.isFinite(n) || n <= 0) return 0;
     return (n * clockNs) / 1e9;
 }

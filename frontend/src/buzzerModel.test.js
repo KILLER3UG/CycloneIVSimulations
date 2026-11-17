@@ -38,18 +38,43 @@ describe("measureBuzzer", () => {
 });
 
 describe("detectDownCounter", () => {
-    it("finds a down-counter and its loaded terminal value", () => {
+    it("finds a down-counter by slope, regardless of signal name", () => {
         const cycles = [];
         for (let i = 0; i < 5; i += 1) {
-            cycles.push({ cycle: i, time: i * 20, values: { clk: i & 1, sec_counter: 100 - i } });
+            cycles.push({ cycle: i, time: i * 20, values: { clk: i & 1, cnt_delay: 100 - i, gate_en: 1 } });
         }
         const found = detectDownCounter(cycles, 10);
-        expect(found?.name).toBe("sec_counter");
+        expect(found?.name).toBe("cnt_delay");
         expect(found?.terminal).toBe(100);
-        expect(noteSeconds(found.terminal, 20)).toBeCloseTo(0.000002, 9);
+        expect(found?.step).toBe(1);
+        expect(found?.terminal).toBe(100);
+        expect(found?.cycles).toBe(101); // 100 decrements + the load cycle
+        expect(noteSeconds(found, 20)).toBeCloseTo(0.00000202, 9);
     });
 
-    it("ignores non-counters and counters that do not decrement by one", () => {
+    it("handles a 25M-cycle 0.5 s countdown with arbitrary names", () => {
+        const cycles = [];
+        for (let i = 0; i < 4; i += 1) {
+            cycles.push({ cycle: i, time: i * 20, values: { tone_acc: 31249 - i, cnt_delay: 25_000_000 - i } });
+        }
+        const found = detectDownCounter(cycles, 1000);
+        expect(found?.name).toBe("cnt_delay");
+        expect(found?.cycles).toBe(25_000_001); // load + 25M decrements
+        expect(noteSeconds(found, 20)).toBeCloseTo(0.50000002, 9);
+    });
+
+    it("measures the decrement step (a /2 counter has half the cycles)", () => {
+        const cycles = [];
+        for (let i = 0; i < 5; i += 1) {
+            cycles.push({ cycle: i, time: i * 20, values: { div2: 1000 - i * 2 } });
+        }
+        const found = detectDownCounter(cycles, 10);
+        expect(found?.step).toBe(2);
+        expect(found?.cycles).toBe(501); // 500 decrements + load
+        expect(noteSeconds(found, 20)).toBeCloseTo(0.00001002, 9);
+    });
+
+    it("ignores non-monotonic signals", () => {
         const cycles = [0, 1, 2, 3].map((i) => ({
             cycle: i, time: i * 20,
             values: { cnt: i, other: 10 + i },
@@ -61,5 +86,8 @@ describe("detectDownCounter", () => {
 describe("noteSeconds", () => {
     it("converts 50,000,000 cycles at 50 MHz to 1.0 s", () => {
         expect(noteSeconds(50_000_000, 20)).toBeCloseTo(1.0, 9);
+    });
+    it("accepts a counter descriptor", () => {
+        expect(noteSeconds({ cycles: 25_000_000, terminal: 25_000_000, step: 1 }, 20)).toBeCloseTo(0.5, 9);
     });
 });

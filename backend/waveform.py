@@ -346,37 +346,74 @@ def _as_int(value: Any) -> int:
 
 
 def _detect_down_counter(model: "WaveformModel", min_terminal: int = 1000) -> Optional[dict]:
-    """Find an internal down-counter and its loaded terminal value.
+    """Find a loaded down-counter generically, by register-slope analysis.
 
-    Used to schedule a buzzer note without simulating the whole countdown:
-    buzz1 loads ``sec_counter = 49,999,999`` on release, so the note lasts
-    ``terminal * clock_ns`` after the release edge. Only internal integer
-    signals whose name looks like a counter and that decrement by exactly 1
-    per clock are considered.
+    Used to schedule a buzzer note without simulating the whole countdown.
+    No signal-name filter: **any** internal integer signal that is loaded to a
+    large value and then decrements by a constant step per clock is a
+    candidate. ``step`` is the measured decrement per clock (usually 1) and
+    ``cycles = terminal / step`` is the note length in FPGA clocks.
+
+    The longest candidate wins (a 25M-cycle delay beats a 31k-cycle tone
+    divider), so a student can name their counter ``cnt_delay``,
+    ``timer_value`` or anything else and it still works.
     """
+    from collections import Counter
+
     times = model.clock_times(limit=4096)
     if len(times) < 4:
         return None
     best: Optional[dict] = None
     for signal in model.signals:
-        if signal.is_port:
-            continue
-        if not re.search(r"counter|_cnt|cnt$|count", signal.name, re.IGNORECASE):
+        if signal.is_port or (signal.width or 1) <= 1:
             continue
         values = [signal.value_at(t) for t in times]
         if any(not isinstance(v, int) or isinstance(v, bool) for v in values):
             continue
+        # A down-counter has values[i+1] < values[i] (negative slope).
+        steps = [values[i + 1] - values[i] for i in range(len(values) - 1)]
+        negative = [s for s in steps if s < 0]
+        if not negative:
+            continue
+        step = Counter(negative).most_common(1)[0][0]
+        # Longest run of consecutive clocks with that exact decrement.
         run = 0
-        terminal = 0
-        for i in range(len(values) - 1):
-            if values[i] - values[i + 1] == 1:
+        best_run = 0
+        best_start = 0
+        start = 0
+        for i, s in enumerate(steps):
+            if s == step:
+                if run == 0:
+                    start = i
                 run += 1
-                terminal = max(terminal, values[i])
-            elif values[i + 1] != values[i]:
+                if run > best_run:
+                    best_run = run
+                    best_start = start
+            else:
                 run = 0
-        if run >= 2 and terminal >= min_terminal:
-            if best is None or terminal > best["terminal"]:
-                best = {"name": signal.name, "terminal": terminal}
+        if best_run < 2:
+            continue
+        terminal = values[best_start]
+        if terminal < min_terminal:
+            continue
+        step_mag = abs(step)
+        # +1: the load cycle itself is part of the note (buzz1 loads 49,999,999
+        # and the gate stays asserted for 50,000,000 clocks).
+        cycles = int(round(terminal / step_mag)) + 1 if step_mag else 0
+        if cycles <= 1:
+            continue
+        start_ns = round(float(times[best_start]), 3)
+        candidate = {
+            "name": signal.name,
+            "terminal": terminal,
+            "step": step_mag,
+            "cycles": cycles,
+            "start_ns": start_ns,
+            "capture_end_ns": round(float(times[-1]), 3),
+            "run": best_run,
+        }
+        if best is None or candidate["cycles"] > best["cycles"]:
+            best = candidate
     return best
 
 

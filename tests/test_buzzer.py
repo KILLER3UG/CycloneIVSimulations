@@ -271,3 +271,100 @@ def test_buzz1_idle_is_silent(sim: Simulator):
     assert buzzer["tone"] is False
     assert buzzer["frequency"] == 0
     assert buzzer["level"] == 1
+
+# ---------------------------------------------------------------------------
+# STOP 1B: generic countdown (no signal-name hardcoding)
+# ---------------------------------------------------------------------------
+
+FOUR_TONE = ROOT / "tests" / "qa" / "designs" / "board" / "buzz_4tone.vhd"
+
+# key -> (frequency Hz, half period in 50 MHz clocks)
+FOUR_TONE_CASES = [
+    (1, 500, 50_000),
+    (2, 800, 31_250),
+    (3, 1000, 25_000),
+    (4, 1600, 15_625),
+]
+
+
+@pytest.mark.parametrize("key,freq,half_cycles", FOUR_TONE_CASES)
+def test_buzz_4tone_each_key(sim: Simulator, key, freq, half_cycles):
+    """Renamed signals (cnt_delay/gate_en/half_period); each key = a tone."""
+    stimuli = [
+        {"port": f"btn{i}", "kind": "constant", "value": 0 if i == key else 1}
+        for i in range(1, 5)
+    ]
+    result = sim.simulate(
+        SimulationRequest.from_dict(
+            {
+                "vhdl": FOUR_TONE.read_text(encoding="utf-8"),
+                "top": "buzz_4tone",
+                "duration": 3_900_000,
+                "clockPeriod": 20,
+                "resetCycles": 0,
+                "compactBoard": True,
+                "maxCycles": 64,
+                "stimuli": stimuli,
+            }
+        )
+    )
+    assert result["ok"], result.get("errors")
+    buzzer = result["peripherals"]["buzzer"]
+    assert buzzer["frequency"] == freq, (key, buzzer)
+    assert buzzer["cyclesPerPeriod"] == pytest.approx(2 * half_cycles, rel=0.02), (key, buzzer)
+
+
+def test_buzz_4tone_release_half_second(sim: Simulator):
+    """0.5 s release note, found via arbitrary names (no sec_counter)."""
+    stimuli = [
+        {"port": "btn1", "kind": "pulse_once", "values": [0, 1], "holdCycles": 1},
+        {"port": "btn2", "kind": "constant", "value": 1},
+        {"port": "btn3", "kind": "constant", "value": 1},
+        {"port": "btn4", "kind": "constant", "value": 1},
+    ]
+    result = sim.simulate(
+        SimulationRequest.from_dict(
+            {
+                "vhdl": FOUR_TONE.read_text(encoding="utf-8"),
+                "top": "buzz_4tone",
+                "duration": 3_900_000,
+                "clockPeriod": 20,
+                "resetCycles": 0,
+                "compactBoard": False,
+                "maxCycles": 64,
+                "stimuli": stimuli,
+            }
+        )
+    )
+    assert result["ok"], result.get("errors")
+    countdown = result["waveforms"]["boardImage"]["countdown"]
+    assert countdown, "no countdown detected"
+    assert countdown["name"] == "cnt_delay", countdown
+    assert countdown["cycles"] == 25_000_000, countdown
+    assert countdown["step"] == 1, countdown
+    assert countdown["cycles"] * 20 / 1e9 == pytest.approx(0.5)
+    buzzer = result["peripherals"]["buzzer"]
+    assert buzzer["frequency"] == 500, buzzer
+
+
+def test_buzz_4tone_idle_is_silent(sim: Simulator):
+    stimuli = [{"port": f"btn{i}", "kind": "constant", "value": 1} for i in range(1, 5)]
+    result = sim.simulate(
+        SimulationRequest.from_dict(
+            {
+                "vhdl": FOUR_TONE.read_text(encoding="utf-8"),
+                "top": "buzz_4tone",
+                "duration": 3_900_000,
+                "clockPeriod": 20,
+                "resetCycles": 0,
+                "compactBoard": True,
+                "maxCycles": 64,
+                "stimuli": stimuli,
+            }
+        )
+    )
+    assert result["ok"], result.get("errors")
+    buzzer = result["peripherals"]["buzzer"]
+    assert buzzer["tone"] is False
+    assert buzzer["frequency"] == 0
+    assert buzzer["level"] == 1

@@ -220,16 +220,26 @@ function scheduleBuzzerStop(clockNs, countdown = null) {
         found = detectDownCounter(cycles, 1000);
     }
     if (!found) return; // no terminal count -> keep the tone until stop/next run
-    const secs = noteSeconds(found.terminal, clockNs);
-    if (secs > 0.02 && secs < 60) {
+    const cycles = found.cycles ?? found.terminal;
+    const secs = noteSeconds(cycles, clockNs);
+    // The counter was loaded at start_ns; part of the note may already have
+    // elapsed by the end of the capture.
+    const elapsed = found.start_ns !== undefined && found.capture_end_ns !== undefined
+        ? Math.max(0, (found.capture_end_ns - found.start_ns) / 1e9)
+        : 0;
+    const delay = Math.max(0, secs - elapsed);
+    if (delay > 0.02 && delay < 60) {
         buzzerStopTimer = setTimeout(() => {
             audio.silence();
             updateAudioBadge();
             buzzerStopTimer = null;
             log(`Buzzer: ${found.name} expired -> silent`, "info");
-        }, secs * 1000);
-        log(`Buzzer: ${found.name} loaded ${found.terminal} cycles -> ${secs.toFixed(3)} s note`, "info");
+        }, delay * 1000);
     }
+    log(
+        `Buzzer: ${found.name} loaded ${found.terminal} (step ${found.step ?? 1}) -> ${secs.toFixed(3)} s note`,
+        "info",
+    );
 }
 
 function initComponents() {
