@@ -276,7 +276,7 @@ def test_buzz1_idle_is_silent(sim: Simulator):
 # STOP 1B: generic countdown (no signal-name hardcoding)
 # ---------------------------------------------------------------------------
 
-FOUR_TONE = ROOT / "tests" / "qa" / "designs" / "board" / "buzz_4tone.vhd"
+FOUR_TONE = ROOT / "examples" / "buzz_4tone.vhd"
 
 # key -> (frequency Hz, half period in 50 MHz clocks)
 FOUR_TONE_CASES = [
@@ -368,3 +368,92 @@ def test_buzz_4tone_idle_is_silent(sim: Simulator):
     assert buzzer["tone"] is False
     assert buzzer["frequency"] == 0
     assert buzzer["level"] == 1
+
+
+# ---------------------------------------------------------------------------
+# STOP 2 / task 1: countdown register named `hold_window` (no `cnt`/`count`
+# substring anywhere) decrementing by STEP = 2. Proves the detector is pure
+# register-slope analysis, not name matching.
+# ---------------------------------------------------------------------------
+
+HOLD_WINDOW_SRC = """library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+entity hold2 is
+    port (
+        clk     : in  std_logic;
+        btn1    : in  std_logic;
+        btn2    : in  std_logic;
+        buzzerb : out std_logic
+    );
+end entity hold2;
+
+architecture rtl of hold2 is
+    constant half        : integer := 31250;      -- 800 Hz
+    signal hold_window   : integer range 0 to 12500000 := 0;
+    signal gate          : std_logic := '0';
+    signal acc           : integer range 0 to half := 0;
+    signal wave          : std_logic := '0';
+    signal any_key       : std_logic;
+begin
+    any_key <= (not btn1) or (not btn2);
+
+    process (clk)
+    begin
+        if rising_edge(clk) then
+            if acc >= half - 1 then
+                acc  <= 0;
+                wave <= not wave;
+            else
+                acc <= acc + 1;
+            end if;
+
+            if any_key = '1' then
+                hold_window <= 12500000;
+                gate        <= '1';
+            elsif hold_window > 1 then
+                hold_window <= hold_window - 2;   -- STEP = 2
+                gate        <= '1';
+            else
+                gate <= '0';
+            end if;
+        end if;
+    end process;
+
+    buzzerb <= wave or (not gate);
+
+end architecture rtl;
+"""
+
+
+def test_hold_window_step2_backend(sim: Simulator):
+    """Backend detector: `hold_window` (no cnt/count substring), step = 2."""
+    assert "cnt" not in "hold_window" and "count" not in "hold_window"
+    stimuli = [
+        {"port": "btn1", "kind": "pulse_once", "values": [0, 1], "holdCycles": 1},
+        {"port": "btn2", "kind": "constant", "value": 1},
+    ]
+    result = sim.simulate(
+        SimulationRequest.from_dict(
+            {
+                "vhdl": HOLD_WINDOW_SRC,
+                "top": "hold2",
+                "duration": 3_900_000,
+                "clockPeriod": 20,
+                "resetCycles": 0,
+                "compactBoard": False,
+                "maxCycles": 64,
+                "stimuli": stimuli,
+            }
+        )
+    )
+    assert result["ok"], result.get("errors")
+    countdown = result["waveforms"]["boardImage"]["countdown"]
+    assert countdown, "no countdown detected"
+    assert countdown["name"] == "hold_window", countdown
+    assert countdown["step"] == 2, countdown
+    # 12,500,000 / 2 = 6,250,000 decrements + the load cycle
+    assert countdown["cycles"] == 6_250_001, countdown
+    assert countdown["cycles"] * 20 / 1e9 == pytest.approx(0.12500002)
+    assert result["peripherals"]["buzzer"]["frequency"] == 800

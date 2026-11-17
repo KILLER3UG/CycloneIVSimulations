@@ -74,6 +74,23 @@ describe("detectDownCounter", () => {
         expect(noteSeconds(found, 20)).toBeCloseTo(0.00001002, 9);
     });
 
+    it("detects hold_window (no cnt/count substring) with step 2", () => {
+        const cycles = [];
+        for (let i = 0; i < 5; i += 1) {
+            cycles.push({
+                cycle: i, time: i * 20,
+                values: { hold_window: 12_500_000 - i * 2, tone: 31_249 - i },
+            });
+        }
+        const found = detectDownCounter(cycles, 1000);
+        expect(found?.name).toBe("hold_window");
+        expect(found?.step).toBe(2);
+        expect(found?.cycles).toBe(6_250_001);
+        expect(noteSeconds(found, 20)).toBeCloseTo(0.12500002, 9);
+        // the detector must not depend on cnt/count name substrings
+        expect(/cnt|count/i.test(found?.name || "")).toBe(false);
+    });
+
     it("ignores non-monotonic signals", () => {
         const cycles = [0, 1, 2, 3].map((i) => ({
             cycle: i, time: i * 20,
