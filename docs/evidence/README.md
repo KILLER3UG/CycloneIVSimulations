@@ -169,7 +169,8 @@ ships in the installer automatically.
 
 Artifacts: `sevseg-4tube-mux.png`, `sevseg-4tube-partial.png`,
 `sevseg-4tube-static.png`, `sevseg-4tube-key1.png`, `sevseg-4tube-e2e.log`,
-`full-suite-stop1d.log`.
+`board-matrix.log` (16/16), `full-suite-stop1d.log` (231/231 + 149 units),
+`transport-controls-e2e.log` (5/5), `partcd-e2e.log` (5/5).
 
 ## STOP 1B — generic countdown (no signal-name hardcoding)
 
