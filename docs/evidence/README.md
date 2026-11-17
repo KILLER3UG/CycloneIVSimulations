@@ -126,6 +126,51 @@ Full suite: **231/231 passed, 149 unit tests** (`full-suite-231.log`).
 helper racing the re-simulation lag, not board behaviour (M4a/M4b/M6/M7b/M9/M10
 cover those paths and pass).
 
+## STOP 1D — 4-tube 7-seg live rendering + stimulus lag
+
+**`board-matrix.mjs` is now 16/16** and `sevseg-4tube-e2e.mjs` is **7/7 ALL
+PASS**. Four real defects were found and fixed (none were "just timing"):
+
+| Defect | Root cause | Fix |
+| --- | --- | --- |
+| Matrix display checks read all zeros | They polled `display.segTarget`, which the **compact board image never populates** — it only fills `segHold` (the rendered POV duty image). `segTarget` is the *live-path* instantaneous phase. | All display assertions now read `segHold` (threshold match, since POV duty is fractional: ~0.25 for a 1-of-4 mux, 1.0 for static drive). |
+| 4-tube mux showed one tube / partial scan | The interactive capture was too short to span a full slow scan, and POV sampling rode the capture edges. | Display designs now request a **10 ms / 500 k-cycle window**, and `pov_clock_edges()` samples **131 072 evenly spaced edges across the whole capture**, so a 65 536-cycle scan is covered ~7×. |
+| `sevseg-4tube-e2e.mjs` never compiled | The harness passed `{ src, top }` to `page.evaluate` but the page function destructured `{ s, t }` — the design source and top-level name were both `undefined`. | Argument names aligned; the e2e now compiles and asserts 4 distinct POV glyphs, partial 2-tube (D3/D4 lit, D1/D2 dark, unassigned dp dark), static drive, and KEY1 → '1'. |
+| Matrix DIP walk only ever drove bit 0 | `setSw` read `btn.dataset.index`, but `data-index` lives on the `.bc-cell` wrapper — `Number(undefined)` → `NaN`, and `val >> NaN` === `val >> 0`, so all four switches followed bit 0. | Index is read from `btn.closest('.bc-cell')`. |
+
+Also reconciled with the shipped behaviour:
+
+- **M3 / M7a** expected "exactly one tube lit" (instantaneous scan). Both matrix
+  designs scan at 3.1 MHz and 763 Hz — far above the 60 Hz persistence
+  threshold — so the eye integrates **all four tubes at once**. They now assert
+  the correct POV image (four distinct glyphs simultaneously).
+- **M8** assumed the board started "all DIPs closed", but DIP state carries over
+  from M7a's walk; it now drives the all-closed state explicitly.
+- **M11** expected power-on to stay unprogrammed; the shipped behaviour
+  (deliberate, `main.js setPower`) **auto-restores the compiled design** on
+  power-on so a key press works without re-clicking Compile. Asserted
+  accordingly.
+- **`scripts/sync_version.py`** no longer expects the removed `#tb-version`
+  toolbar badge (STOP 1D de-clutter); the version is still single-sourced into
+  `package.json`, `frontend/package.json`, `tauri.conf.json`,
+  `backend/__init__.py`, `state.js appVersion` (About dialog) and `Cargo.toml`.
+
+Stimulus lag: an interactive **result LRU cache** keyed by the full simulation
+request (48 entries) plus a persistent GHDL **library cache** make repeated
+KEY/DIP walks return in ~0.1 ms instead of re-running GHDL; rapid input walks
+are coalesced by the existing 90 ms debounce. A *first-time* display stimulus
+still costs one 500 k-cycle GHDL run (~13 s) — that is the honest cost of the
+extended POV window.
+
+New bundled example: **`examples/sevseg_4tube.vhd`** (1/2/3/4 across the four
+tubes, 763 Hz scan) — verified to compile and integrate to the correct
+per-tube POV image; `build_sidecar.py` copies every `examples/*.vhd`, so it
+ships in the installer automatically.
+
+Artifacts: `sevseg-4tube-mux.png`, `sevseg-4tube-partial.png`,
+`sevseg-4tube-static.png`, `sevseg-4tube-key1.png`, `sevseg-4tube-e2e.log`,
+`full-suite-stop1d.log`.
+
 ## STOP 1B — generic countdown (no signal-name hardcoding)
 
 `_detect_down_counter` (backend) and `detectDownCounter` (frontend) measure the

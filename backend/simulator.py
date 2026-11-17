@@ -55,6 +55,7 @@ MAX_CLOCK_PERIOD_NS = 1_000_000.0        # 1 kHz
 MIN_CLOCK_PERIOD_NS = 0.01               # 100 GHz (parser/unit sanity only)
 MAX_RESET_CYCLES = 1_000_000
 MAX_SAMPLE_CYCLES = 131072               # UI cycle-table samples (2 textbook scan rotations)
+_REQ_CACHE_MAX = 48                      # interactive (compact) results kept in memory
 
 
 def _finite_float(value: Any, default: float) -> tuple[float, Optional[str]]:
@@ -202,6 +203,32 @@ class SimulationRequest:
             clamp_notes=notes,
         )
         return request
+
+    def cache_key(self) -> str:
+        """Stable key for the interactive (compact) result cache."""
+        payload = {
+            "vhdl": self.vhdl,
+            "top": self.top,
+            "testbench": self.testbench,
+            "duration": self.duration,
+            "clock_period": self.clock_period,
+            "reset_cycles": self.reset_cycles,
+            "reset_active_high": self.reset_active_high,
+            "reset_port": self.reset_port,
+            "clock_port": self.clock_port,
+            "stimuli": [s.as_dict() for s in self.stimuli],
+            "constant_inputs": self.constant_inputs,
+            "generics": self.generics,
+            "max_cycles": self.max_cycles,
+            "files": self.files,
+            "qsf": self.qsf,
+            "skip_synth": self.skip_synth,
+            "compact_board": self.compact_board,
+            "strict_pins": self.strict_pins,
+        }
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
 
 
 class SimulationError(RuntimeError):
@@ -1140,6 +1167,9 @@ class Simulator:
         # active run's token and a cancel flag so a stop during analysis is
         # honoured too, not only once the GHDL child exists.
         self._active_token: Optional[dict] = None
+        # Interactive (compact) result cache: identical design + stimulus
+        # re-runs (e.g. walking the DIP/KEY strips) return instantly.
+        self._req_cache: Dict[str, Dict[str, Any]] = {}
         self._cancel_requested = False
 
     # -- health -----------------------------------------------------------
@@ -1315,12 +1345,26 @@ class Simulator:
             return False
         return self.ghdl.cancel_token(tok)
 
+    def clear_request_cache(self) -> None:
+        """Drop every cached interactive result (call on device/profile change)."""
+        self._req_cache.clear()
+
     def simulate(self, request: SimulationRequest,
                  cancel_token: Optional[dict] = None) -> Dict[str, Any]:
         """Simulate a design (see :meth:`_simulate_dispatch`)."""
+        cache_key = request.cache_key() if request.compact_board else None
+        if cache_key is not None:
+            cached = self._req_cache.get(cache_key)
+            if cached is not None:
+                # Interactive re-run of a known (design, stimulus) pair: 0 ms.
+                return dict(cached)
         result = self._simulate_dispatch(request, cancel_token)
         if isinstance(result, dict) and result.get("errors"):
             result["errors"] = _augment_syntax_hints(result["errors"])
+        if cache_key is not None and isinstance(result, dict) and result.get("ok"):
+            self._req_cache[cache_key] = result
+            while len(self._req_cache) > _REQ_CACHE_MAX:
+                self._req_cache.popitem(last=False)
         return result
 
     def _simulate_dispatch(self, request: SimulationRequest,

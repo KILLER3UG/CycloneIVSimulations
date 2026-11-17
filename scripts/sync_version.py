@@ -89,15 +89,6 @@ def run_sync(write: bool) -> tuple[bool, list[str]]:
     )
     notes.extend(
         _sync_regex(
-            ROOT / "frontend" / "src" / "ui" / "toolbar.js",
-            re.compile(r'id="tb-version"[^>]*>v([^<]+)</button>'),
-            lambda m, v: m.group(0).replace(f">v{m.group(1)}</button>", f">v{v}</button>"),
-            ver,
-            write,
-        )
-    )
-    notes.extend(
-        _sync_regex(
             ROOT / "src-tauri" / "Cargo.toml",
             re.compile(r'(?m)^version\s*=\s*"([^"]+)"'),
             lambda m, v: f'version = "{v}"',

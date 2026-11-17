@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -70,7 +71,10 @@ def get_simulator() -> Simulator:
     if _simulator is not None:
         return _simulator
     try:
-        _simulator = Simulator()
+        # Shared GHDL analysis cache: re-running an interactive stimulus walk
+        # (KEY/SW toggle) skips re-analysis entirely, so toggles feel immediate.
+        lib_cache = Path(tempfile.gettempdir()) / "cyclone_iv_studio_ghdl_libcache"
+        _simulator = Simulator(library_cache=lib_cache)
         _simulator_error = None
     except GhdlNotFoundError as exc:
         _simulator_error = str(exc)

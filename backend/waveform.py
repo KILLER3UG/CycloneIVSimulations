@@ -417,6 +417,27 @@ def _detect_down_counter(model: "WaveformModel", min_terminal: int = 1000) -> Op
     return best
 
 
+def pov_clock_edges(model: "WaveformModel", max_samples: int = 131072) -> List[float]:
+    """Clock edges for the 7-seg POV scan, evenly spaced across the capture.
+
+    Covers slow multi-digit scans whose full period exceeds the sample cap
+    (up to ~500k cycles) without materialising millions of edges.
+    """
+    base = model.clock_times(limit=2)
+    if len(base) < 2:
+        return base
+    period = base[1] - base[0]
+    if period <= 0:
+        return model.clock_times(limit=max_samples)
+    duration = float(getattr(model.vcd, "duration_ns", 0.0) or 0.0)
+    total = int((duration - base[0]) / period) + 1
+    if total <= 1:
+        return base
+    count = min(total, max_samples)
+    stride = total / count
+    return [base[0] + round(i * stride) * period for i in range(count)]
+
+
 def board_image_from_model(model: "WaveformModel", board_map: "BoardMap") -> dict:
     """Persistence-of-vision board image computed straight from transitions.
 
@@ -513,7 +534,7 @@ def board_image_from_model(model: "WaveformModel", board_map: "BoardMap") -> dic
             out[i] = cur
         return out
 
-    times = model.clock_times(limit=model.max_cycles)
+    times = pov_clock_edges(model, 131072)
     n = len(times)
     last_dig = [1] * n_dig if (seg_routes or dig_routes) else [0] * n_dig
     scan_periods: List[float] = []

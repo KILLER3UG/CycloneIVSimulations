@@ -185,7 +185,10 @@ def test_compact_board_image_multiplexed(simulator):
             {
                 "vhdl": design.read_text(encoding="utf-8"),
                 "top": "seg_mux4sel",
-                "duration": 400,
+                # 32 cycles = two full 16-cycle scans (phase = cnt(3:2)), so the
+                # measured duty is the steady-state 25% and not skewed by a
+                # partial scan at the end of the capture.
+                "duration": 640,
                 "compactBoard": True,
                 "maxCycles": 100,
             }

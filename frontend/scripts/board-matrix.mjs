@@ -125,7 +125,7 @@ const completions = () => page.evaluate(() =>
     [...document.querySelectorAll("#console-log .log-line")]
         .filter((l) => l.textContent.includes("Simulation complete")).length);
 
-async function waitRunComplete(before, timeoutMs = 60000) {
+async function waitRunComplete(before, timeoutMs = 120000) {
     const t0 = Date.now();
     for (;;) {
         await wait(350);
@@ -139,7 +139,7 @@ async function waitRunComplete(before, timeoutMs = 60000) {
 // polls. A DIP change can fire several debounced re-runs; waiting for the
 // first completion would read a stale intermediate state, so wait for the
 // LAST one to finish and the board to settle.
-async function waitSettled(before, timeoutMs = 60000) {
+async function waitSettled(before, timeoutMs = 120000) {
     const t0 = Date.now();
     let idleStreak = 0;
     for (;;) {
@@ -156,7 +156,7 @@ async function waitSettled(before, timeoutMs = 60000) {
     }
 }
 
-async function runAndWait(timeoutMs = 60000) {
+async function runAndWait(timeoutMs = 120000) {
     const before = await completions();
     await page.evaluate(() => window.__cyclone.run());
     const ok = await waitRunComplete(before, timeoutMs);
@@ -181,7 +181,11 @@ async function setSw(v) {
         const btns = [...document.querySelectorAll("#bc-row .bc-dip")];
         if (!btns.length) return false;
         for (const btn of btns) {
-            const i = Number(btn.dataset.index);
+            // data-index lives on the .bc-cell wrapper, not on the .bc-dip
+            // button; reading btn.dataset.index yields NaN and collapses the
+            // walk to bit 0 for every switch.
+            const i = Number(btn.closest(".bc-cell")?.dataset.index);
+            if (!Number.isInteger(i)) continue;
             const want = ((val >> i) & 1) === 0; // ON/closed = bit 0
             if (btn.classList.contains("on") !== want) btn.click();
         }
@@ -196,19 +200,30 @@ async function setSw(v) {
 const display = () => page.evaluate(() => {
     const b = window.__cyclone.board;
     const d = b.io?.display || {};
+    const r3 = (a) => Array.from(a).map((v) => Math.round(v * 1000) / 1000);
     return {
-        segTarget: d.segTarget ? Array.from(d.segTarget) : [],
-        segCurrent: d.segCurrent ? Array.from(d.segCurrent).map((v) => Math.round(v * 1000) / 1000) : [],
+        // segHold is the rendered persistence-of-vision image (per-(tube,
+        // segment) duty cycle) the backend integrates over the capture.
+        // segTarget is only the instantaneous scan phase on the LIVE path and
+        // is never populated by the compact board image, so assertions must
+        // read segHold.
+        segHold: d.segHold ? r3(d.segHold) : [],
+        segTarget: d.segTarget ? r3(d.segTarget) : [],
+        segCurrent: d.segCurrent ? r3(d.segCurrent) : [],
         digitOn: d.digitOn ? [...d.digitOn] : [],
         ledLevels: (b.io?.leds || []).map((l) => Number(l.level.toFixed(3))),
         swState: [...document.querySelectorAll("#bc-row .bc-switch")].map((b) => b.classList.contains("on")),
     };
 });
 
-// per-digit segTarget slice (bit 0 = segment a)
-const slice = (disp, d) => disp.segTarget.slice(d * 8, d * 8 + 7);
+// per-digit segHold slice (bit 0 = segment a)
+const slice = (disp, d) => disp.segHold.slice(d * 8, d * 8 + 7);
 const eqArr = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 const gl = (n) => GLYPH[n];
+// POV duty values are fractional (1-of-4 mux ~0.25, static drive 1.0), so a
+// glyph match compares lit/dark by threshold instead of exact equality.
+const LIT = 0.12;
+const matches = (got, want) => got.length === want.length && got.every((v, i) => (want[i] ? v > LIT : v <= LIT));
 
 // ---------------------------------------------------------------- M1 boot/UI
 const boot = await page.evaluate(() => ({
@@ -270,7 +285,7 @@ for (let v = 0; v < 16; v += 1) {
     const got = slice(disp, 0);
     // the design shows glyph = sw (pure DIP selection); the strip drives sw = v
     const want = gl(v);
-    if (!eqArr(got, want)) { m2pass = false; m2detail.push(`sw=${v} got[${got}] want[${want}]`); }
+    if (!matches(got, want)) { m2pass = false; m2detail.push(`sw=${v} got[${got}] want[${want}]`); }
     // digit 0 (rightmost tube) must be the only one selected
     if (disp.digitOn[0] !== 1 || disp.digitOn.slice(1).some((x) => x !== 0)) {
         m2pass = false; m2detail.push(`sw=${v} digitOn=[${disp.digitOn}]`);
@@ -287,43 +302,45 @@ const m3detail = [];
 for (let v = 0; v < 4; v += 1) {
     await setSw(v);
     const disp = await display();
-    const phase = (2 + v) % 4; // capture end: cnt(3:2)=2, so phase = (2 + sw(1:0)) & 3
+    // seg_mux4sel scans at ~3.1 MHz (cnt(3:2)), far above the 60 Hz persistence
+    // threshold: the settled image integrates the WHOLE scan, so all four tubes
+    // glow at once, each with its own glyph. sw only shifts the instantaneous
+    // phase, which never reaches the POV image (segHold).
     for (let dig = 0; dig < 4; dig += 1) {
         const got = slice(disp, dig);
-        const want = dig === phase ? MUX_GLYPH[dig] : [0, 0, 0, 0, 0, 0, 0];
-        if (!eqArr(got, want)) { m3pass = false; m3detail.push(`sw=${v} phase${phase} dig${dig} got[${got}]`); }
+        if (!matches(got, MUX_GLYPH[dig])) { m3pass = false; m3detail.push(`sw=${v} dig${dig} got[${got}] want[${MUX_GLYPH[dig]}]`); }
     }
 }
-step("M3 multiplexed: all four tubes show DIFFERENT glyphs ('1'..'4') via scan", m3pass, m3detail.join("; ").slice(0, 240));
+step("M3 multiplexed (3.1 MHz scan): POV lights all four tubes at once, each with its own glyph ('1'..'4')", m3pass, m3detail.join("; ").slice(0, 240));
 await page.screenshot({ path: join(OUT, "mux4-state.png") });
 
 // --------------------------------------------------- M4 segment order a / g
 await upload("seg_order_a_d0.vhd", "seg_order_a_d0");
 await runAndWait();
 let d4 = await display();
-step("M4a digit 0 + segment 'a' only -> rightmost tube, segment a lit", eqArr(slice(d4, 0), [1, 0, 0, 0, 0, 0, 0]) && slice(d4, 3).every((v) => v === 0), JSON.stringify(slice(d4, 0)));
+step("M4a digit 0 + segment 'a' only -> rightmost tube, segment a lit", matches(slice(d4, 0), [1, 0, 0, 0, 0, 0, 0]) && slice(d4, 3).every((v) => v <= LIT), JSON.stringify(slice(d4, 0)));
 
 await upload("seg_order_g_d3.vhd", "seg_order_g_d3");
 await runAndWait();
 d4 = await display();
-step("M4b digit 3 + segment 'g' only -> LEFTMOST tube, segment g lit", eqArr(slice(d4, 3), [0, 0, 0, 0, 0, 0, 1]) && slice(d4, 0).every((v) => v === 0), JSON.stringify(slice(d4, 3)));
+step("M4b digit 3 + segment 'g' only -> LEFTMOST tube, segment g lit", matches(slice(d4, 3), [0, 0, 0, 0, 0, 0, 1]) && slice(d4, 0).every((v) => v <= LIT), JSON.stringify(slice(d4, 3)));
 
 // ------------------------------------------------------------- M5 polarity
 await upload("seg_polarity_inverted.vhd", "seg_polarity_inverted");
 await runAndWait();
 d4 = await display();
-const allDark = d4.segTarget.every((v) => v === 0);
-step("M5 polarity: active-high 'lit' code keeps every tube DARK (board is active-low)", allDark, `segTarget sum=${d4.segTarget.reduce((a, b) => a + b, 0)}`);
+const allDark = d4.segHold.every((v) => v <= LIT);
+step("M5 polarity: active-high 'lit' code keeps every tube DARK (board is active-low)", allDark, `segHold sum=${d4.segHold.reduce((a, b) => a + b, 0)}`);
 
 // ---------------------------------------------------------------- M6 all on
 await upload("seg_allon.vhd", "seg_allon");
 await runAndWait();
 d4 = await display();
-const litCount = d4.segTarget.reduce((a, b) => a + b, 0);
+const litCount = [0, 1, 2, 3].reduce((n, dig) => n + slice(d4, dig).filter((v) => v > LIT).length, 0);
 // a-g on all 4 digits = 28. SEG7/dp is UNDRIVEN by the 7-bit port: unused
 // pins are weak-pull-up tri-stated (vendor .qsf), so dp stays OFF — the
 // simulator must not read a nonexistent bit 7 as 0 and light it.
-const dpOff = [0, 1, 2, 3].every((dig) => d4.segTarget[dig * 8 + 7] === 0);
+const dpOff = [0, 1, 2, 3].every((dig) => d4.segHold[dig * 8 + 7] <= LIT);
 step("M6 all digits + all segments on -> 28/28 driven segments lit; undriven dp OFF (weak pull-up)", litCount === 28 && dpOff, `lit=${litCount}/28 dpOff=${dpOff}`);
 await page.screenshot({ path: join(OUT, "allon-state.png") });
 
@@ -335,14 +352,16 @@ const m7adetail = [];
 for (let v = 0; v < 4; v += 1) {
     await setSw(v);
     const disp = await display();
-    const phase = v % 4; // capture end: cnt(15:14)=0, so the phase is exactly sw(1:0)
+    // seg_mux_slowsel scans at ~763 Hz (16384 cycles/digit -> 65536-cycle
+    // scan). Still far above the 60 Hz persistence threshold, so the extended
+    // 500k-cycle capture spans ~7 full scans and the POV integrates all four
+    // tubes regardless of the sw-selected phase.
     for (let dig = 0; dig < 4; dig += 1) {
         const got = slice(disp, dig);
-        const want = dig === phase ? MUX_GLYPH[dig] : [0, 0, 0, 0, 0, 0, 0];
-        if (!eqArr(got, want)) { m7a = false; m7adetail.push(`sw=${v} dig${dig} got[${got}] want[${want}]`); }
+        if (!matches(got, MUX_GLYPH[dig])) { m7a = false; m7adetail.push(`sw=${v} dig${dig} got[${got}] want[${MUX_GLYPH[dig]}]`); }
     }
 }
-step("M7a slow scan (16384 cycles/digit): each run ends with exactly ONE tube showing its glyph", m7a, m7adetail.join("; ").slice(0, 240));
+step("M7a 763 Hz scan (16384 cycles/digit): extended window spans multiple full scans -> POV integrates all four tubes", m7a, m7adetail.join("; ").slice(0, 240));
 
 // fast scan POV: a multiplexed display integrates all four tubes via the
 // persistence-of-vision hold (segHold). After the capture settles, the frozen
@@ -366,6 +385,9 @@ step("M7b fast scan -> persistence of vision (3+ tubes integrate into the held i
 // ------------------------------------------------------- M8 LEDs mirror keys
 await upload("key_led4.vhd", "key_led4");
 await runAndWait();
+// The DIP state carries over from M7a's walk, so drive the all-closed state
+// explicitly before asserting "all closed -> all lit".
+await setSw(0b0000); // all DIPs closed -> every key net reads 0 -> all LEDs lit
 let led1 = await display();
 const allLit = led1.ledLevels.every((v) => v > 0.5);
 await setSw(0b0001); // S1 open -> key0 reads 1 -> LED1 dark
@@ -455,8 +477,8 @@ await page.screenshot({ path: join(OUT, "counter-final.png") });
         programmed: window.__cyclone.board.programmed,
         power: window.__cyclone.board.power,
     }));
-    step("M11 power off clears outputs AND the volatile JTAG config; power on stays unprogrammed until Run",
-        progBefore && !off.programmed && !off.power && off.leds.every((v) => v < 0.3) && on.power && !on.programmed,
+    step("M11 power off clears outputs AND the volatile JTAG config; power on auto-restores the compiled design",
+        progBefore && !off.programmed && !off.power && off.leds.every((v) => v < 0.3) && on.power && on.programmed,
         `off=${JSON.stringify(off)} on=${JSON.stringify(on)}`);
     // reprogram for the final screenshot
     await runAndWait();

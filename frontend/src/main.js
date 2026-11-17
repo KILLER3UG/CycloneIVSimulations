@@ -866,13 +866,20 @@ function simPayload({ skipSynth = false, compactBoard = false, plan = null } = {
     const hdls = cPlan.includedFiles || [];
     const setup = editor.readSetup();
     const boardInfo = S.compileBoard || {};
+    const ports = S.entity?.ports || [];
     // A buzzer design needs >1 full tone period in the capture to measure the
-    // frequency (800 Hz = 1.25 ms). Extend only the simulated duration; the
-    // UI cycle window stays at 65,546 samples.
-    const hasBuzzer = (S.entity?.ports || []).some(
+    // frequency (800 Hz = 1.25 ms). A 7-seg design needs a capture spanning at
+    // least one full 4-digit scan period so the POV lights every tube (a
+    // 1 kHz/divider scan spans 200k+ cycles at 50 MHz). The cycle table stays
+    // compact; the board image is computed server-side from the transitions.
+    const hasBuzzer = ports.some(
         (p) => p.direction === "out" && /buzzer|beep|spk/i.test(p.name || ""),
     );
-    const duration = hasBuzzer ? Math.max(setup.duration, 3_900_000) : setup.duration;
+    const hasDisplay = ports.some(
+        (p) => p.direction === "out" && /^(seg|dig|seven_seg|dtube)/i.test(p.name || ""),
+    );
+    let duration = hasBuzzer ? Math.max(setup.duration, 3_900_000) : setup.duration;
+    if (hasDisplay) duration = Math.max(duration, 10_000_000);
     return {
         vhdl: hdls[hdls.length - 1]?.content || hdls[0]?.content || "",
         files: hdls,
@@ -888,7 +895,7 @@ function simPayload({ skipSynth = false, compactBoard = false, plan = null } = {
         stimuli: editor.buildStimuli(boardInfo.clock, boardInfo.reset),
         maxCycles: Math.min(131072, Math.max(100, Math.ceil((setup.duration || 1000) / Math.max(1, setup.clockPeriod || 10)))),
         skipSynth,
-        compactBoard,
+        compactBoard: compactBoard || hasDisplay,
     };
 }
 
