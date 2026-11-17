@@ -114,6 +114,8 @@ def model_files(models: List[Dict[str, Any]]) -> List[str]:
         files += [f"{base}/hd44780.vhd"]
     if "ir" in kinds:
         files += [f"{base}/ir_nec.vhd"]
+    if "altpll" in kinds:
+        files += [f"{base}/altpll.vhd"]
     return files
 
 

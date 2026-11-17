@@ -1765,6 +1765,13 @@ class Simulator:
             )
             return None, self._failure("No entity to simulate", errors, warnings=qsf_warnings)
         models = board_models(entity)
+        # Behavioral altpll megafunction model (BLK-02): only when the source
+        # actually instantiates it, so designs that define their own altpll
+        # entity are not shadowed.
+        if re.search(r"\baltpll\b", combined, re.IGNORECASE) and not any(
+            m.get("kind") == "altpll" for m in models
+        ):
+            models.append({"kind": "altpll"})
         if qsf_text is not None and entity is not None:
             port_errors, port_warn = _validate_qsf_ports(
                 parse_qsf(qsf_text), entity)
