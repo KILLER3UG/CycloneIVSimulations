@@ -895,6 +895,32 @@ def _prepare_sources_for_ghdl(
     return ordered, aliases
 
 
+#: GHDL reports a missing ';' at the *end* keyword, which is cryptic: the real
+#: mistake is almost always on the statement just above. Append a plain-language
+#: hint to those diagnostics so students know where to look.
+_MISSING_SEMI_HINT = (
+    " — a ';' is missing at the end of the previous statement "
+    "(GHDL points at the 'end' keyword; check the line above it)."
+)
+
+_MISSING_SEMI_PATTERNS = (
+    'missing ";" at end of',
+    "';' expected at end of",
+)
+
+
+def _augment_syntax_hints(errors: List[dict]) -> List[dict]:
+    """Attach plain-language hints to common cryptic GHDL syntax errors."""
+    out: List[dict] = []
+    for item in errors:
+        if isinstance(item, dict):
+            msg = str(item.get("message", ""))
+            if any(p in msg for p in _MISSING_SEMI_PATTERNS) and "';' is missing" not in msg:
+                item = {**item, "message": msg + _MISSING_SEMI_HINT}
+        out.append(item)
+    return out
+
+
 def _rewrite_diagnostic_files(
     items: List[dict],
     aliases: Dict[str, str],
@@ -1291,6 +1317,14 @@ class Simulator:
 
     def simulate(self, request: SimulationRequest,
                  cancel_token: Optional[dict] = None) -> Dict[str, Any]:
+        """Simulate a design (see :meth:`_simulate_dispatch`)."""
+        result = self._simulate_dispatch(request, cancel_token)
+        if isinstance(result, dict) and result.get("errors"):
+            result["errors"] = _augment_syntax_hints(result["errors"])
+        return result
+
+    def _simulate_dispatch(self, request: SimulationRequest,
+                           cancel_token: Optional[dict] = None) -> Dict[str, Any]:
         """Simulate a design.
 
         Without ``library_cache`` every call runs the classic isolated flow: a
