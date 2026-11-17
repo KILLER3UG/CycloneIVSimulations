@@ -36,7 +36,15 @@ export function measureBuzzer(edges, clockNs = DEFAULT_CLOCK_NS, activeLow = tru
         if (h > 0) halves.push(h);
     }
     if (!halves.length) return base;
-    const half = halves.reduce((a, b) => a + b, 0) / halves.length;
+    // Drop the power-on interval and the truncated tail, then take the median
+    // of the core: a 1.31 ms capture still measures 800 Hz correctly.
+    const core = halves.length >= 3 ? halves.slice(1, -1) : [];
+    if (!core.length) return base;
+    const ordered = [...core].sort((a, b) => a - b);
+    const mid = Math.floor(ordered.length / 2);
+    const half = ordered.length % 2
+        ? ordered[mid]
+        : (ordered[mid - 1] + ordered[mid]) / 2;
     const frequency = 1e9 / (2 * half);
     const periodCycles = (2 * half) / (clockNs || DEFAULT_CLOCK_NS);
 

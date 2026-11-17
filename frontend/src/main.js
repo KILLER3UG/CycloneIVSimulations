@@ -212,7 +212,6 @@ function applyBuzzerAudio(per, clockNs) {
 // down-counter (buzz1: sec_counter = 49,999,999 at release). No wall-clock
 // guessing and no multi-second GHDL run.
 function scheduleBuzzerStop(clockNs, countdown = null) {
-    if (!audio.active) return;
     const b = S.buzzer || {};
     if (b.level === 1) return; // already silent at the end of the capture
     let found = countdown;
@@ -541,7 +540,7 @@ function applyKeyDefaultsToEditor(entityObj, pinPlan) {
     for (const port of entityObj.ports) {
         if (port.direction !== "in") continue;
         const w = port.width || 1;
-        const isKeyNamed = /^(?:key|sw|switch|btn|dip|ckey|[sk][1-4])$/i.test(port.name);
+        const isKeyNamed = /^(?:key|sw|switch|btn|dip|ckey)[_]?\d+$|^(?:[sk][1-4])$/i.test(port.name);
         const boundBits = boundByPort.get(port.name);
         if (!boundBits && !isKeyNamed) continue;
         let cur = editor.getStimulusValue(port.name);
@@ -774,13 +773,20 @@ function simPayload({ skipSynth = false, compactBoard = false, plan = null } = {
     const hdls = cPlan.includedFiles || [];
     const setup = editor.readSetup();
     const boardInfo = S.compileBoard || {};
+    // A buzzer design needs >1 full tone period in the capture to measure the
+    // frequency (800 Hz = 1.25 ms). Extend only the simulated duration; the
+    // UI cycle window stays at 65,546 samples.
+    const hasBuzzer = (S.entity?.ports || []).some(
+        (p) => p.direction === "out" && /buzzer|beep|spk/i.test(p.name || ""),
+    );
+    const duration = hasBuzzer ? Math.max(setup.duration, 3_900_000) : setup.duration;
     return {
         vhdl: hdls[hdls.length - 1]?.content || hdls[0]?.content || "",
         files: hdls,
         top: cPlan.topEntity || undefined,
         qsf: pinPlan.qsfText,
         strictPins: true,
-        duration: setup.duration,
+        duration,
         clockPeriod: setup.clockPeriod,
         resetCycles: setup.resetCycles,
         resetActiveHigh: !setup.resetActiveLow,
@@ -1038,6 +1044,7 @@ function handleSessionMessage(msg) {
             else applyCycleToBoard({ values: final, time: S.simTimeNs });
             flushPendingUi();
             board?.setRunning?.(false);
+            S.countdown = msg.boardImage?.countdown || null;
             scheduleBuzzerStop(Number(msg.clockNs) || S.clockNs || 20, msg.boardImage?.countdown);
             setStatus("idle");
             toolbar.setRunning(false, false);

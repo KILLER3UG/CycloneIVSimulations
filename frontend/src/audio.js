@@ -100,13 +100,23 @@ export class BuzzerAudio {
             this.silence();
             return false;
         }
-        if (!await this.ensure()) return false;
-        const now = this.ctx.currentTime;
-        // Same frequency already playing: just refresh the badge.
+        // Claim the state synchronously: sim_done (which schedules the 1 s
+        // stop) can fire before the AudioContext resume promise resolves.
         if (this.active && this.osc && Math.abs(this.frequency - f) < 0.5) {
             this.duty = duty;
             return true;
         }
+        this.frequency = f;
+        this.duty = duty;
+        this.active = true;
+        const ok = await this.ensure();
+        if (!ok) {
+            this.active = false;
+            this.frequency = 0;
+            this.duty = 0;
+            return false;
+        }
+        const now = this.ctx.currentTime;
         this._stop(now);
         const osc = this.ctx.createOscillator();
         const gain = this.ctx.createGain();

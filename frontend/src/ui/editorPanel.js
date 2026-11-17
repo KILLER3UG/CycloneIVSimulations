@@ -921,7 +921,8 @@ export function createEditorPanel(root, h) {
     const stimConfig = new Map();
     function defaultInputVal(portName, width = 1) {
         // Feature round 2 §4: active-low keys & switches default open -> logic 1
-        const isKeyOrSw = /^(?:key|sw|switch|btn|dip|ckey|[sk][1-4]|nrst|reset_?n)/i.test(portName || "");
+        // (btn1/btn2 included — buzz1.vhd uses those names).
+        const isKeyOrSw = /^(?:key|sw|switch|btn|dip|ckey)[_]?\d+$|^(?:[sk][1-4])$|^(?:nrst|reset_?n)/i.test(portName || "");
         if (isKeyOrSw) return String((1 << Math.min(width, 16)) - 1);
         return "0";
     }
@@ -977,13 +978,14 @@ export function createEditorPanel(root, h) {
                 const n = Number(raw);
                 return Number.isFinite(n) ? Math.trunc(n) : 0;
             };
+            const seq = Array.isArray(cfg.values) && cfg.values.length
+                ? cfg.values.map(parse)
+                : String(cfg.value).split(",").map((s) => parse(s)).filter((v) => Number.isFinite(v));
             out.push({
                 port,
                 kind: cfg.kind,
                 value: parse(cfg.value),
-                values: cfg.kind === "sequence"
-                    ? String(cfg.value).split(",").map((s) => parse(s)).filter((v) => Number.isFinite(v))
-                    : [],
+                values: cfg.kind === "sequence" || cfg.kind === "pulse_once" ? seq : [],
                 periodCycles: Math.max(1, parseInt(cfg.period, 10) || 1),
                 pulseCycles: Math.max(1, parseInt(cfg.period, 10) || 1),
                 holdCycles: Math.max(1, parseInt(cfg.holdCycles, 10) || 1),
