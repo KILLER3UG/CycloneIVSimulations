@@ -213,8 +213,9 @@ function applyBuzzerAudio(per, clockNs) {
 // down-counter (buzz1: sec_counter = 49,999,999 at release). No wall-clock
 // guessing and no multi-second GHDL run.
 function scheduleBuzzerStop(clockNs, countdown = null) {
-    const b = S.buzzer || {};
-    if (b.level === 1) return; // already silent at the end of the capture
+    // Schedule the note end purely from the detected countdown. (The final
+    // sampled buzzer *level* is meaningless for a toggling tone — it is 0/1 at
+    // random — so it must not gate the stop.)
     let found = countdown;
     if (!found) {
         const cycles = Array.from(cyclesMap.values()).sort((a, b2) => a.cycle - b2.cycle);
@@ -1006,6 +1007,7 @@ async function refresh() {
     board?.resetDisplayHold?.();
     setStatus("running", "applying inputs");
     const payload = simPayload({ skipSynth: true, compactBoard: true });
+    S.lastPayload = payload;
     stopSession();
     session = new SimSession({ onMessage: (msg) => handleSessionMessage(msg) });
     try {
@@ -1225,6 +1227,7 @@ function stepSim(n) {
 // ------------------------------------------------- peripherals (detail) --
 function applyPeripherals(per, clockNs = 20) {
     if (!per) return;
+    S.lastPeripherals = per;
     if (per.uart) {
         S.uart = per.uart;
         bottom.setUart(per.uart);
