@@ -283,6 +283,7 @@ function initComponents() {
             if (!board?.highlightPin?.(pinId)) toast(`Pin ${pinId} is not mapped to a visible 3D part`, { kind: "info" });
         },
         onExample: (id) => loadExample(id),
+        onRun: () => compileAndProgram(),
         onAttachedChanged: () => {},
         onPinAssignmentsChanged: () => {
             if (S.programmed && S.compileResult?.ok) {
@@ -439,24 +440,33 @@ function resetInteractiveState() {
 }
 
 function setPower(on) {
+    const wasProgrammed = Boolean(S.programmed && S.compileResult?.ok);
+    console.log("[dbg] setPower on=" + on + " wasProgrammed=" + wasProgrammed + " backendOk=" + S.backendOk);
     S.power = !!on;
     if (!S.power) {
         // Power OFF: silence the buzzer first (gain 0 + cancel the release-note
-        // timer), halt any in-flight playback/run, then clear the board.
+        // timer), halt any in-flight playback/run, then clear the board
+        // outputs. The compiled design stays loaded so Power On can restore it.
         silenceBuzzer();
         stopSession();
-        S.programmed = false;
     } else {
         // Power ON: reload the initial powered-on idle state (keys open = '1',
-        // buzzer silent until a design triggers it).
+        // D1 lit, buzzer silent) and restore the compiled design so pressing a
+        // key works immediately without clicking Compile again.
         resetInteractiveState();
     }
     board?.setPower(S.power);
     toolbar.setPower(S.power);
     if (S.power) {
-        log("Board power ON — idle (keys open = '1', buzzer silent; press Compile to load a design)", "ok");
+        // Re-attach the compiled design so the board is live immediately.
+        if (wasProgrammed && S.compileBoard) {
+            board?.setDesign?.(S.compileBoard);
+            S.programmed = true;
+        }
+        log("Board power ON — idle (keys open = '1', buzzer silent)", "ok");
+        if (wasProgrammed) refresh();
     } else {
-        log("Board power OFF — buzzer silenced, outputs cleared, volatile JTAG configuration lost (press Compile to reprogram)", "warn");
+        log("Board power OFF — buzzer silenced, outputs cleared (design stays loaded)", "warn");
     }
 }
 
@@ -522,6 +532,7 @@ async function loadExamples() {
         S.examples = [];
     }
     sidebar.setExamples(S.examples);
+    toolbar.setExamples(S.examples);
 }
 
 async function loadExample(id) {
@@ -1037,6 +1048,7 @@ async function compileAndProgram() {
 let refreshing = false;
 let pendingRefresh = false;
 async function refresh() {
+    console.log("[dbg] refresh enter power=" + S.power + " compileOk=" + (S.compileResult?.ok ?? null) + " refreshing=" + refreshing);
     if (!S.backendOk) return;
     if (!S.power) {
         // Powered off: the design is not configured and the board is inert.

@@ -1141,3 +1141,41 @@ html[data-theme="dark"] .vga-wrap {
     #stats.stats-block { width: 200px; }
     .bp-dock { min-width: 240px; }
 }
+
+/* ===========================================================================
+   STOP 1D — de-clutter overrides
+   Header pipeline pills / status badge / version badge removed; the floating
+   debug box becomes a single-line HUD pill; the static device-specs card is
+   dropped so the Pin Planner uses the full sidebar height; the Pin Planner
+   rows become single-line with full (never truncated) node names.
+   =========================================================================== */
+.tb-pipeline, .tb-step, .status-badge, .btn-version { display: none !important; }
+
+#stats.stats-block {
+    position: absolute; left: 12px; bottom: 12px; z-index: 6;
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 5px 11px; border-radius: 999px;
+    background: rgba(10, 12, 16, 0.84); border: 1px solid var(--line);
+    backdrop-filter: blur(6px);
+    font-family: var(--mono); font-size: 10.5px; color: var(--text-dim);
+    max-width: none; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+#stats.stats-block .stat-row { display: contents; }
+#stats.stats-block .stat-label { display: none; }
+#stats.stats-block .stat-value { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); }
+#stats.stats-block .hud-sep { color: var(--line); }
+
+/* Pin Planner: full node names, one combobox per row, compact rows */
+.pp-table .pin-id {
+    max-width: none; min-width: 128px; overflow: visible;
+    text-overflow: clip; white-space: nowrap;
+    font-family: var(--mono); font-size: 10px; font-weight: 600;
+    color: var(--text);
+}
+.pp-loc-wrap, .pp-loc-select { display: none !important; }
+.pp-loc-input { min-width: 116px; }
+.pin-table td { padding: 3px 8px; }
+.pin-table tr.pin-row { height: 26px; }
+
+/* Static device-specs card removed from the sidebar */
+#sb-speccard { display: none !important; }

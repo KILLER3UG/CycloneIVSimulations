@@ -311,7 +311,7 @@ export function buildPCB(mats) {
     group.name = "pcb";
 
     const silkCanvas = paintSilkscreen();
-    const silk = canvasTexture(silkCanvas, { anisotropy: 12 });
+    const silk = canvasTexture(silkCanvas, { anisotropy: 16 });
     silk.offset.set(0.5, 0.5);
     silk.repeat.set(1 / PCB_OUTLINE.w, 1 / PCB_OUTLINE.d);
     silk.wrapS = silk.wrapT = THREE.ClampToEdgeWrapping;

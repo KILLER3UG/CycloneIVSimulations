@@ -7,7 +7,6 @@ import { createWaveformView } from "./waveform.js";
 const TABS = [
     { id: "console", label: "Console", icon: "terminal" },
     { id: "wave", label: "Waveform", icon: "activity" },
-    { id: "problems", label: "Problems", icon: "alert" },
     { id: "serial", label: "Serial", icon: "cable" },
     { id: "vga", label: "VGA", icon: "monitor" },
     { id: "lcd", label: "LCD", icon: "lcd" },
@@ -35,11 +34,6 @@ export function createBottomPanel(root, h) {
                         <button type="button" class="btn bp-btn" id="bp-export-vcd" title="Download the captured waveform as VCD">${icon("download")}<span>Export VCD</span></button>
                     </div>
                     <div class="wave-wrap" id="wave-wrap"></div>
-                </div>
-                <div class="bp-pane hidden" data-pane="problems">
-                    <div class="problems-list" id="problems-list">
-                        <div class="bp-empty">No problems \u2014 compile a design to check it.</div>
-                    </div>
                 </div>
                 <div class="bp-pane hidden" data-pane="serial">
                     <div class="bp-pane-tools">
@@ -166,29 +160,10 @@ export function createBottomPanel(root, h) {
     }
 
     // ----------------------------------------------------------- problems --
-    const problemsEl = root.querySelector("#problems-list");
-    let problemCount = 0;
-    function setProblems(problems) {
-        problemCount = (problems || []).length;
-        badges.problems.textContent = String(problemCount);
-        badges.problems.classList.toggle("hidden", problemCount === 0);
-        if (!problems || !problems.length) {
-            problemsEl.innerHTML = `<div class="bp-empty">No problems \u2014 compile a design to check it.</div>`;
-            return;
-        }
-        problemsEl.innerHTML = "";
-        for (const p of problems) {
-            const row = document.createElement("button");
-            row.type = "button";
-            row.className = `problem-row ${/warn/i.test(p.severity || "") ? "warn" : "error"}`;
-            row.innerHTML = `<span class="problem-icon">${icon(/warn/i.test(p.severity || "") ? "alert" : "x")}</span>
-                <span class="problem-msg"></span>
-                <span class="problem-loc">${p.file || ""}${p.line ? ":" + p.line : ""}</span>`;
-            row.querySelector(".problem-msg").textContent = p.message || "error";
-            row.addEventListener("click", () => h.onOpenProblem?.(p));
-            problemsEl.appendChild(row);
-        }
-    }
+    // Compile diagnostics live in the right workbench Messages panel; the
+    // bottom drawer no longer duplicates them. `setProblems` stays as a
+    // no-op for API compatibility.
+    function setProblems() { }
 
     // ------------------------------------------------------------- serial --
     const serialOut = root.querySelector("#serial-out");

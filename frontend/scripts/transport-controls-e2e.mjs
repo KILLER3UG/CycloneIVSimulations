@@ -63,6 +63,14 @@ try {
     browser = await puppeteer.connect({ browserURL: `http://127.0.0.1:${PORT}`, defaultViewport: { width: 1280, height: 800 } });
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 800 });
+    page.on("pageerror", (e) => {
+        console.log("PAGEERROR " + (e?.message || e));
+        appendFileSync(LOG, "PAGEERROR " + (e?.message || e) + "\n");
+    });
+    page.on("console", (m) => {
+        const t = m.text();
+        if (t.includes("[dbg]")) { console.log("BROWSER " + t); appendFileSync(LOG, "BROWSER " + t + "\n"); }
+    });
     page.on("response", async (res) => {
         if (res.status() >= 400) {
             let body = "";
@@ -127,6 +135,7 @@ try {
     };
     const pressKey1 = () => page.evaluate(() => window.__cyclone.setPhysicalKeyPressed(0, true));
     const releaseKey1 = () => page.evaluate(() => window.__cyclone.setPhysicalKeyPressed(0, false));
+    const idle = async () => { await releaseKey1(); await settle(); };
     const clickToolbar = (act) => page.evaluate((a) => {
         document.querySelector(`#toolbar [data-act="${a}"]`)?.click();
     }, act);
@@ -173,22 +182,27 @@ try {
     await clickToolbar("power");
     await wait(700);
     s = await snap();
-    step("Power Off -> oscillator stopped, badge Silent, ring/LEDs/7-seg off, board unprogrammed",
+    step("Power Off -> oscillator stopped, badge Silent, ring/LEDs/7-seg off (design stays loaded)",
         silentOk(s) && s.power === false && s.buzzerOn === false && s.powerLed === 0
-        && s.ledTargets.every((t) => t === 0) && s.segSum === 0 && s.programmed === false
+        && s.ledTargets.every((t) => t === 0) && s.segSum === 0
         && (!s.ringVisible || s.ringOpacity < 0.05),
         JSON.stringify(s));
     await page.screenshot({ path: join(OUT, "transport-power-off.png") });
 
-    // Power On -> initial powered-on idle state (silent until a key is pressed)
+    // Power On -> restore the compiled design in its powered-on idle state
+    // (keys open = '1', D1 lit, buzzer silent) and pressing a key works
+    // immediately without clicking Compile again.
     await clickToolbar("power");
-    await wait(700);
+    await settle();
     s = await snap();
-    step("Power On -> idle (silent, keys open, D1 lit)", s.power === true && silentOk(s) && s.powerLed !== 0, JSON.stringify(s));
+    step("Power On -> design restored, idle (silent, D1 lit)", s.power === true && s.programmed === true && silentOk(s) && s.powerLed !== 0, JSON.stringify(s));
+    await pressKey1();
+    await settle();
+    s = await snap();
+    step("Power On -> KEY1 press works immediately (800 Hz, no Compile)", s.freq === 800 && s.active, JSON.stringify(s));
+    await idle();   // release -> silent
 
     // --- 2. Pause silences immediately -----------------------------------
-    await page.click("#ep-run");
-    await page.waitForFunction(() => window.__cyclone.state.programmed === true, { timeout: 120000 });
     await trigger();
     s = await snap();
     step("pre-pause: 800 Hz playing", s.freq === 800 && s.active && s.oscGain > 0, JSON.stringify(s));

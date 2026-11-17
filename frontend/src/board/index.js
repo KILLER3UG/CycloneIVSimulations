@@ -105,7 +105,7 @@ export class Board3D {
     _initRenderer() {
         this.renderer = new THREE.WebGLRenderer({ antialias: this.quality !== "performance", alpha: false });
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        this.renderer.toneMappingExposure = 1.12;
+        this.renderer.toneMappingExposure = 1.0;
         this._detectGpu();
         // A software rasterizer draws every frame on the CPU, spread across
         // cores — shadow maps and a high pixel ratio multiply that cost and
@@ -139,10 +139,10 @@ export class Board3D {
 
     _applyPixelRatio() {
         const dpr = typeof devicePixelRatio !== "undefined" ? devicePixelRatio : 1;
-        // Software rendering: render below native resolution to cut fragment
-        // work (the board is still legible; tests read state, not pixels).
-        const cap = this.gpuIsSoftware ? 0.8
-            : this.quality === "high" ? 2 : this.quality === "balanced" ? 1.6 : 1;
+        // Hardware: native resolution capped at 2 for razor-sharp silkscreen.
+        // A software rasterizer draws every fragment on the CPU, so stay at 1
+        // to keep the frame cost usable (tests read state, not pixels).
+        const cap = this.gpuIsSoftware ? 1 : 2;
         this.renderer.setPixelRatio(Math.min(dpr, cap));
     }
 

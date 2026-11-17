@@ -8,14 +8,14 @@ export function createMaterials() {
     const physical = (opts) => new THREE.MeshPhysicalMaterial(opts);
 
     return {
-        // PCB (map is assigned by pcb.js silkscreen atlas). The real board is a
-        // deep matte black with a faint sheen — keep metalness low so the
-        // environment doesn't wash it towards grey.
+        // PCB (map is assigned by pcb.js silkscreen atlas). Deep matte charcoal:
+        // low metalness/clearcoat and a cool environment so the black stays
+        // black and the white silkscreen stays crisp (no grey wash).
         pcbTop: physical({
-            color: 0xffffff, roughness: 0.56, metalness: 0.06,
-            clearcoat: 0.28, clearcoatRoughness: 0.6, envMapIntensity: 0.38,
+            color: 0xffffff, roughness: 0.62, metalness: 0.04,
+            clearcoat: 0.1, clearcoatRoughness: 0.7, envMapIntensity: 0.18,
         }),
-        pcbSide: new THREE.MeshStandardMaterial({ color: 0x08090b, roughness: 0.75, metalness: 0.05 }),
+        pcbSide: new THREE.MeshStandardMaterial({ color: 0x08090b, roughness: 0.78, metalness: 0.04 }),
 
         // metals
         gold: physical({ color: 0xd8b04a, metalness: 1.0, roughness: 0.28, envMapIntensity: 1.15 }),
@@ -25,16 +25,16 @@ export function createMaterials() {
         steel: physical({ color: 0x9aa0a6, metalness: 0.9, roughness: 0.42, envMapIntensity: 0.9 }),
 
         // plastics / epoxy
-        plasticBlack: physical({ color: 0x15171a, roughness: 0.5, metalness: 0.05, clearcoat: 0.25, clearcoatRoughness: 0.5 }),
+        plasticBlack: physical({ color: 0x15171a, roughness: 0.55, metalness: 0.04, clearcoat: 0.12, clearcoatRoughness: 0.6, envMapIntensity: 0.3 }),
         // EQFP packages read dark grey (lighter than the PCB) in the photos
-        chipBlack: physical({ color: 0x1a1c20, roughness: 0.38, metalness: 0.06, clearcoat: 0.5, clearcoatRoughness: 0.38 }),
+        chipBlack: physical({ color: 0x1a1c20, roughness: 0.46, metalness: 0.05, clearcoat: 0.22, clearcoatRoughness: 0.5, envMapIntensity: 0.35 }),
         plasticWhite: physical({ color: 0xe9e7df, roughness: 0.5, metalness: 0.0 }),
         // photo headers are saturated warm yellow
         headerYellow: physical({ color: 0xf0c11c, roughness: 0.52, metalness: 0.0 }),
-        red: physical({ color: 0xc42b1f, roughness: 0.42, metalness: 0.0, clearcoat: 0.4, clearcoatRoughness: 0.4 }),
+        red: physical({ color: 0xc42b1f, roughness: 0.42, metalness: 0.0, clearcoat: 0.3, clearcoatRoughness: 0.45 }),
         // VGA hood: vivid medium blue (vendor photo)
-        blue: physical({ color: 0x1a6ad0, roughness: 0.42, metalness: 0.0, clearcoat: 0.4, clearcoatRoughness: 0.35 }),
-        darkEpoxy: physical({ color: 0x24272b, roughness: 0.5, metalness: 0.02 }),
+        blue: physical({ color: 0x1a6ad0, roughness: 0.42, metalness: 0.0, clearcoat: 0.3, clearcoatRoughness: 0.4 }),
+        darkEpoxy: physical({ color: 0x24272b, roughness: 0.55, metalness: 0.02, envMapIntensity: 0.3 }),
 
         // passives
         resistor: new THREE.MeshStandardMaterial({ color: 0x1b1b1e, roughness: 0.55, metalness: 0.1 }),
@@ -43,7 +43,7 @@ export function createMaterials() {
         tantalum: physical({ color: 0xd69a1e, roughness: 0.45, metalness: 0.1 }),
         electrolytic: physical({ color: 0x171a1e, roughness: 0.4, metalness: 0.15, clearcoat: 0.3 }),
         // tact-key actuator caps: near-black round buttons on silver shells
-        keyCap: physical({ color: 0x1f2226, roughness: 0.42, metalness: 0.05, clearcoat: 0.5, clearcoatRoughness: 0.3 }),
+        keyCap: physical({ color: 0x1f2226, roughness: 0.48, metalness: 0.04, clearcoat: 0.22, clearcoatRoughness: 0.5, envMapIntensity: 0.35 }),
 
         // emissives (per-instance clones where needed)
         ledLens: physical({
@@ -59,15 +59,13 @@ const THEME = {
         background: 0x0d1014,
         ground: 0x14181d,
         groundRoughness: 0.95,
-        hemi: 0.55,
-        fog: { color: 0x0d1014, near: 260, far: 900 },
+        hemi: 0.5,
     },
     light: {
         background: 0xe3ded4, // photo-studio tan, like the reference shot
         ground: 0xd8d2c6,
         groundRoughness: 0.9,
-        hemi: 0.75,
-        fog: { color: 0xe3ded4, near: 260, far: 900 },
+        hemi: 0.7,
     },
 };
 
@@ -81,7 +79,7 @@ export function setupEnvironment(renderer, scene) {
 }
 
 export function setupLights(scene, quality) {
-    const hemi = new THREE.HemisphereLight(0x9fb4c8, 0x20242a, 0.55);
+    const hemi = new THREE.HemisphereLight(0x9fb4c8, 0x20242a, 0.5);
     scene.add(hemi);
 
     const key = new THREE.DirectionalLight(0xfff1de, 2.6);
@@ -99,11 +97,13 @@ export function setupLights(scene, quality) {
     key.shadow.normalBias = 0.6;
     scene.add(key);
 
-    const fill = new THREE.DirectionalLight(0xc7d8ff, 0.7);
+    // Cool fill/rim are kept low: they lift the black solder mask towards grey
+    // and wash out the white silkscreen. The key light carries the contrast.
+    const fill = new THREE.DirectionalLight(0xc7d8ff, 0.35);
     fill.position.set(-90, 70, -50);
     scene.add(fill);
 
-    const rim = new THREE.DirectionalLight(0xaec4ff, 0.85);
+    const rim = new THREE.DirectionalLight(0xaec4ff, 0.4);
     rim.position.set(-50, 90, 120);
     scene.add(rim);
 
@@ -122,7 +122,9 @@ export function setupLights(scene, quality) {
 export function applyTheme(scene, lights, theme) {
     const t = THEME[theme] || THEME.dark;
     scene.background = new THREE.Color(t.background);
-    scene.fog = new THREE.Fog(t.fog.color, t.fog.near, t.fog.far);
+    // No scene.fog: any fog puts a hazy film between the camera and the board
+    // and washes out the silkscreen (the board fits well inside the frustum).
+    scene.fog = null;
     if (lights) {
         if (lights.ground) {
             lights.ground.material.color.setHex(t.ground);

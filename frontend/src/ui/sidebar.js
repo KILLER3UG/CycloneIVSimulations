@@ -383,19 +383,13 @@ export function createSidebar(root, h) {
     }
 
     // ---------------------------------------------------------- specs card --
+    // The static device-specs card was removed so the Pin Planner uses the
+    // full sidebar height. Device facts live in the Peripherals tab and the
+    // About dialog.
     function renderSpecsCard() {
-        const dev = profile?.device || {};
-        const part = dev.part || "EP4CE6E22C8N";
-        const verified = (profile?.facts || []).some((f) => /VERIFIED/.test(f.tag || ""));
-        specCard.innerHTML = `
-            <div class="spc-top"><b class="spc-part">${part}</b><span class="tag ${verified ? "tag-ok" : "tag-warn"}">${verified ? "VERIFIED" : "DRAFT"}</span></div>
-            <div class="spc-rows">
-                <div class="spc-row"><span>${dev.family || "Cyclone IV E"}</span><span>${dev.package || "EQFP-144"}</span></div>
-                <div class="spc-row"><span>${(dev.logicElements || 6272).toLocaleString()} LE</span><span>${dev.userIo || 91} user I/O</span></div>
-                <div class="spc-row"><span>${dev.m9kBlocks || 30} M9K</span><span>${dev.plls || 2} PLLs</span></div>
-            </div>
-            <button type="button" class="btn spc-all" id="sb-allspecs">All specs</button>`;
-        specCard.querySelector("#sb-allspecs").addEventListener("click", showAllSpecs);
+        if (!specCard) return;
+        specCard.innerHTML = "";
+        specCard.classList.add("hidden");
     }
 
     function showAllSpecs() {
@@ -593,8 +587,7 @@ export function createSidebar(root, h) {
             + catalog.list.map((c) => {
                 const tag = c.priority > 0 ? `${c.pin} — ${c.label}` : c.pin;
                 return `<option value="${escHtml(c.pin)}">${escHtml(tag)}</option>`;
-            }).join("")
-            + `<option value="__custom__" hidden>Custom</option>`;
+            }).join("");
 
         for (const n of nodes) {
             const entry = assignments[n.nodeName] || { location: "", ioStandard: "3.3-V LVTTL" };
@@ -611,10 +604,7 @@ export function createSidebar(root, h) {
                 <td class="pin-id" title="${escHtml(n.nodeName)}">${escHtml(n.nodeName)}</td>
                 <td class="pin-dir">${escHtml(n.direction === "input" ? "in" : n.direction === "output" ? "out" : "io")}</td>
                 <td class="pp-loc-cell">
-                    <div class="pp-loc-wrap">
-                        <select class="pp-loc-select" aria-label="Pin dropdown for ${escHtml(n.nodeName)}">${optionsHtml}</select>
-                        <input type="text" class="pp-loc-input" list="pp-pin-datalist" value="${escHtml(entry.location || "")}" placeholder="Unassigned" spellcheck="false" aria-label="Pin location for ${escHtml(n.nodeName)}">
-                    </div>
+                    <input type="text" class="pp-loc-input" list="pp-pin-datalist" value="${escHtml(entry.location || "")}" placeholder="Unassigned" spellcheck="false" aria-label="Pin location for ${escHtml(n.nodeName)}">
                 </td>
                 <td>
                     <select class="pp-std-select" aria-label="I/O Standard for ${escHtml(n.nodeName)}">
@@ -624,32 +614,12 @@ export function createSidebar(root, h) {
                 <td class="pin-val" data-v="--">--</td>
             `;
 
-            const locSel = tr.querySelector(".pp-loc-select");
             const locInp = tr.querySelector(".pp-loc-input");
             const stdSel = tr.querySelector(".pp-std-select");
 
-            const syncSelectFromVal = (pinVal) => {
-                const norm = normalizePin(pinVal);
-                if (!norm) locSel.value = "";
-                else if (catalog.byPin.has(norm)) locSel.value = norm;
-                else locSel.value = "__custom__";
-            };
-            syncSelectFromVal(curLoc);
-
-            locSel.addEventListener("change", () => {
-                if (locSel.value === "__custom__") return;
-                const val = locSel.value;
-                locInp.value = val;
-                tr.dataset.pin = val;
-                assignments[n.nodeName] = { location: val, ioStandard: stdSel.value };
-                tr.dataset.search = `${n.nodeName} ${n.direction} ${val} ${catalog.byPin.get(val)?.label || ""}`.toLowerCase();
-                if (val) h.onHighlightPin?.(val);
-                persistAndNotify();
-            });
             locInp.addEventListener("input", () => {
                 const raw = locInp.value.trim();
                 const norm = normalizePin(raw);
-                syncSelectFromVal(norm);
                 tr.dataset.pin = norm;
                 assignments[n.nodeName] = { location: norm || raw, ioStandard: stdSel.value };
                 tr.dataset.search = `${n.nodeName} ${n.direction} ${norm} ${catalog.byPin.get(norm)?.label || ""}`.toLowerCase();

@@ -32,16 +32,29 @@ architecture behavioural of lm75 is
     signal conf_reg  : std_logic_vector(7 downto 0)  := (others => '0');
     signal thyst_reg : std_logic_vector(15 downto 0) := x"4B00";   -- 75.0 C
     signal tos_reg   : std_logic_vector(15 downto 0) := x"5000";   -- 80.0 C
+    signal os_level  : std_logic := '0';   -- 1 = temperature at/above Tos
     signal sda_out   : std_logic := 'Z';
 begin
     -- LM75 temperature register (9-bit, 0.5 C LSB): value = round(T * 2) in
     -- bits 15..7, so 25.0 C -> 50 * 2^7 = 0x1900.
     temp_reg <= std_logic_vector(to_signed(integer(TEMPERATURE * 2.0) * 128, 16));
 
-    -- Overtemperature comparator (LM75 default configuration = comparator
-    -- mode).  On the A2.2 the OS pin (pin 3) has no net, so this output is
-    -- modelled but not routed to any board pin.
-    os <= '1' when temp_reg >= tos_reg else '0';
+    -- Overtemperature comparator with hysteresis (Tos sets, Thyst clears).
+    -- OS polarity is selected by configuration bit B2 (OS_POL):
+    --   B2 = 0 (power-up default) -> OS is ACTIVE LOW  (0 when tripped)
+    --   B2 = 1                    -> OS is ACTIVE HIGH (1 when tripped)
+    -- On the A2.2 the OS pin (pin 3) has no net, so this output is modelled
+    -- but not routed to any board pin.
+    process (temp_reg, tos_reg, thyst_reg)
+    begin
+        if temp_reg >= tos_reg then
+            os_level <= '1';
+        elsif temp_reg <= thyst_reg then
+            os_level <= '0';
+        end if;
+    end process;
+
+    os <= '1' when os_level = conf_reg(2) else '0';
 
     sda <= '0' when sda_out = '0' else 'Z';
 

@@ -98,24 +98,25 @@ export function createEditorPanel(root, h) {
             </span>
         </div>
 
-        <div class="ep-tree" id="ep-tree" aria-label="Project files"></div>
+        <div class="ep-head">
+            <span class="ep-title">${icon("file")}<span>Project & Source</span></span>
+            <span class="ep-head-actions">
+                <button class="icon-btn" data-act="find" title="Find / replace">${icon("search")}</button>
+                <button class="icon-btn" data-act="upload" title="Upload files (.vhd .v .sv .qsf .mif .hex)">${icon("upload")}</button>
+                <button class="icon-btn" data-act="rename" title="Rename active file">${icon("pencil")}</button>
+                <button class="icon-btn" data-act="zip" title="Download project as zip">${icon("zip")}</button>
+                <button class="icon-btn" data-act="collapse" title="Collapse panel" aria-label="Collapse panel">${icon("chevron")}</button>
+            </span>
+        </div>
 
-        <div class="ep-top-bar" id="ep-top-bar">
-            <div class="ep-top-info">
-                <span class="ep-top-lbl">Top-Level:</span>
-                <strong id="ep-top-name">—</strong>
-                <span class="ep-top-file" id="ep-top-file"></span>
-                <span class="ep-top-mode" id="ep-top-mode">Active file</span>
-                <button type="button" class="ep-unpin-btn hidden" id="ep-unpin-top" title="Follow currently active file">Follow active</button>
-            </div>
+        <div class="ep-tabs-wrap">
+            <div class="ep-tabs" id="ep-tabs" role="tablist"></div>
             <label class="ep-dev-inline" title="Target FPGA device">
                 <select id="ep-device" aria-label="Target device">
                     ${DEVICES.map((d) => `<option value="${d.key}">${d.label}</option>`).join("")}
                 </select>
             </label>
         </div>
-
-        <div class="ep-tabs" id="ep-tabs" role="tablist"></div>
 
         <div class="ep-editor-wrap" id="ep-drop">
             <div id="ep-editor"></div>
@@ -127,17 +128,6 @@ export function createEditorPanel(root, h) {
                 </div>
             </div>
             <div class="ep-drop-hint hidden" id="ep-drop-hint">Drop VHDL / Verilog / QSF / MIF / HEX files here</div>
-        </div>
-
-        <div class="ep-editor-tools">
-            <label class="ep-tool"><input type="checkbox" id="ep-minimap"> minimap</label>
-            <span class="ep-tool-group">
-                <button class="icon-btn" data-act="fontdown" title="Decrease font size">${icon("zoomOut")}</button>
-                <span id="ep-fontsize">13px</span>
-                <button class="icon-btn" data-act="fontup" title="Increase font size">${icon("zoomIn")}</button>
-            </span>
-            <span class="ep-flex"></span>
-            <button class="btn" data-act="find" title="Find / replace">${icon("search")}<span>Find</span></button>
         </div>
 
         <div class="ep-footer">
@@ -167,7 +157,6 @@ export function createEditorPanel(root, h) {
     const editorHost = root.querySelector("#ep-editor");
     const emptyEl = root.querySelector("#ep-empty");
     const tabsEl = root.querySelector("#ep-tabs");
-    const treeEl = root.querySelector("#ep-tree");
     const collapseBtn = root.querySelector('[data-act="collapse"]');
     const msgPanel = root.querySelector("#ep-messages");
     const msgToggle = root.querySelector('[data-act="toggle-msgs"]');
@@ -415,21 +404,7 @@ export function createEditorPanel(root, h) {
 
     function refreshHierarchy(notifyTopChange = false) {
         const ctx = getTopContext();
-        const topNameEl = root.querySelector("#ep-top-name");
-        const topFileEl = root.querySelector("#ep-top-file");
-        const topModeEl = root.querySelector("#ep-top-mode");
-        const unpinBtn = root.querySelector("#ep-unpin-top");
-
-        if (topNameEl) topNameEl.textContent = ctx.topEntity || "—";
-        if (topFileEl) topFileEl.textContent = ctx.topFile ? `(${ctx.topFile})` : "";
-        if (topModeEl) {
-            topModeEl.textContent = ctx.isPinned ? "Pinned top-level" : "Active file";
-            topModeEl.classList.toggle("is-pinned", Boolean(ctx.isPinned));
-        }
-        if (unpinBtn) unpinBtn.classList.toggle("hidden", !ctx.isPinned);
-
         renderTabs(ctx);
-        renderTree(ctx);
         if (notifyTopChange) h.onTopContextChanged?.(ctx);
     }
 
@@ -464,6 +439,8 @@ export function createEditorPanel(root, h) {
         tabsEl.classList.toggle("hidden", !files.length);
         files.forEach((f, i) => {
             const isTop = f.name === ctx.topFile;
+            const hdl = isHdl(f.name);
+            const isPinnedHere = pinnedTop?.fileName === f.name;
             const tab = document.createElement("div");
             tab.className = `ep-tab ${i === activeFile ? "active" : ""}`;
             tab.setAttribute("role", "tab");
@@ -475,9 +452,23 @@ export function createEditorPanel(root, h) {
                     <span class="ep-tab-name">${escHtml(f.name)}</span>
                     ${isTop ? `<span class="ep-tab-top" title="Top-Level">TOP</span>` : ""}
                 </button>
+                ${hdl ? `<button type="button" class="ep-tab-settop ${isPinnedHere ? "pinned" : ""}" data-set-top="${i}" title="${isPinnedHere ? "Pinned as Top-Level (click to unpin)" : "Set as Top-Level"}" aria-label="Set as Top-Level">${isPinnedHere ? "★" : "☆"}</button>` : ""}
                 <button type="button" class="ep-tab-del" data-del="${i}" title="Delete ${escHtml(f.name)}" aria-label="Delete ${escHtml(f.name)}">×</button>
             `;
             tab.querySelector(".ep-tab-main").addEventListener("click", () => selectFile(i));
+            tab.querySelector("[data-set-top]")?.addEventListener("click", (e) => {
+                e.stopPropagation();
+                if (pinnedTop?.fileName === f.name) {
+                    pinnedTop = null;
+                    h.log?.("Top-level now follows the active file", "info");
+                } else {
+                    const ents = parseEntitiesWithPorts(models.get(f.name)?.getValue() ?? f.content, f.name);
+                    const ent = ents[0]?.name || "";
+                    pinnedTop = { fileName: f.name, entityName: ent };
+                    h.log?.(`Set top-level to ${ent || f.name} (${f.name})`, "cmd");
+                }
+                refreshHierarchy(true);
+            });
             tab.querySelector(".ep-tab-del").addEventListener("click", (e) => {
                 e.stopPropagation();
                 deleteFileAt(i);
@@ -492,58 +483,6 @@ export function createEditorPanel(root, h) {
         if (l === "c4-verilog") return "VLG";
         if (l === "c4-qsf") return "QSF";
         return "DAT";
-    }
-
-    function renderTree(ctx = getTopContext()) {
-        treeEl.innerHTML = "";
-        if (!files.length) {
-            treeEl.innerHTML = `<span class="ep-tree-empty">No files — add .vhd or .v above</span>`;
-            return;
-        }
-        files.forEach((f, i) => {
-            const row = document.createElement("div");
-            row.className = `ep-tree-item ${i === activeFile ? "active" : ""}`;
-            const hdl = isHdl(f.name);
-            const ents = parseEntitiesWithPorts(models.get(f.name)?.getValue() ?? f.content, f.name);
-            const isTop = hdl && f.name === ctx.topFile;
-            const isDep = hdl && !isTop && ctx.includedSet?.has(f.name);
-            const isPinnedHere = pinnedTop?.fileName === f.name;
-
-            let badge = "";
-            if (isTop) {
-                badge = `<span class="ep-mod-badge is-top" title="Top-level file">TOP</span>`;
-            } else if (isDep) {
-                badge = `<span class="ep-mod-badge is-dep" title="Included dependency (${ents[0]?.name || ""})">DEP</span>`;
-            } else if (hdl && ents.length) {
-                badge = `<span class="ep-mod-badge" title="Not in current dependency tree">MOD</span>`;
-            }
-
-            row.innerHTML = `
-                <button type="button" class="ep-tree-pick" data-i="${i}" title="Open ${escHtml(f.name)}">
-                    ${icon("file")}<span>${escHtml(f.name)}</span>${badge}
-                </button>
-                ${hdl ? `<button type="button" class="ep-tree-settop ${isPinnedHere ? "pinned" : ""}" data-set-top="${i}" title="${isPinnedHere ? "Pinned as Top-Level (click to unpin)" : "Set as Top-Level"}">${isPinnedHere ? "★" : "☆"}</button>` : ""}
-                <button type="button" class="ep-tree-del" data-del="${i}" title="Delete ${escHtml(f.name)}" aria-label="Delete ${escHtml(f.name)}">×</button>
-            `;
-            row.querySelector(".ep-tree-pick").addEventListener("click", () => selectFile(i));
-            row.querySelector("[data-set-top]")?.addEventListener("click", (e) => {
-                e.stopPropagation();
-                if (pinnedTop?.fileName === f.name) {
-                    pinnedTop = null;
-                    h.log?.("Top-level now follows the active file", "info");
-                } else {
-                    const ent = ents[0]?.name || "";
-                    pinnedTop = { fileName: f.name, entityName: ent };
-                    h.log?.(`Set top-level to ${ent || f.name} (${f.name})`, "cmd");
-                }
-                refreshHierarchy(true);
-            });
-            row.querySelector(".ep-tree-del").addEventListener("click", (e) => {
-                e.stopPropagation();
-                deleteFileAt(i);
-            });
-            treeEl.appendChild(row);
-        });
     }
 
     function syncEmptyState() {
@@ -859,11 +798,6 @@ export function createEditorPanel(root, h) {
         if (localStorage.getItem("c4_msgs_collapsed") === "1") setMessagesCollapsed(true);
     } catch { /* ignore */ }
 
-    root.querySelector("#ep-unpin-top").addEventListener("click", () => {
-        pinnedTop = null;
-        refreshHierarchy(true);
-    });
-
     root.addEventListener("click", (e) => {
         const btn = e.target.closest("[data-act]");
         if (!btn) {
@@ -912,12 +846,9 @@ export function createEditorPanel(root, h) {
     function setFontSize(px) {
         fontSize = Math.max(9, Math.min(28, px));
         editor.updateOptions({ fontSize });
-        root.querySelector("#ep-fontsize").textContent = `${fontSize}px`;
+        const label = root.querySelector("#ep-fontsize");
+        if (label) label.textContent = `${fontSize}px`;
     }
-
-    root.querySelector("#ep-minimap").addEventListener("change", (e) => {
-        editor.updateOptions({ minimap: { enabled: e.target.checked } });
-    });
 
     // --------------------------------------------------------- messages ----
     function renderMessages() {
