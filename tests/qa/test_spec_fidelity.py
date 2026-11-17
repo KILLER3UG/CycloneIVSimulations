@@ -194,14 +194,14 @@ def spec_06() -> str:
 
 
 @case("SPEC-07", "8", "LM75 answers on its own bus (FPGA_SCL/SDA = 112/113) at 0x48", "VHDL",
-      "temperature register reads 0x3200 (25.0 C); EEPROM address NACKs on this bus")
+      "temperature register reads 0x1900 (25.0 C, 9-bit 0.5 C LSB); EEPROM address NACKs on this bus")
 def spec_07() -> str:
     result = must_run("board/i2c_lm75_read.vhd", duration=3_000_000, resetCycles=0)
     got = int(value(result, "RESULT"))
-    check(got == 0x3200, f"LM75 temp register = 0x{got:04X} (expected 0x3200 for 25.0 C)")
+    check(got == 0x1900, f"LM75 temp register = 0x{got:04X} (expected 0x1900 for 25.0 C)")
     probe = int(value(result, "PROBE"))
     check(probe & 1 == 1, f"EEPROM probe ack={probe} — EEPROM must not answer on the LM75 bus")
-    return "LM75 read 0x3200 on pins 112/113; EEPROM absent from this bus"
+    return "LM75 read 0x1900 on pins 112/113; EEPROM absent from this bus"
 
 
 # ---------------------------------------------------------------------------

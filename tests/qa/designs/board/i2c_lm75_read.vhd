@@ -2,7 +2,7 @@
 -- the LM75 sits on FPGA_SCL = pin 112 / FPGA_SDA = pin 113 (address 0x48),
 -- separate from the EEPROM bus (I2C_SCL/I2C_SDA = 99/98).
 -- RESULT = raw 16-bit temperature register; the model is set to 25.0 C,
--- which the LM75 encodes as round(25.0 * 2) * 256 = 0x3200.
+-- which the LM75 encodes as round(25.0 * 2) * 128 = 0x1900.
 -- PROBE(0) records the ACK level for the EEPROM address (0xA0) on this bus:
 -- the EEPROM lives on the OTHER bus, so it must NACK here (probe reads 1).
 -- Bit-banged I2C at ~100 kHz; open drain: drive '0' or release to the pull-up.

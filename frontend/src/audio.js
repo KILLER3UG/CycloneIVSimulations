@@ -175,6 +175,8 @@ export class BuzzerAudio {
             duty: this.duty,
             muted: this.muted,
             volume: this.volume,
+            gain: this.master && this.ctx ? this.master.gain.value : 0,
+            oscGain: this.gain && this.ctx ? this.gain.gain.value : 0,
             badge: this.badge(),
         };
     }

@@ -343,7 +343,7 @@ Results table above reflects the current suite.)
    detection.
 5. **LM75 address decoder checked the wrong nibble** ("1000" instead of
    "1001" - the LM75 base address is 0x48 = 1001_000). Reads now ACK at 0x48
-   (SPEC-07: temperature register reads 0x3200 for 25.0 C).
+   (SPEC-07: temperature register reads 0x1900 for 25.0 C).
 6. **Slave models held SDA low through the master's STOP** after a read of
    0x00 bytes, wedging the bus. They now release SDA in the master-ACK slot
    and only re-drive when the master's ACK was sampled on the rising edge.

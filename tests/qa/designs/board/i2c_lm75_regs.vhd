@@ -1,6 +1,6 @@
 -- LM75 register read on the A2.2's second I2C bus (FPGA_SCL/FPGA_SDA = 112/113,
 -- address 0x48).  Reads the temperature register (0x00) and the configuration
--- register (0x01).  The model is set to 25.0 C -> 0x3200; config powers up 0x0000.
+-- register (0x01).  The model is set to 25.0 C -> 0x1900; config powers up 0x0000.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

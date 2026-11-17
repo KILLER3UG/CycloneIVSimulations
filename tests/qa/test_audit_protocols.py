@@ -37,19 +37,19 @@ def pr_01() -> str:
     return f"{frames} frames of 0x55 at {baud} baud (design: 50 MHz / 434)"
 
 
-@case("PR-02", "13", "LM75 registers: temp 0x3200, config 0x0000, Thyst 0x4B00, Tos 0x5000", "VHDL",
-      "TEMP=0x3200 (25 C), CONF=0x0000, THYST=0x4B00 (75 C), TOS=0x5000 (80 C)")
+@case("PR-02", "13", "LM75 registers: temp 0x1900, config 0x0000, Thyst 0x4B00, Tos 0x5000", "VHDL",
+      "TEMP=0x1900 (25 C, 9-bit 0.5 C LSB), CONF=0x0000, THYST=0x4B00 (75 C), TOS=0x5000 (80 C)")
 def pr_02() -> str:
     result = must_run("board/i2c_lm75_regs.vhd", duration=8_000_000, clockPeriod=10, resetCycles=0)
     temp = int(value(result, "TEMP"))
     conf = int(value(result, "CONF"))
     thyst = int(value(result, "THYST"))
     tos = int(value(result, "TOS"))
-    check(temp == 0x3200, f"TEMP={temp:#06x}; expected 0x3200 for 25.0 C")
+    check(temp == 0x1900, f"TEMP={temp:#06x}; expected 0x1900 for 25.0 C (9-bit, 0.5 C LSB)")
     check(conf == 0x0000, f"CONF={conf:#06x}; expected 0x0000 power-up default")
     check(thyst == 0x4B00, f"THYST={thyst:#06x}; expected 0x4B00 (75 C default)")
     check(tos == 0x5000, f"TOS={tos:#06x}; expected 0x5000 (80 C default)")
-    return "LM75 registers: temp 0x3200, config 0x0000, Thyst 0x4B00, Tos 0x5000"
+    return "LM75 registers: temp 0x1900, config 0x0000, Thyst 0x4B00, Tos 0x5000"
 
 
 @case("PR-03", "13", "PS/2 frame: start=0, 8 data bits LSB first, odd parity, stop=1", "VHDL",

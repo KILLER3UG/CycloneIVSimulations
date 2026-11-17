@@ -47,11 +47,18 @@ export function buildPinCatalog(profile) {
     if (b.clockPin) {
         reg(b.clockPin, `${b.clockPort || "CLOCK_50"} (50 MHz oscillator)`, "in", { peripheral: "clock", priority: 10 });
     }
+    if (b.clock2Pin) {
+        // PIN_24 (CLK2 / DIFFCLK_1p) is a dedicated input-only clock pin.
+        reg(b.clock2Pin, "CLK2 / DIFFCLK_1p (dedicated clock input, P1 pin 34)", "in", { peripheral: "clock", priority: 9 });
+    }
     if (b.resetPin) {
         reg(b.resetPin, `RESET key (active-${b.resetActiveLow === false ? "high" : "low"})`, "in", { peripheral: "reset", priority: 10 });
     }
     (b.leds?.pins || []).forEach((pin, i) => {
-        reg(pin, `LED${i + 1} (${b.leds?.activeLow ? "active-low " : ""}red)`, "out", { peripheral: "led", index: i, priority: 10 });
+        const diode = b.leds?.diodes?.[i];
+        const net = b.leds?.nets?.[i];
+        const dual = diode && net ? ` / ${diode} (net ${net})` : "";
+        reg(pin, `LED${i + 1}${dual} (${b.leds?.activeLow ? "active-low " : ""}red)`, "out", { peripheral: "led", index: i, priority: 10 });
     });
     (b.buttons?.pins || []).forEach((pin, i) => {
         reg(pin, `KEY${i + 1} / SW${i + 1} (${b.buttons?.activeLow ? "active-low " : ""}input)`, "in", { peripheral: "button", index: i, priority: 10 });
@@ -62,7 +69,9 @@ export function buildPinCatalog(profile) {
     });
     const digPos = ["rightmost D4", "D3", "D2", "leftmost D1"];
     (b.displays?.pins?.DIG || []).forEach((pin, i) => {
-        reg(pin, `DIG${i} (digit ${i + 1} ${digPos[i] || ""}, active-low)`, "out", { peripheral: "digit", index: i, priority: 10 });
+        const dl = b.displays?.digitLabels?.[i];
+        const extra = dl ? `, ${dl.resistor}, ${dl.diode}` : "";
+        reg(pin, `DIG${i} (digit ${i + 1} ${digPos[i] || ""}${extra}, active-low)`, "out", { peripheral: "digit", index: i, priority: 10 });
     });
     if (b.buzzer?.pin) {
         reg(b.buzzer.pin, "BUZZER SP1 (active-low)", "out", { peripheral: "buzzer", priority: 10 });
@@ -88,6 +97,10 @@ export function buildPinCatalog(profile) {
         if (bus.scl) reg(bus.scl, `I2C_SCL (${bus.name || "I2C"})`, "inout", { peripheral: "i2c", priority: 8 });
         if (bus.sda) reg(bus.sda, `I2C_SDA (${bus.name || "I2C"})`, "inout", { peripheral: "i2c", priority: 8 });
     }
+    (b.headerIo || []).forEach((h) => {
+        if (!h.pin) return;
+        reg(h.pin, `Header I/O (${h.header || "header"} pin ${h.headerPin ?? "?"}${h.fpga ? ", " + h.fpga : ""})`, "inout", { peripheral: "io", priority: 8 });
+    });
 
     for (const [sig, val] of Object.entries(pm)) {
         const list = Array.isArray(val) ? val : [val];

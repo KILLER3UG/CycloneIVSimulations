@@ -204,6 +204,7 @@ export class Board3D {
         this.io = buildIO(this.mats, {
             pinIndex: this.pinIndex.index,
             segBitMap: segBitMap && Object.keys(segBitMap).length ? segBitMap : undefined,
+            ledMeta: this.profile?.board?.leds || null,
         });
 
         for (const part of [pcb.group, fpga.group, ics.group, passives.group, connectors.group, headers.group, this.io.group]) {

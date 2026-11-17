@@ -65,7 +65,7 @@ def board_models(entity) -> List[Dict[str, Any]]:
             "lm75": {"address": BOARD["i2c"]["tempSensor"]["address"],
                      # Ambient temperature is a simulation parameter: the
                      # board profile may override it, otherwise 25.0 C is the
-                     # documented classroom default (LM75 power-up 0x3200).
+                     # documented classroom default (LM75 power-up 0x1900 (9-bit, 0.5 C LSB)).
                      "temperature": BOARD["i2c"]["tempSensor"].get("temperatureC", 25.0)},
         })
 

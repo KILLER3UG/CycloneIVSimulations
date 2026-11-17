@@ -169,3 +169,42 @@ end entity rt;`, "rt.vhd");
         expect(normalizePin("87")).toBe("PIN_87");
     });
 });
+
+describe("STOP 1C pin catalog", () => {
+    it("treats PIN_24 as a dedicated clock input and rejects Output/InOut", () => {
+        const catalog = buildPinCatalog(boardProfile);
+        const p24 = catalog.byPin.get("PIN_24");
+        expect(p24).toBeDefined();
+        expect(p24.dir).toBe("in");
+
+        const [ent] = parseEntitiesWithPorts(`
+module p24check(input clk, output bad);
+endmodule`, "p24check.v");
+        const nodes = expandEntityNodes(ent);
+        const res = validateAssignments(nodes, {
+            clk: { location: "PIN_23", ioStandard: "3.3-V LVTTL" },
+            bad: { location: "PIN_24", ioStandard: "3.3-V LVTTL" },
+        }, catalog);
+        expect(res.errors.some((e) => /Direction conflict.*PIN_24/.test(e.message))).toBe(true);
+    });
+
+    it("exposes PIN_111 as header I/O and PIN_101 as an output", () => {
+        const catalog = buildPinCatalog(boardProfile);
+        expect(catalog.byPin.get("PIN_111").dir).toBe("inout");
+        expect(catalog.byPin.get("PIN_101").dir).toBe("out");
+    });
+
+    it("labels LEDs with both the net and the physical diode", () => {
+        const catalog = buildPinCatalog(boardProfile);
+        expect(catalog.byPin.get("PIN_87").label).toContain("D1");
+        expect(catalog.byPin.get("PIN_87").label).toContain("net LED4");
+        expect(catalog.byPin.get("PIN_84").label).toContain("net LED1");
+    });
+
+    it("labels the 7-seg digits with the resistor and physical digit", () => {
+        const catalog = buildPinCatalog(boardProfile);
+        expect(catalog.byPin.get("PIN_137").label).toContain("R46");
+        expect(catalog.byPin.get("PIN_137").label).toContain("leftmost D1");
+        expect(catalog.byPin.get("PIN_133").label).toContain("rightmost D4");
+    });
+});

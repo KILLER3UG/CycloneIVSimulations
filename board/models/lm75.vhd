@@ -17,7 +17,8 @@ entity lm75 is
     );
     port (
         scl : in    std_logic;
-        sda : inout std_logic
+        sda : inout std_logic;
+        os  : out   std_logic := '1'
     );
 end entity lm75;
 
@@ -27,12 +28,20 @@ architecture behavioural of lm75 is
     constant THREG : natural := 16#02#;
     constant TSREG : natural := 16#03#;
 
-    signal temp_reg : std_logic_vector(15 downto 0);
-    signal conf_reg : std_logic_vector(7 downto 0)  := (others => '0');
-    signal sda_out  : std_logic := 'Z';
+    signal temp_reg  : std_logic_vector(15 downto 0);
+    signal conf_reg  : std_logic_vector(7 downto 0)  := (others => '0');
+    signal thyst_reg : std_logic_vector(15 downto 0) := x"4B00";   -- 75.0 C
+    signal tos_reg   : std_logic_vector(15 downto 0) := x"5000";   -- 80.0 C
+    signal sda_out   : std_logic := 'Z';
 begin
-    -- LM75 temperature register: value = round(TEMPERATURE * 2) in bits 15..7
-    temp_reg <= std_logic_vector(to_signed(integer(TEMPERATURE * 2.0) * 256, 16));
+    -- LM75 temperature register (9-bit, 0.5 C LSB): value = round(T * 2) in
+    -- bits 15..7, so 25.0 C -> 50 * 2^7 = 0x1900.
+    temp_reg <= std_logic_vector(to_signed(integer(TEMPERATURE * 2.0) * 128, 16));
+
+    -- Overtemperature comparator (LM75 default configuration = comparator
+    -- mode).  On the A2.2 the OS pin (pin 3) has no net, so this output is
+    -- modelled but not routed to any board pin.
+    os <= '1' when temp_reg >= tos_reg else '0';
 
     sda <= '0' when sda_out = '0' else 'Z';
 
@@ -59,9 +68,9 @@ begin
                 byte_out(15 downto 8) := (others => '0');
                 byte_out(7 downto 0)  := conf_reg;
             elsif regsel = THREG then
-                byte_out := x"4B00";    -- Thyst power-up default: 75 C
+                byte_out := thyst_reg;   -- Thyst (power-up default: 75 C)
             elsif regsel = TSREG then
-                byte_out := x"5000";    -- Tos power-up default: 80 C
+                byte_out := tos_reg;     -- Tos (power-up default: 80 C)
             else
                 byte_out := (others => '0');
             end if;
@@ -168,6 +177,10 @@ begin
                             elsif state = DATA_W then
                                 if regsel = CREG then
                                     conf_reg <= std_logic_vector(to_unsigned(shifter, 8));
+                                elsif regsel = THREG then
+                                    thyst_reg <= std_logic_vector(to_unsigned(shifter, 16));
+                                elsif regsel = TSREG then
+                                    tos_reg <= std_logic_vector(to_unsigned(shifter, 16));
                                 end if;
                                 -- the ACK slot is handled on the next falling edge
                             end if;

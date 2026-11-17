@@ -21,7 +21,7 @@ export const LIT_COLOR = new THREE.Color(3.2, 0.03, 0.02);    // HDR red → fee
 // unlit segments read as pale grey diffuser plastic on the vendor photo
 export const DARK_COLOR = new THREE.Color(0.30, 0.325, 0.36);
 
-export function buildIO(mats, { pinIndex, segBitMap = SEG_BIT_MAP_FALLBACK, seed = 42 } = {}) {
+export function buildIO(mats, { pinIndex, segBitMap = SEG_BIT_MAP_FALLBACK, ledMeta = null, seed = 42 } = {}) {
     const group = new THREE.Group();
     group.name = "io";
     const pickables = [];
@@ -160,6 +160,11 @@ export function buildIO(mats, { pinIndex, segBitMap = SEG_BIT_MAP_FALLBACK, seed
         const [cx, cy] = def.pos;
         const x = worldX(cx), z = worldZ(cy);
         const entry = pinOf(`LED[${i}]`);
+        // Dual naming: LED[i] is the FPGA net on this pin, the physical diode
+        // is D1..D4 and the silkscreen/net name runs the opposite way.
+        const diode = ledMeta?.diodes?.[i];
+        const net = ledMeta?.nets?.[i];
+        const dual = diode && net ? ` / ${diode} (net ${net})` : "";
         const material = mats.ledLens.clone();
         material.emissive.setHex(0xff2818);
         material.emissiveIntensity = 0;
@@ -168,7 +173,7 @@ export function buildIO(mats, { pinIndex, segBitMap = SEG_BIT_MAP_FALLBACK, seed
         lens.userData = {
             componentId: `LED${i + 1}`, kind: "led", elementIndex: i,
             pinId: entry ? entry.pinId : `LED[${i}]`,
-            polarity: entry ? entry.polarity : "active-low", label: `LED${i + 1}`,
+            polarity: entry ? entry.polarity : "active-low", label: `LED${i + 1}${dual}`,
         };
         group.add(lens);
         glowPos[i * 3] = x;
@@ -179,7 +184,7 @@ export function buildIO(mats, { pinIndex, segBitMap = SEG_BIT_MAP_FALLBACK, seed
         probePoints.push({
             pinId: entry ? entry.pinId : null, componentId: `LED${i + 1}`,
             position: new THREE.Vector3(x, BOARD_TOP + 1.4, z),
-            label: `LED${i + 1}`,
+            label: `LED${i + 1}${dual}`,
         });
     }
     const glowGeo = new THREE.BufferGeometry();

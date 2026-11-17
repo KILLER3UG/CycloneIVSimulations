@@ -417,15 +417,46 @@ function togglePower() {
     setPower(!S.power);
 }
 
+// Silence the buzzer immediately: ramp gain to 0, cancel any pending
+// release-note countdown timer, refresh the toolbar badge.
+function silenceBuzzer() {
+    clearBuzzerTimer();
+    audio.silence();
+    updateAudioBadge();
+}
+
+// Reset the interactive board state to "powered-on idle": every key and DIP
+// open (logic 1) and the editor stimulus re-applied from that state.
+function resetInteractiveState() {
+    for (let i = 0; i < 4; i += 1) {
+        keyHeldState[i] = false;
+        dipLatchedState[i] = false;
+        board?.pressKey?.(i, false);
+        board?.setDip?.(i, false);
+        updateBoardControlButton(i);
+    }
+    if (S.entity) applyKeyDefaultsToEditor(S.entity, sidebar.getPinPlan());
+}
+
 function setPower(on) {
     S.power = !!on;
+    if (!S.power) {
+        // Power OFF: silence the buzzer first (gain 0 + cancel the release-note
+        // timer), halt any in-flight playback/run, then clear the board.
+        silenceBuzzer();
+        stopSession();
+        S.programmed = false;
+    } else {
+        // Power ON: reload the initial powered-on idle state (keys open = '1',
+        // buzzer silent until a design triggers it).
+        resetInteractiveState();
+    }
     board?.setPower(S.power);
     toolbar.setPower(S.power);
     if (S.power) {
-        log("Board power ON", "ok");
+        log("Board power ON — idle (keys open = '1', buzzer silent; press Compile to load a design)", "ok");
     } else {
-        S.programmed = false;
-        log("Board power OFF — outputs cleared, volatile JTAG configuration lost (press Compile to reprogram)", "warn");
+        log("Board power OFF — buzzer silenced, outputs cleared, volatile JTAG configuration lost (press Compile to reprogram)", "warn");
     }
 }
 
@@ -628,6 +659,12 @@ function syncKeyStimulusAndUI(index, reason) {
     board?.pressKey?.(index, keyHeldState[index]);
     board?.setDip?.(index, dipLatchedState[index]);
     updateBoardControlButton(index);
+    if (targets.length && S.programmed && !S.power) {
+        // The board is powered off: the keys/DIP are inert, so only reflect
+        // the visuals and never trigger a stimulus run.
+        log(`KEY${index + 1} (${keyPinList()[index]}) → ${reason} (board powered off — ignored)`, "warn");
+        return;
+    }
     if (targets.length && S.programmed) {
         log(`KEY${index + 1} (${keyPinList()[index]}) → ${reason} (logic ${level})`, "cmd");
         scheduleRerun();
@@ -650,6 +687,11 @@ function toggleDip(index) {
 
 function pressBoardReset() {
     if (!S.programmed) return;
+    // The 3D RESET key drives PIN_25 (active low). Cancel the release-note
+    // countdown, silence the buzzer, release the key/DIP overrides and re-run
+    // from the design's initial state.
+    silenceBuzzer();
+    resetInteractiveState();
     log("RESET pressed — restarting captured run (power-on reset)", "cmd");
     scheduleRerun();
 }
@@ -996,6 +1038,11 @@ let refreshing = false;
 let pendingRefresh = false;
 async function refresh() {
     if (!S.backendOk) return;
+    if (!S.power) {
+        // Powered off: the design is not configured and the board is inert.
+        toast("Board is powered off — turn Power ON to run", { kind: "warn" });
+        return;
+    }
     if (!S.compileResult || !S.compileBoard) { compileAndProgram(); return; }
     if (refreshing) { pendingRefresh = true; return; }
     refreshing = true;
@@ -1176,15 +1223,28 @@ function handleSessionMessage(msg) {
 
 // ------------------------------------------------------------ controls --
 function togglePause() {
-    if (!session || (!S.running && !S.paused)) {
-        toast("No running simulation to pause", { kind: "warn" });
+    if (S.paused) {
+        if (session) session.resume();
+        // Resume the buzzer tone from the last decoded state (the countdown
+        // continues with the simulation).
+        if (S.buzzer?.tone) {
+            audio.tone(S.buzzer.frequency, S.buzzer.duty).then(updateAudioBadge).catch(() => {});
+        }
+        log("Simulation resumed", "cmd");
         return;
     }
-    if (S.paused) session.resume();
-    else session.pause();
+    // Pause: silence the buzzer immediately (even with no run in flight) and
+    // freeze the countdown timer so the note does not keep playing.
+    silenceBuzzer();
+    if (session && (S.running || S.paused)) session.pause();
+    log("Simulation paused — buzzer silenced", "cmd");
 }
 
 function stopSim() {
+    // Stop: silence everything, cancel the release-note timer, clear the SP1
+    // pulse ring and return the board peripherals to idle.
+    silenceBuzzer();
+    board?.resetVisual?.();
     if (!session || (!S.running && !S.paused)) {
         setStatus("idle");
         return;
@@ -1197,6 +1257,11 @@ function resetSim() {
         toast("No simulation session — press Compile first", { kind: "warn" });
         return;
     }
+    // Reset: abort any release-note countdown, silence the buzzer, release the
+    // key/DIP overrides and restart the capture from t = 0 (the re-run pulses
+    // the PIN_25 reset for designs that use it).
+    silenceBuzzer();
+    resetInteractiveState();
     session.reset();
 }
 

@@ -77,7 +77,20 @@
       ],
       "activeLow": true,
       "seriesResistor": "470 ohm (R30-R33)",
-      "wiring": "anodes to 3.3 V, cathodes through 470 ohm to the FPGA pins"
+      "wiring": "anodes to 3.3 V, cathodes through 470 ohm to the FPGA pins",
+      "diodes": [
+        "D1",
+        "D2",
+        "D3",
+        "D4"
+      ],
+      "nets": [
+        "LED4",
+        "LED3",
+        "LED2",
+        "LED1"
+      ],
+      "labelNote": "LED[i] is the FPGA net on PIN_87/86/85/84; the physical diode at that position is D1..D4 and the silkscreen/net name runs the opposite way (PIN_87 = LED[0] / D1 / net LED4 ... PIN_84 = LED[3] / D4 / net LED1)."
     },
     "buttons": {
       "port": "KEY",
@@ -150,7 +163,41 @@
         ]
       },
       "digitOrder": "right-to-left: DIG[3] (PIN_137, schematic DIG4 -> Q1 -> D1) is the LEFTMOST tube; DIG[0] (PIN_133, DIG1 -> Q4 -> D4) is the RIGHTMOST tube",
-      "digitCommons": "D1/D2/D3/D4 = package pins 12/9/8/6, left to right"
+      "digitCommons": "D1/D2/D3/D4 = package pins 12/9/8/6, left to right",
+      "digitLabels": [
+        {
+          "dig": "DIG[0]",
+          "pin": "PIN_133",
+          "resistor": "R49",
+          "transistor": "Q1",
+          "diode": "D4",
+          "position": "rightmost"
+        },
+        {
+          "dig": "DIG[1]",
+          "pin": "PIN_135",
+          "resistor": "R48",
+          "transistor": "Q2",
+          "diode": "D3",
+          "position": ""
+        },
+        {
+          "dig": "DIG[2]",
+          "pin": "PIN_136",
+          "resistor": "R47",
+          "transistor": "Q3",
+          "diode": "D2",
+          "position": ""
+        },
+        {
+          "dig": "DIG[3]",
+          "pin": "PIN_137",
+          "resistor": "R46",
+          "transistor": "Q4",
+          "diode": "D1",
+          "position": "leftmost"
+        }
+      ]
     },
     "buzzer": {
       "port": "FPGA_BUZZER",
@@ -442,6 +489,17 @@
         "topic": "SDRAM / VGA / LCD",
         "status": "per schematic (verified pin maps)",
         "detail": "SDRAM HY57V641620 pin map only (no timing model). VGA is 1 bit per channel (8 colours). LCD socket signals follow the vendor pin table."
+      }
+    ],
+    "clock2Pin": "PIN_24",
+    "clock2Note": "Dedicated input-only clock pin (CLK2 / DIFFCLK_1p) on U5I; routed to the P1 expansion header pin 34. Output/InOut assignments are rejected.",
+    "headerIo": [
+      {
+        "pin": "PIN_111",
+        "header": "P1",
+        "headerPin": 4,
+        "fpga": "U5G IO, DIFFIO_T19n",
+        "note": "general-purpose header I/O"
       }
     ]
   },
@@ -1088,6 +1146,12 @@
     ],
     "SDRAM_A[11]": [
       "PIN_59"
+    ],
+    "CLK2": [
+      "PIN_24"
+    ],
+    "HEADER_IO": [
+      "PIN_111"
     ]
   }
 }
