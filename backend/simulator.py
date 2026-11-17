@@ -41,6 +41,7 @@ from .testbench_gen import (
     stimulus_from_dict,
 )
 from .verilog_support import translate_verilog_sources
+from .lint import lint_combinational_loops
 from .vhdl_parser import Design, Entity, VHDLParser, tokenize
 from .vcd_parser import parse_vcd
 from .waveform import build_waveform, map_board, _classify_port
@@ -1803,6 +1804,7 @@ class Simulator:
         warnings: List[dict] = (_request_warnings(request)
                                 + _nonsynth_warnings(combined) + _pin_warnings(entity, qsf_pinned)
                                 + _io_warnings(entity) + _resource_warnings(combined)
+                                + lint_combinational_loops(sources)
                                 + (qsf_warnings if qsf_text is not None else []))
 
         ghdl_sources, file_aliases = _prepare_sources_for_ghdl(sources)
