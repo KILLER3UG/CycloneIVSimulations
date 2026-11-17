@@ -148,6 +148,7 @@ export function createEditorPanel(root, h) {
             <div class="ep-msg-head">
                 <span class="ep-msg-title">Messages</span>
                 <span class="ep-msg-summary" id="ep-msg-summary">Ready to compile</span>
+                <button type="button" class="icon-btn ep-msg-toggle" data-act="toggle-msgs" title="Collapse messages" aria-label="Collapse messages" aria-expanded="true">${icon("chevron")}</button>
                 <span class="ep-msg-filters">
                     <button type="button" class="ep-mf active" data-filter="all">All</button>
                     <button type="button" class="ep-mf" data-filter="error">Err</button>
@@ -168,6 +169,8 @@ export function createEditorPanel(root, h) {
     const tabsEl = root.querySelector("#ep-tabs");
     const treeEl = root.querySelector("#ep-tree");
     const collapseBtn = root.querySelector('[data-act="collapse"]');
+    const msgPanel = root.querySelector("#ep-messages");
+    const msgToggle = root.querySelector('[data-act="toggle-msgs"]');
 
     const editor = monaco.editor.create(editorHost, {
         value: "",
@@ -801,6 +804,61 @@ export function createEditorPanel(root, h) {
         setCollapsed(false);
     }
 
+    // Collapsible Quartus-style Messages panel (summary stays visible).
+    function setMessagesCollapsed(collapsed) {
+        if (!msgPanel) return;
+        msgPanel.classList.toggle("collapsed", collapsed);
+        if (msgToggle) {
+            const label = collapsed ? "Expand messages" : "Collapse messages";
+            msgToggle.title = label;
+            msgToggle.setAttribute("aria-label", label);
+            msgToggle.setAttribute("aria-expanded", String(!collapsed));
+        }
+        try { localStorage.setItem("c4_msgs_collapsed", collapsed ? "1" : "0"); } catch { /* ignore */ }
+    }
+
+    // Drag handle on the sidebar's left edge: resizes the 3D viewport column.
+    const resizer = root.querySelector(".ep-resizer");
+    if (resizer) {
+        let drag = null;
+        const applyWidth = (px, persist) => {
+            const w = Math.min(900, Math.max(340, Math.round(px)));
+            document.documentElement.style.setProperty("--right-w", `${w}px`);
+            if (persist) {
+                try { localStorage.setItem("c4_right_w", String(w)); } catch { /* ignore */ }
+            }
+            h.onResized?.();
+        };
+        resizer.addEventListener("pointerdown", (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            drag = { x: e.clientX, w: root.getBoundingClientRect().width };
+            try { resizer.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+            document.body.classList.add("resizing");
+        });
+        resizer.addEventListener("pointermove", (e) => {
+            if (!drag) return;
+            applyWidth(drag.w - (e.clientX - drag.x), false);
+        });
+        const endDrag = (e) => {
+            if (!drag) return;
+            const w = drag.w - (e.clientX - drag.x);
+            drag = null;
+            document.body.classList.remove("resizing");
+            try { resizer.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+            applyWidth(Number.isFinite(w) ? w : root.getBoundingClientRect().width, true);
+        };
+        resizer.addEventListener("pointerup", endDrag);
+        resizer.addEventListener("pointercancel", endDrag);
+        try {
+            const saved = parseInt(localStorage.getItem("c4_right_w"), 10);
+            if (Number.isFinite(saved)) applyWidth(saved, false);
+        } catch { /* ignore */ }
+    }
+    try {
+        if (localStorage.getItem("c4_msgs_collapsed") === "1") setMessagesCollapsed(true);
+    } catch { /* ignore */ }
+
     root.querySelector("#ep-unpin-top").addEventListener("click", () => {
         pinnedTop = null;
         refreshHierarchy(true);
@@ -830,6 +888,9 @@ export function createEditorPanel(root, h) {
                 } else {
                     setCollapsed(!root.classList.contains("collapsed"));
                 }
+                break;
+            case "toggle-msgs":
+                setMessagesCollapsed(!msgPanel.classList.contains("collapsed"));
                 break;
             default: break;
         }

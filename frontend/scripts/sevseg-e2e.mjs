@@ -138,7 +138,8 @@ const step = (name, pass, detail) => {
     console.log(`${pass ? "PASS" : "FAIL"}  ${name}  ${detail ?? ""}`);
 };
 
-await page.goto("http://127.0.0.1:8000/", { waitUntil: "domcontentloaded", timeout: 30000 });
+const BASE = process.argv[2] || "http://127.0.0.1:8000/";
+await page.goto(BASE, { waitUntil: "domcontentloaded", timeout: 30000 });
 await page.waitForFunction(() => window.__cyclone && document.querySelector("#board-host canvas"), { timeout: 30000 });
 await wait(2000);
 

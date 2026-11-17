@@ -299,6 +299,7 @@ function initComponents() {
             saveCollapsedPref(RIGHT_COLLAPSED_KEY, collapsed);
             resizeBoardSoon();
         },
+        onResized: () => resizeBoardSoon(),
         log: (t, l) => bottom.log(t, l),
     });
 

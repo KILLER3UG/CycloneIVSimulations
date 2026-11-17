@@ -123,6 +123,21 @@ try {
         defaulted && plan.valid.length >= 4 && plan.errors.length === 0,
         JSON.stringify(plan),
     );
+    await page.screenshot({ path: join(OUT, "buzz1-pinplan.png") });
+
+    // QSF export -> import round-trip (real UI functions)
+    const qsf = await page.evaluate(() => window.__cyclone.sidebar.getPinPlan().qsfText || "");
+    const qsfBack = await page.evaluate((text) => {
+        window.__cyclone.sidebar.importQsfText(text, "buzz1.qsf");
+        const p = window.__cyclone.sidebar.getPinPlan();
+        return { ok: (p.validation?.errors || []).length === 0, valid: [...(p.validation?.validByNode || new Map())] };
+    }, qsf);
+    try { writeFileSync(join(OUT, "buzz1.qsf"), qsf); } catch { /* ignore */ }
+    step(
+        "QSF export/import round-trip",
+        qsf.includes("PIN_110") && qsfBack.ok && qsfBack.valid.length >= 4,
+        `${qsfBack.valid.length} assignments, ${qsf.split(/\r?\n/).length} lines`,
+    );
 
     // 1 — compile (real click => AudioContext resume)
     await page.click("#ep-run");
@@ -205,7 +220,54 @@ try {
     );
     await page.screenshot({ path: join(OUT, "buzz1-released-silent.png") });
 
-    // 5 — mute control exists and persists
+    // 5 — right sidebar is resizable (drag the left-edge handle)
+    const before = await page.evaluate(() => {
+        const r = document.querySelector(".ep-resizer")?.getBoundingClientRect();
+        return { x: r ? r.x + 2 : 0, y: r ? r.y + 200 : 0, w: document.getElementById("right").getBoundingClientRect().width };
+    });
+    if (before.x) {
+        await page.mouse.move(before.x, before.y);
+        await page.mouse.down();
+        await page.mouse.move(before.x - 110, before.y, { steps: 6 });
+        await page.mouse.up();
+    }
+    await wait(250);
+    const resized = await page.evaluate(() => ({
+        w: document.getElementById("right").getBoundingClientRect().width,
+        css: getComputedStyle(document.documentElement).getPropertyValue("--right-w").trim(),
+    }));
+    step("right sidebar drag-resizes", resized.w > before.w + 40, `before=${before.w.toFixed(0)} after=${resized.w.toFixed(0)} var=${resized.css}`);
+    await page.screenshot({ path: join(OUT, "buzz1-sidebar-resized.png") });
+
+    // 6 — Messages panel collapses to its summary
+    const msgs = await page.evaluate(() => {
+        const btn = document.querySelector('[data-act="toggle-msgs"]');
+        if (!btn) return null;
+        btn.click();
+        const panel = document.querySelector("#ep-messages");
+        const list = document.querySelector(".ep-msg-list");
+        return {
+            collapsed: panel.classList.contains("collapsed"),
+            hidden: getComputedStyle(list).display === "none",
+        };
+    });
+    step("messages panel collapsible", Boolean(msgs?.collapsed && msgs.hidden), JSON.stringify(msgs));
+    await page.evaluate(() => document.querySelector('[data-act="toggle-msgs"]')?.click());
+
+    // 7 — whole right sidebar collapses/expands (canvas reflows)
+    await page.evaluate(() => document.querySelector('[data-act="collapse"]')?.click());
+    await wait(350);
+    const isCollapsed = await page.evaluate(() => document.getElementById("right").classList.contains("collapsed"));
+    step("right sidebar collapses", isCollapsed);
+    await page.screenshot({ path: join(OUT, "buzz1-sidebar-collapsed.png") });
+    await page.evaluate(() => document.querySelector('[data-act="collapse"]')?.click());
+    await wait(350);
+    const isExpanded = await page.evaluate(() => !document.getElementById("right").classList.contains("collapsed"));
+    step("right sidebar expands", isExpanded);
+    await page.screenshot({ path: join(OUT, "buzz1-sidebar-expanded.png") });
+    await page.screenshot({ path: join(OUT, "buzz1-messages-expanded.png") });
+
+    // 8 — mute control exists and persists
     const mute = await page.evaluate(async () => {
         const before = window.__cyclone.audio.state().muted;
         window.__cyclone.audio.setMuted(!before);

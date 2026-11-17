@@ -10,12 +10,16 @@ No wall-clock intervals are used anywhere in the assertions.
 """
 from __future__ import annotations
 
+import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
 
+from backend.ghdl_tool import GhdlNotFoundError, GhdlTool
 from backend.peripherals import decode_buzzer
 from backend.simulator import SimulationRequest, Simulator
+from backend.vcd_parser import parse_vcd
 
 ROOT = Path(__file__).resolve().parents[1]
 BUZZ1 = ROOT / "examples" / "buzz1.vhd"
@@ -164,6 +168,83 @@ def test_buzz1_both_buttons_are_identical(sim: Simulator):
         buzzer = result["peripherals"]["buzzer"]
         assert buzzer["frequency"] == 800, (port, buzzer)
         assert buzzer["duty"] == pytest.approx(0.5, abs=0.02)
+
+
+def test_buzz1_matches_raw_ghdl(sim: Simulator, tmp_path):
+    """Independent cross-check: backend pipeline vs raw GHDL + parse_vcd.
+
+    Both runs use the same design, clock (20 ns) and inputs (btn1 held low,
+    btn2 open). The buzzer transition timestamps must be identical.
+    """
+    try:
+        ghdl = GhdlTool()
+    except GhdlNotFoundError as exc:
+        pytest.skip(f"GHDL not available: {exc}")
+
+    tb = """
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+entity tb_buzz1 is
+end tb_buzz1;
+architecture rtl of tb_buzz1 is
+    signal clk     : STD_LOGIC := '0';
+    signal btn1    : STD_LOGIC := '0';
+    signal btn2    : STD_LOGIC := '1';
+    signal buzzerb : STD_LOGIC;
+begin
+    clk <= not clk after 10 ns;  -- 50 MHz
+    uut: entity work.buzz1
+        port map (clk => clk, btn1 => btn1, btn2 => btn2, buzzerb => buzzerb);
+end rtl;
+"""
+    workdir = Path(tempfile.mkdtemp(prefix="cyclone_buzz_diff_"))
+    try:
+        design = workdir / "buzz1.vhd"
+        tb_file = workdir / "tb_buzz1.vhd"
+        design.write_text(BUZZ1.read_text(encoding="utf-8"), encoding="utf-8")
+        tb_file.write_text(tb, encoding="utf-8")
+        work = workdir / "work"
+        work.mkdir()
+        analyze = ghdl.analyze([design, tb_file], work)
+        assert analyze.ok, analyze.output
+        elaborate = ghdl.elaborate("tb_buzz1", work)
+        assert elaborate.ok, elaborate.output
+        vcd = workdir / "raw.vcd"
+        run = ghdl.run("tb_buzz1", work, vcd, 3_900_000)
+        assert run.ok, run.output
+        data = parse_vcd(str(vcd))
+        raw = next(s for s in data.signals if s.name.lower() == "buzzerb")
+        raw_edges = [(float(t), int(v) & 1) for t, v in raw.transitions]
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+    result = sim.simulate(
+        SimulationRequest.from_dict(
+            {
+                "vhdl": BUZZ1.read_text(encoding="utf-8"),
+                "top": "buzz1",
+                "duration": 3_900_000,
+                "clockPeriod": 20,
+                "resetCycles": 0,
+                "compactBoard": True,
+                "maxCycles": 64,
+                "stimuli": [
+                    {"port": "btn1", "kind": "constant", "value": 0},
+                    {"port": "btn2", "kind": "constant", "value": 1},
+                ],
+            }
+        )
+    )
+    assert result["ok"], result.get("errors")
+    backend_edges = [(float(t), int(v)) for t, v in result["peripherals"]["buzzer"]["edges"]]
+
+    # Same number of transitions, same levels, timestamps within one clock.
+    assert len(backend_edges) == len(raw_edges), (backend_edges[:6], raw_edges[:6])
+    for (bt, bv), (rt, rv) in zip(backend_edges, raw_edges):
+        assert bv == rv
+        assert abs(bt - rt) <= 20.0, (bt, rt)
+    assert result["peripherals"]["buzzer"]["frequency"] == 800
+    assert result["peripherals"]["buzzer"]["cyclesPerPeriod"] == pytest.approx(62_500.0)
 
 
 def test_buzz1_idle_is_silent(sim: Simulator):
