@@ -82,6 +82,50 @@ STOP 1B fixed the last 5 baseline failures (and 4 stale Verilog expectations):
   all PASS; uninstall fully removes the app directory via the POSTUNINSTALL
   hook and leaves no `cyclone-backend.exe`/`ghdl.exe` behind)
 
+## STOP 1C — header controls + schematic fixes
+
+**All four header controls now silence the buzzer immediately** (oscillator
+gain → 0, countdown timer cancelled, badge → Silent) — `transport-controls-e2e.mjs`,
+all PASS:
+
+| Control | Verified behaviour |
+| --- | --- |
+| **Power Off** | gain 0, badge Silent, SP1 ring stops, LEDs/7-seg off, board unprogrammed; **Power On** reloads the idle state (keys open = '1', D1 lit) |
+| **Pause** | gain 0 immediately, tone silenced; Resume restores it |
+| **Stop** | gain 0, countdown cancelled, board returned to idle |
+| **Reset** | countdown aborted, gain 0, badge Silent (no 1 s wait) |
+
+Also fixed in this pass:
+
+- **Generic countdown detector** — pure register-slope analysis, no signal-name
+  filter; proven with `hold_window` (no `cnt`/`count` substring) at `step = 2`
+  in both the backend and frontend unit tests, and with
+  `tests/qa/designs/board/buzz_4tone.vhd` (renamed `cnt_delay`/`gate_en`/
+  `half_period`, 25 M cycles = 0.5 s, 500/800/1000/1600 Hz).
+- **LM75** — temperature register is 9-bit (`round(T*2) << 7`), so 25.0 °C reads
+  **0x1900** (was 0x3200); Thyst/Tos writes; behavioural OS comparator output
+  (the A2.2 OS pin 3 has no net). `PR-02`/`SPEC-07` updated.
+- **AT24C08** — block select across all four blocks (`0x50`–`0x53`) covered by
+  `OD-05`.
+- **LED / 7-seg dual labels** — `board.json`, the Pin Planner and the 3D board
+  now show both namings: `PIN_87 = LED[0] / D1 / net LED4` …
+  `PIN_84 = LED[3] / D4 / net LED1`, and the digits carry `R46`–`R49` +
+  `D1` (leftmost) … `D4` (rightmost).
+- **PIN_24** is a dedicated input-only clock pin (Output/InOut rejected);
+  **PIN_111** added as P1 header I/O; **PIN_101** (VGA_HSYNC/nCEO) stays an
+  output.
+- **Diagnostics** — GHDL’s cryptic `missing ";" at end of architecture` now
+  appends “a ';' is missing at the end of the previous statement (check the
+  line above it)”.
+- **Non-ASCII lint** — invisible copy-paste characters (non-breaking spaces,
+  smart quotes, dashes) are reported with their exact line/column instead of a
+  cryptic parser error.
+
+Full suite: **231/231 passed, 149 unit tests** (`full-suite-231.log`).
+`board-matrix.mjs` (extra harness) is 12/16 — the four failures are its DIP-walk
+helper racing the re-simulation lag, not board behaviour (M4a/M4b/M6/M7b/M9/M10
+cover those paths and pass).
+
 ## STOP 1B — generic countdown (no signal-name hardcoding)
 
 `_detect_down_counter` (backend) and `detectDownCounter` (frontend) measure the
