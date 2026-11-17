@@ -53,6 +53,51 @@ cd .. && python tests/run_all.py
 ## Full-suite result
 
 ```
+Units: 140 passed (pytest tests/)
+231/231 passed
+```
+
+STOP 1B fixed the last 5 baseline failures (and 4 stale Verilog expectations):
+
+| ID | Fix |
+| --- | --- |
+| IN-02 / VER-01 | Verilog is a supported feature — tests assert compile+simulate |
+| IN-10 / IN-12 | Verilog/mixed-language file:line diagnostics |
+| CLK-08 | X/U documented (no faked power-up 0) |
+| OUT-13 | combinational-loop lint (`backend/lint.py`) |
+| BLK-01 / BLK-02 / CKM-04 / IN-11 | behavioural `altpll` model; `altsyncram` stays rejected |
+| ENG-01B | Export VCD button (`frontend/src/vcdExport.js`) |
+| ENG-10 | switch click auto re-run asserted |
+
+## STOP 1B — generic countdown (no signal-name hardcoding)
+
+`_detect_down_counter` (backend) and `detectDownCounter` (frontend) measure the
+**signed slope of every internal integer signal** — no name filter. The longest
+run of the dominant decrement gives `step`, and `cycles = terminal / step + 1`
+(the load cycle is part of the note). The longest timer wins, so any student
+naming works.
+
+Proven with `tests/qa/designs/board/buzz_4tone.vhd` — renamed signals
+(`cnt_delay`, `gate_en`, `half_period`), 25,000,000-cycle (0.5 s) timer, and
+4 keys → 500 / 800 / 1000 / 1600 Hz. Tests: `test_buzz_4tone_*` in
+`tests/test_buzzer.py`.
+
+## STOP 1B artifacts
+
+| File | Proves |
+| --- | --- |
+| `partcd-newfile.png` | new file defaults to `.vhd` + entity/architecture template |
+| `partcd-undo.png` | delete + Undo restores the file and its pin mappings |
+| `partcd-top-dep.png` | Set as Top-Level + automatic dependency inclusion (Files: 2) |
+| `partcd-validation.png` | duplicate / nonexistent / direction-conflict errors |
+| `partcd-board-closeup.png` / `-iso.png` | 3D board: QFP, 7-seg, keys, LEDs, buzzer, DIP, silkscreen |
+| `buzz1-sp1-ring.png` | SP1 buzzer with the active pulse ring |
+| `partcd-e2e.log` | all Part C/D checks PASS |
+| `full-suite-231.log` | **231/231 passed**, 140 unit tests |
+
+## Full-suite result (STOP 1, superseded)
+
+```
 Units: 129 passed (pytest tests/)
 226/231 passed
 FAILED: CLK-08, OUT-13, BLK-02, ENG-01B, ENG-10

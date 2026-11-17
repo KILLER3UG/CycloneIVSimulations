@@ -16,15 +16,15 @@ from harness import (
 # ---------------------------------------------------------------------------
 
 
-@case("BLK-01", "5", "ALTPLL instantiation is rejected clearly", "VHDL",
-      "Unbound altpll is an error naming the component, not a silent U output")
+@case("BLK-01", "5", "Unsupported Altera megafunction is rejected clearly", "VHDL",
+      "Unbound altsyncram is an error naming the component, not a silent U output")
 def blk_01() -> str:
-    result = run("blocks.vhd", top="altpll_top", duration=50, resetCycles=0)
+    result = run("blocks.vhd", top="altsyncram_top", duration=50, resetCycles=0)
     check(not result["ok"],
-          f"ALTPLL elaborated with outputs {(result.get('waveforms') or {}).get('final')}")
+          f"altsyncram elaborated with outputs {(result.get('waveforms') or {}).get('final')}")
     text = (str(result.get("errors")) + result.get("logs", "")).lower()
-    check("altpll" in text and "bound" in text, f"unclear error: {text[:200]}")
-    return "altpll not bound (clear error)"
+    check("altsyncram" in text and "bound" in text, f"unclear error: {text[:200]}")
+    return "altsyncram not bound (clear error)"
 
 
 @case("BLK-02", "5", "ALTPLL output frequency and locked signal", "VHDL",

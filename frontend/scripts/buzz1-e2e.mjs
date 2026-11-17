@@ -177,6 +177,11 @@ try {
         JSON.stringify(held),
     );
     await page.screenshot({ path: join(OUT, "buzz1-hold-800hz.png") });
+    // SP1 close-up with the active pulse ring
+    await page.evaluate(() => window.__cyclone.board.focusComponent("SP1"));
+    await wait(800);
+    await page.screenshot({ path: join(OUT, "buzz1-sp1-ring.png") });
+    await page.evaluate(() => window.__cyclone.board.setPreset("iso"));
 
     // 3 — release KEY1 -> 1.0 s note, then silent. Wait for the refresh's new
     // buzzer object first (the 800 Hz from the hold is still current).

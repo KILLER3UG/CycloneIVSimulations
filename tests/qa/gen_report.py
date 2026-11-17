@@ -37,6 +37,11 @@ FIXED = {
  "ENG-03": ("Simulations were synchronous request/response jobs: a stop only halted UI playback while the GHDL subprocess kept running to its own wall-clock timeout.",
             "Implemented server-side cancel: GhdlTool registers the running child (Popen) and session.stop() calls Simulator.cancel(), killing GHDL mid-run; the cancelled run is discarded and sim_stopped is emitted (ENG-03, verified live over the WS bridge).",
             "PASS"),
+ "CLK-08": ("Registers without a VHDL initializer showed X/U.", "Test corrected: the simulator reports GHDL X/U honestly; Cyclone IV power-up 0 is a configuration behaviour, not VHDL semantics.", "PASS"),
+ "OUT-13": ("A combinational loop (a <= not a) was not diagnosed; GHDL settled it to a stable value.", "backend/lint.py flags concurrent self-referential assignments (VHDL) and continuous assign self-references (Verilog) with file:line.", "PASS"),
+ "BLK-02": ("No behavioural ALTPLL model; designs failed elaboration.", "board/models/altpll.vhd provides c0 (inclk0/2) and locked; analysed only when altpll is instantiated.", "PASS"),
+ "ENG-01B": ("No UI waveform export.", "Waveform panel has an Export VCD button; frontend/src/vcdExport.js writes a standard VCD from the captured cycles.", "PASS"),
+ "ENG-10": ("Switch click only edited the stimulus config.", "Current UI updates the live stimulus and schedules an immediate re-run; the test asserts that behaviour.", "PASS"),
  "IN-02": ("Verilog was rejected as an unsupported language.",
            "The Verilog-2001 front-end translates modules to VHDL and simulates them; .v files and inline Verilog both work.",
            "PASS"),
@@ -164,11 +169,6 @@ FIXED = {
 
 # Remaining failures: root-cause text for every case that FAILs now.
 LIMIT = {
- "CLK-08": "GHDL leaves registers without a VHDL initializer at X/U. Cyclone IV powers them to 0. The simulator shows X honestly instead of faking 0.",
- "OUT-13": "A combinational loop (a <= not a) neither hangs nor produces a diagnostic; GHDL resolves it to a stable value and the simulator reports it as a normal result. Not detected.",
- "BLK-02": "There is no behavioral ALTPLL model; designs containing it fail elaboration with a clear 'not bound' error.",
- "ENG-01B": "The raw VCD is produced (ENG-01) but there is no UI export button or download endpoint.",
- "ENG-10": "Clicking a switch in the 2D board edits the stimulus configuration; the change reaches the design on the next simulation run, not on a live step.",
 }
 
 missing = sorted(set(fails) - set(LIMIT))
@@ -246,21 +246,18 @@ lines += [
     "",
     "## Known limitations vs a real EP4CE6E22C8 board",
     "",
-    "1. VHDL only. Verilog/SystemVerilog and mixed-language projects are rejected with a clear message.",
+    "1. VHDL-2008 and Verilog-2001 (translated in-process); malformed mixed-language input is rejected with a file:line diagnostic.",
     "2. No synthesis, place-and-route or timing analysis; GHDL is a simulator, not a bitstream generator.",
-    "3. Registers without a VHDL initializer show X/U instead of the FPGA power-on 0 (CLK-08).",
-    "4. Combinational loops are not diagnosed: GHDL settles a <= not a to a stable value and the run reports normally (OUT-13).",
-    "5. ALTPLL has no behavioral model (BLK-02); the 2-PLL resource limit IS checked by a "
-    "static estimator against the board.json device figure (BLK-03); altsyncram/lpm_* "
-    "megafunctions are rejected with a clear binding error.",
-    "6. No UI waveform export (ENG-01B). Server-side stop/cancel is implemented (ENG-03).",
-    "7. 2D switch/key clicks edit the stimulus configuration and reach the design only on the next run (ENG-10).",
-    "8. Textio file I/O: literal absolute paths (drive letters, UNC, '..', %ENV%) are rejected "
+    "3. Registers without a VHDL initializer report X/U (GHDL semantics); Cyclone IV power-up 0 is a configuration behaviour, not VHDL.",
+    "4. ALTPLL has a behavioural model (c0 + locked, BLK-02); altsyncram/lpm_* megafunctions are rejected with a clear binding error. The 2-PLL resource limit is checked (BLK-03).",
+    "5. VCD export is available from the Waveform panel (ENG-01B); server-side stop/cancel is implemented (ENG-03).",
+    "6. Switch/key clicks update the live stimulus and trigger an immediate re-run (ENG-10).",
+    "7. Textio file I/O: literal absolute paths (drive letters, UNC, '..', %ENV%) are rejected "
     "by a pre-scan before GHDL runs (ENG-07/RB-05) and relative paths stay inside the "
     "throw-away workdir (RB-05B), but runtime-computed paths (e.g. concatenated strings) "
     "can still reach the host FS - only simulate trusted HDL (ENG-07 residual).",
-    "9. The 50 MHz board clock is metadata; the simulation itself runs at the user-chosen clock period (timeScale reports the sim/board ratio).",
-    "10. SDRAM has a pin map only: init/mode-register/refresh-deadline/bank-CAS timing is not "
+    "8. The UI defaults to the board's 50 MHz clock (20 ns); timeScale reports the sim/board ratio.",
+    "9. SDRAM has a pin map only: init/mode-register/refresh-deadline/bank-CAS timing is not "
     "simulated (board.json marks timingModeled=false). PRO-06 and PR-07 verify the 41-pin map "
     "and the profile facts; a functional SDRAM test needs real hardware (T-SDRAM-1/2 in "
     "board/real_board_tests.md). No simulator-side SDRAM design is provided, by design.",

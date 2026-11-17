@@ -274,12 +274,12 @@ def in_10() -> str:
 
 
 @case("IN-11", "1", "Unsupported Altera primitive gives a clear error", "VHDL",
-      "Error names the unbound Altera megafunction (altpll/altsyncram)")
+      "Error names the unbound Altera megafunction (altsyncram/lpm_*)")
 def in_11() -> str:
-    result = run("blocks.vhd", top="altpll_top", duration=50)
-    check(not result["ok"], "ALTPLL design elaborated successfully")
+    result = run("blocks.vhd", top="altsyncram_top", duration=50)
+    check(not result["ok"], "altsyncram design elaborated successfully")
     message = (errors_text(result) + " " + result.get("logs", "")).lower()
-    check("altpll" in message or "not bound" in message or "unbound" in message,
+    check("altsyncram" in message or "not bound" in message or "unbound" in message,
           f"error does not identify the unsupported primitive: {message[:300]}")
     return message[:240]
 

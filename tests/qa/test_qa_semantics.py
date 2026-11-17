@@ -484,16 +484,16 @@ end architecture;
     return f"clk_a {a_edges} edges vs clk_b {b_edges} edges (3:1), both counters advanced"
 
 
-@case("CKM-04", "21", "PLL: no behavioral model — clear error, documented N/A", "VHDL",
-      "altpll is rejected with a clear unbound-component error (no PLL model by design)")
+@case("CKM-04", "21", "PLL: behavioural model produces c0 and locked", "VHDL",
+      "altpll model: c0 toggles, locked=1; no jitter/lock-time claim")
 def ckm_04() -> str:
     from harness import run
     result = run("blocks.vhd", top="altpll_top", duration=50, resetCycles=0)
-    check(not result.get("ok"), "altpll elaborated without a model — unexpected")
-    text = (errors_text(result) + " " + str(result.get("logs", ""))).lower()
-    check("altpll" in text and "bound" in text, f"unclear error: {text[:200]}")
-    return ("documented-N/A: no behavioral PLL model; altpll rejected clearly "
-            f"({errors_text(result)[:90]})")
+    check(result.get("ok"), f"altpll model failed: {errors_text(result)[:200]}")
+    locked = value(result, "locked")
+    c0 = value(result, "c0")
+    check(locked == 1, f"locked={locked} (expected 1)")
+    return f"c0={c0}, locked={locked} (behavioural model; no jitter/lock time)"
 
 
 # ---------------------------------------------------------------------------
