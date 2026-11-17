@@ -167,9 +167,12 @@ end architecture rtl;
     image = waveform["boardImage"]
     assert len(image["pov"]) == 32
     # tube 0 shows a-g, dp (SEG7) is undriven (weak pull-up = off); others dark
-    assert image["pov"][0:8] == [1, 1, 1, 1, 1, 1, 1, 0]
-    assert image["pov"][8:32] == [0] * 24
+    assert image["povBits"][0:8] == [1, 1, 1, 1, 1, 1, 1, 0]
+    assert image["povBits"][8:32] == [0] * 24
+    # static (non-multiplexed) drive -> 100% duty on the lit segments
+    assert image["pov"][0:7] == [1.0] * 7
     assert image["digits"] == [1, 0, 0, 0]
+    assert image["scanHz"] == 0.0
 
 
 def test_compact_board_image_multiplexed(simulator):
@@ -191,10 +194,67 @@ def test_compact_board_image_multiplexed(simulator):
     assert result["ok"], result.get("errors")
     image = result["waveforms"]["boardImage"]
     assert result["waveforms"].get("cycles", []) == []
-    tubes = [tuple(image["pov"][d * 8 : d * 8 + 8]) for d in range(4)]
+    bits = image["povBits"]
+    tubes = [tuple(bits[d * 8 : d * 8 + 8]) for d in range(4)]
     # four distinct, non-empty tube patterns -> persistence of vision
     assert len(set(tubes)) == 4
     assert all(any(t) for t in tubes)
+    # A3: 1-of-4 multiplexing -> each lit segment is on ~25% of its tube's
+    # enabled time (duty-cycle brightness, not binary).
+    duty = image["pov"]
+    for d in range(4):
+        lit = [duty[d * 8 + b] for b in range(8) if bits[d * 8 + b]]
+        assert lit, f"tube {d} has no lit segments"
+        assert all(0.2 <= v <= 0.3 for v in lit), (d, lit)
+    assert image["scanHz"] > 0
+
+
+def test_board_image_ghosting_without_blanking(simulator):
+    """A3: digit select and segments changing on the same edge bleed.
+
+    Without dead-time blanking the new segment pattern appears on the tube
+    that was selected for the overlap sample. The image must record those
+    ghost samples instead of hiding them.
+    """
+    source = """
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.NUMERIC_STD.ALL;
+entity seg_ghost is
+    port (
+        clk : in  STD_LOGIC;
+        seg : out STD_LOGIC_VECTOR(6 downto 0);
+        dig : out STD_LOGIC_VECTOR(3 downto 0)
+    );
+end entity seg_ghost;
+architecture rtl of seg_ghost is
+    signal cnt : unsigned(1 downto 0) := (others => '0');
+begin
+    process(clk)
+    begin
+        if rising_edge(clk) then cnt <= cnt + 1; end if;
+    end process;
+    dig <= "1110" when cnt = "00" else
+           "1101" when cnt = "01" else
+           "1011" when cnt = "10" else
+           "0111";
+    with cnt select seg <= "0000000" when "00",
+                          "1111111" when "01",
+                          "0101010" when "10",
+                          "1010101" when others;
+end architecture rtl;
+"""
+    result = simulator.simulate(
+        SimulationRequest.from_dict(
+            {"vhdl": source, "duration": 120, "compactBoard": True, "maxCycles": 40}
+        )
+    )
+    assert result["ok"], result.get("errors")
+    image = result["waveforms"]["boardImage"]
+    assert image["ghosts"], "expected ghost samples when digits + segments change together"
+    for d, bit, t, intensity in image["ghosts"][:20]:
+        assert 0 <= d < 4 and 0 <= bit < 8 and t >= 0
+        assert 0 < intensity <= 0.25
 
 
 def test_compact_board_image_led_polarity(simulator):
@@ -349,7 +409,7 @@ def test_modular_multi_file_sevseg(simulator, reverse_order):
     assert result["ok"], result.get("errors")
     assert result["entity"]["name"].lower() == "sevseg"
     assert "sevseg" in [e.lower() for e in result.get("entities", [])]
-    pov = result["waveforms"]["boardImage"]["pov"]
+    pov = result["waveforms"]["boardImage"]["povBits"]
     tubes = [tuple(pov[d * 8 : d * 8 + 8]) for d in range(4)]
     assert tubes == _EXPECTED_5678_POV
 
@@ -370,7 +430,7 @@ def test_modular_single_file_top_down_sevseg(simulator):
     )
     assert result["ok"], result.get("errors")
     assert result["entity"]["name"].lower() == "sevseg"
-    pov = result["waveforms"]["boardImage"]["pov"]
+    pov = result["waveforms"]["boardImage"]["povBits"]
     tubes = [tuple(pov[d * 8 : d * 8 + 8]) for d in range(4)]
     assert tubes == _EXPECTED_5678_POV
 

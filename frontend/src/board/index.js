@@ -21,6 +21,7 @@ import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 
 import { PCB_OUTLINE, LAYOUT, buildPinIndex, SEG_GLYPHS } from "./layout.js";
+import { brightness, ghostOverlay, isInstantaneousScan, normalizePov } from "./displayModel.js";
 import { createMaterials, setupEnvironment, setupLights, applyTheme } from "./materials.js";
 import { buildPCB } from "./pcb.js";
 import { buildFPGA } from "./fpga.js";
@@ -82,6 +83,17 @@ export class Board3D {
             };
         }
         this._photo = null;
+        // A3 display model: time-weighted duty per (tube, segment) and the
+        // measured full-scan refresh rate. Everything is derived from
+        // simulated nanoseconds — never from frame counts.
+        this._dutyLit = new Float64Array(32);
+        this._dutyTotal = 0;
+        this._lastCycleTime = null;
+        this._lastCycleDt = 0;
+        this._scanHz = 0;
+        // A3 ghosting: faint bleed on a tube when segments change on the same
+        // edge as its digit select (no dead-time blanking). Values are 0–0.25.
+        this._ghost = new Float32Array(32);
 
         this._initRenderer();
         this._initScene();
@@ -296,13 +308,10 @@ export class Board3D {
         for (let dig = 0; dig < 4; dig += 1) {
             for (let bit = 0; bit < 8; bit += 1) {
                 const i = dig * 8 + bit;
+                // Instantaneous scan phase. The rendered image is the
+                // time-weighted duty (segHold) computed in _updateIO, not this
+                // gate — a 25%-duty tube must read 25% bright, not 100%.
                 d.segTarget[i] = d.digitOn[dig] && d.segActive[bit] ? 1 : 0;
-                // Persistence of vision: a segment that was lit stays in the
-                // eye's integration window, so a multiplexed display reads as
-                // all digits lit at once — exactly like the real board. The
-                // hold decays while a capture streams and freezes when it
-                // ends (the board keeps showing its multiplexed image).
-                if (d.segTarget[i]) d.segHold[i] = 1;
             }
         }
     }
@@ -339,6 +348,17 @@ export class Board3D {
     applyCycle(values, { time } = {}) {
         if (!values || !this.io) return;
         this._cycleTime = time;
+        // Time-weighted duty accumulation (simulated ns, not wall time).
+        const t = Number(time);
+        let dt = 0;
+        if (Number.isFinite(t)) {
+            if (this._lastCycleTime !== null && t > this._lastCycleTime) {
+                dt = t - this._lastCycleTime;
+                this._dutyTotal += dt;
+            }
+            this._lastCycleTime = t;
+        }
+        this._lastCycleDt = dt;
         // Digit and segment pins are routed one at a time; recompute the
         // multiplexed target only ONCE after all pins are applied. Recomputing
         // mid-cycle would light transient (tube,segment) pairs from a half-updated
@@ -389,26 +409,39 @@ export class Board3D {
             });
         }
         if (this._displayDirty) this._recomputeDisplayTargets();
+        if (dt > 0) {
+            const d = this.io.display;
+            for (let i = 0; i < 32; i += 1) {
+                if (d.segTarget[i]) this._dutyLit[i] += dt;
+            }
+        }
         if (values.power !== undefined) this.setPower(!!values.power);
     }
 
     // Paint a compact board image (live input-change refresh). The backend
     // integrates the multiplexed display over the whole capture and returns
-    // the persistence-of-vision image plus the final LED/buzzer levels, so a
-    // switch flip repaints the board from a few hundred bytes instead of
-    // replaying tens of thousands of per-cycle samples.
+    // the **duty-cycle** POV image (plus scan rate and ghost samples) and the
+    // final LED/buzzer levels, so a switch flip repaints the board from a few
+    // hundred bytes instead of replaying tens of thousands of per-cycle samples.
     applyBoardImage(image) {
         if (!image || !this.io) return;
         const d = this.io.display;
         const pov = image.pov || [];
+        const bits = image.povBits || [];
+        this._scanHz = Number(image.scanHz) || 0;
+        this._ghost = ghostOverlay(image.ghosts);
+        // Normalized duty (≤1) so _updateIO can use the same lit/total ratio
+        // as the live cycle path without a second divide.
+        this._dutyTotal = 1;
+        const duty = normalizePov(pov, bits);
         for (let i = 0; i < 32; i += 1) {
-            const on = pov[i] ? 1 : 0;
+            this._dutyLit[i] = duty[i];
             // segHold is the rendered persistence-of-vision image; segCurrent is
             // snapped to it so the integrated image shows immediately. segTarget
             // is left as the instantaneous scan phase (the slow-scan check reads
             // it) — the POV never lives there.
-            d.segHold[i] = on;
-            d.segCurrent[i] = on;
+            d.segHold[i] = duty[i];
+            d.segCurrent[i] = duty[i];
         }
         // The POV already encodes which segments are lit per tube; keep every
         // tube enabled so nothing gates the image, and do NOT recompute targets
@@ -432,6 +465,7 @@ export class Board3D {
             this.io?.leds.forEach((l) => { l.target = 0; });
             const d = this.io?.display;
             if (d) { d.segTarget.fill(0); d.segHold.fill(0); }
+            this._resetDuty();
             if (this.io) this.io.buzzer.on = false;
         }
     }
@@ -451,6 +485,7 @@ export class Board3D {
         this.io.display.digitOn = [1, 1, 1, 1];
         this.io.display.segTarget.fill(0);
         this.io.display.segHold.fill(0);
+        this._resetDuty();
         this.io.buzzer.on = false;
         this._hideHighlight();
     }
@@ -464,6 +499,15 @@ export class Board3D {
         d.digitOn = [1, 1, 1, 1];
         d.segTarget.fill(0);
         d.segHold.fill(0);
+        this._resetDuty();
+    }
+
+    _resetDuty() {
+        this._dutyLit.fill(0);
+        this._dutyTotal = 0;
+        this._lastCycleTime = null;
+        this._lastCycleDt = 0;
+        this._ghost.fill(0);
     }
 
     // -------------------------------------------------------- interaction ----
@@ -803,19 +847,29 @@ export class Board3D {
             this.powerLed.glowMaterial.opacity = this.powerLed.level * 0.8;
         }
 
-        // 7-seg multiplexing: the rendered image is the persistence-of-vision
-        // hold (segHold), not the instantaneous gate (segTarget, kept for
-        // inspection/tests). The hold decays only while a capture streams;
-        // when the run ends it freezes — the board keeps showing its
-        // multiplexed image, like hardware does.
+        // 7-seg multiplexing (A3): the rendered image is the **time-weighted
+        // duty cycle** (lit ns / total ns) from the simulated capture, not a
+        // frame count or a binary "ever lit".
+        //   * scan >= 60 Hz  -> persistence of vision: every tube integrates
+        //     into a steady image at its duty brightness (25% for a 1-of-4 mux).
+        //   * scan < 60 Hz   -> no integration: show the instantaneous digit
+        //     state so the display visibly steps/flickers tube by tube.
         const d = io.display;
-        const holdDecay = this.running ? Math.exp(-dt / 0.8) : 1;
+        const instantaneous = isInstantaneousScan(this._scanHz);
         const scratch = this._segColor || (this._segColor = new THREE.Color());
         for (let i = 0; i < 32; i += 1) {
-            d.segHold[i] *= holdDecay;
-            const target = live ? d.segHold[i] : 0;
-            d.segCurrent[i] += (target - d.segCurrent[i]) * k;
-            const c = d.segCurrent[i];
+            if (instantaneous) {
+                const target = live ? d.segTarget[i] : 0;
+                d.segCurrent[i] += (target - d.segCurrent[i]) * (1 - Math.exp(-dt / 0.03));
+            } else {
+                const duty = this._dutyTotal > 0
+                    ? Math.min(1, this._dutyLit[i] / this._dutyTotal)
+                    : d.segHold[i];
+                d.segHold[i] = duty;
+                const target = live ? duty : 0;
+                d.segCurrent[i] += (target - d.segCurrent[i]) * k;
+            }
+            const c = brightness(d.segCurrent[i], this._ghost[i], live);
             const inst = d.segInst;
             scratch.setRGB(
                 DARK_COLOR.r + (LIT_COLOR.r - DARK_COLOR.r) * c,

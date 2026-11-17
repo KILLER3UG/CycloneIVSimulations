@@ -191,7 +191,19 @@ def map_board(
     # RZ-EasyFPGA A2.2 profile (LED/KEY/SEG/DIG/CLOCK_50/...), including the
     # textbook aliases (seven_seg->SEG, dtube->DIG, s1..s4->KEY bits, ...).
     # When strict_pins=True (Pin Planner mode), ONLY explicit pin assignments are applied.
-    port_width = {port.name: max(1, port.width or 1) for port in entity.ports}
+    # Port width: prefer the parsed width, but fall back to the declared
+    # range (left/right). Some legal spellings (e.g. uppercase
+    # STD_LOGIC_VECTOR) leave ``width`` unset; truncating those to one pin
+    # silently dropped every segment but a0 / every LED but led0.
+    def _port_width(port) -> int:
+        if getattr(port, "width", None):
+            return int(port.width)
+        left, right = getattr(port, "left", None), getattr(port, "right", None)
+        if left is not None and right is not None:
+            return abs(int(left) - int(right)) + 1
+        return 1
+
+    port_width = {port.name: max(1, _port_width(port)) for port in entity.ports}
     ports_with_pins: set = set()
     pins: Dict[str, List[str]] = {}
     qsf_lookup = {k.upper(): [str(p).upper() if p else "" for p in v] for k, v in (qsf_pins or {}).items() if v}
@@ -338,11 +350,23 @@ def board_image_from_model(model: "WaveformModel", board_map: "BoardMap") -> dic
     merge-join), so the whole ~20 MB cycle materialisation is skipped — a
     switch flip repaints the board from a few hundred bytes in a few ms.
 
-    Returns ``{"pov": [32], "digits": [4], "leds": [...], "buzzer": 0|1}``:
+    Returns ``{"pov": [32], "povBits": [32], "scanHz": float, "ghosts": [...],
+    "digits": [4], "leds": [...], "buzzer": 0|1}``:
 
-    * ``pov`` — for each of the four tubes and eight segments, whether the
-      segment was ever lit while its tube was selected over the capture (the
-      image the eye integrates on a multiplexed display).
+    * ``pov`` — for each of the four tubes and eight segments, the **duty
+      cycle** (0.0–1.0) of that segment being lit while its tube is selected
+      over the capture. A 25%-duty multiplexed digit therefore reads 0.25,
+      not a binary on/off — this is what makes the rendered brightness match
+      a real common-anode tube.
+    * ``povBits`` — the same image thresholded to 0/1 (ever lit), kept for
+      callers/tests that only care about presence.
+    * ``scanHz`` — full-scan refresh rate measured from digit-select rising
+      edges (0 when the display is static / has no digit port).
+    * ``ghosts`` — ``[digit, bit, t_ns, intensity]`` samples where the segment
+      lines and the digit select changed on the same clock edge. Without
+      dead-time blanking the new segments bleed onto the previously selected
+      tube for that overlap; ``intensity`` is overlap/digit-dwell (0–0.25), so
+      the simulator models a faint ghost instead of hiding it.
     * ``digits`` — the final digit-enable state (which tubes are selected).
     * ``leds`` / ``buzzer`` — the final steady-state output levels.
 
@@ -354,7 +378,8 @@ def board_image_from_model(model: "WaveformModel", board_map: "BoardMap") -> dic
     dig_active_low = bool(cfg.get("digitActiveLow", True))
     n_dig = int(cfg.get("count") or len(board_map.digits) or 4)
     n_seg = 8
-    pov = [0] * (n_dig * n_seg)
+    pov = [0.0] * (n_dig * n_seg)
+    pov_bits = [0] * (n_dig * n_seg)
 
     pins = board_map.pins or {}
     led_pin_idx = {str(p).upper(): i for i, p in enumerate(BOARD.get("leds", {}).get("pins", []))}
@@ -417,9 +442,15 @@ def board_image_from_model(model: "WaveformModel", board_map: "BoardMap") -> dic
     times = model.clock_times(limit=model.max_cycles)
     n = len(times)
     last_dig = [1] * n_dig if (seg_routes or dig_routes) else [0] * n_dig
+    scan_periods: List[float] = []
+    ghosts: List[List[float]] = []
+    seg_cycles = [[0] * n_seg for _ in range(n_dig)]
     if n and (seg_routes or dig_routes):
         needed_ports = {p for p, _, _ in seg_routes} | {p for p, _, _ in dig_routes}
         port_vals = {p: _values_at(model.signal(p), times, n) for p in needed_ports}
+        prev_dig: Optional[List[int]] = None
+        prev_seg: Optional[List[int]] = None
+        rise_at: Dict[int, float] = {}
         for i in range(n):
             seg_active = [0] * n_seg
             for port, src_bit, seg_idx in seg_routes:
@@ -435,13 +466,63 @@ def board_image_from_model(model: "WaveformModel", board_map: "BoardMap") -> dic
             if not any_dig and seg_routes:
                 dig_on = [1] * n_dig  # static display: all tubes share the lines
             last_dig = dig_on
+
+            # Ghosting without blanking: digit select and segment lines changed
+            # on the same sample, so the new segments bleed onto the tube that
+            # was selected. Recorded as a faint overlay (intensity below), NOT
+            # folded into the intended POV — otherwise a fast mux would make
+            # every tube show every segment.
+            if prev_dig is not None and prev_seg is not None:
+                if dig_on != prev_dig and seg_active != prev_seg:
+                    for d in range(n_dig):
+                        if not prev_dig[d]:
+                            continue
+                        for bit in range(n_seg):
+                            if seg_active[bit] and not prev_seg[bit]:
+                                if len(ghosts) < 200:
+                                    ghosts.append([d, bit, round(float(times[i]), 3)])
+
             for d in range(n_dig):
                 if not dig_on[d]:
                     continue
-                base = d * n_seg
                 for bit in range(n_seg):
                     if seg_active[bit]:
-                        pov[base + bit] = 1
+                        seg_cycles[d][bit] += 1
+
+            # Full-scan refresh: rising edge of each digit select.
+            for d in range(n_dig):
+                if dig_on[d] and (prev_dig is None or not prev_dig[d]):
+                    if d in rise_at:
+                        period = float(times[i]) - rise_at[d]
+                        if period > 0:
+                            scan_periods.append(period)
+                    rise_at[d] = float(times[i])
+            prev_dig = dig_on
+            prev_seg = seg_active
+
+    # Perceived brightness = segment lit time / FULL capture time. A 1-of-4
+    # multiplexed digit is enabled 25% of the refresh period, so its segments
+    # read 0.25 (steady, dimmer) — not 1.0. A static display reads 1.0.
+    denom = n
+    for d in range(n_dig):
+        base = d * n_seg
+        for bit in range(n_seg):
+            lit = seg_cycles[d][bit]
+            pov[base + bit] = round(lit / denom, 4) if denom else 0.0
+            pov_bits[base + bit] = 1 if lit else 0
+
+    scan_hz = round(1e9 / (sum(scan_periods) / len(scan_periods)), 3) if scan_periods else 0.0
+
+    # Ghost intensity = overlap / digit dwell. One clock period is the upper
+    # bound on the overlap when there is no dead-time blanking; relative to the
+    # digit's on-time this gives a faint bleed (25% at 4 cycles/digit, ~0% at
+    # slow scan rates), matching what the eye integrates.
+    if ghosts and n > 1:
+        clock_ns = float(times[1] - times[0])
+        scan_ns = (1e9 / scan_hz) if scan_hz else 0.0
+        dwell_ns = (scan_ns / n_dig) if scan_ns else clock_ns
+        intensity = round(min(0.25, clock_ns / dwell_ns), 4) if dwell_ns > 0 else 0.0
+        ghosts = [g + [intensity] for g in ghosts]
 
     # Final LED / buzzer levels (steady state at the end of the capture).
     final_vals = model.final_values()
@@ -463,7 +544,15 @@ def board_image_from_model(model: "WaveformModel", board_map: "BoardMap") -> dic
         if buzzer_port and buzzer_port in final_vals:
             buzzer = 1 if _as_int(final_vals.get(buzzer_port)) == 0 else 0
 
-    return {"pov": pov, "digits": last_dig, "leds": leds, "buzzer": buzzer}
+    return {
+        "pov": pov,
+        "povBits": pov_bits,
+        "scanHz": scan_hz,
+        "ghosts": ghosts,
+        "digits": last_dig,
+        "leds": leds,
+        "buzzer": buzzer,
+    }
 
 
 # ---------------------------------------------------------------------------
