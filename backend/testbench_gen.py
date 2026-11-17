@@ -126,11 +126,12 @@ class Stimulus:
     """Description of how an input port should be driven."""
 
     port: str
-    kind: str = "constant"  # constant | toggle | pulse | sequence
+    kind: str = "constant"  # constant | toggle | pulse | sequence | pulse_once
     value: Any = 0
     values: List[Any] = field(default_factory=list)
     period_cycles: int = 1
     pulse_cycles: int = 1
+    hold_cycles: int = 1
 
     def as_dict(self) -> dict:
         return {
@@ -140,6 +141,7 @@ class Stimulus:
             "values": list(self.values),
             "periodCycles": self.period_cycles,
             "pulseCycles": self.pulse_cycles,
+            "holdCycles": self.hold_cycles,
         }
 
 
@@ -181,6 +183,7 @@ def stimulus_from_dict(data: dict) -> Stimulus:
         values=list(data.get("values", []) or []),
         period_cycles=max(1, int(data.get("periodCycles", 1) or 1)),
         pulse_cycles=max(1, int(data.get("pulseCycles", 1) or 1)),
+        hold_cycles=max(1, int(data.get("holdCycles", data.get("pulseCycles", 1)) or 1)),
     )
 
 
@@ -618,6 +621,17 @@ def generate_testbench(entity: Entity, config: TestbenchConfig) -> str:
                 lines.append(f"            {signal_name} <= {_value_literal(port, value)};")
                 lines.append(f"            {_wait_cycles(max(1, stimulus.period_cycles), clock)}")
             lines.append("        end loop;")
+        elif stimulus.kind == "pulse_once":
+            # One press followed by a permanent release — used to model a key
+            # press+release without a multi-second simulation. The release edge
+            # starts the design's own countdown (e.g. buzz1's 1 s timer).
+            seq = list(stimulus.values) or [stimulus.value, 0]
+            first = seq[0]
+            second = seq[1] if len(seq) > 1 else 0
+            lines.append(f"        {signal_name} <= {_value_literal(port, first)};")
+            lines.append(f"        wait for {max(1, stimulus.hold_cycles)} * CLK_PERIOD;")
+            lines.append(f"        {signal_name} <= {_value_literal(port, second)};")
+            lines.append("        wait;")
         else:
             lines.append(f"        {signal_name} <= {_value_literal(port, stimulus.value)};")
             lines.append("        wait;")

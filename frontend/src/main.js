@@ -16,6 +16,8 @@ import { createStatsBlock } from "./ui/stats.js";
 import { createInteractions } from "./ui/interactions.js";
 import { dialog, toast, cheatSheet } from "./ui/toast.js";
 import { icon } from "./ui/icons.js";
+import { audio } from "./audio.js";
+import { detectDownCounter, measureBuzzer, noteSeconds } from "./buzzerModel.js";
 
 const store = createStore();
 const S = store.state;
@@ -154,6 +156,83 @@ function resizeBoardSoon() {
     setTimeout(() => board?._resize?.(), 60);
 }
 
+// --------------------------------------------------------------- buzzer ----
+let buzzerStopTimer = null;
+
+function clearBuzzerTimer() {
+    if (buzzerStopTimer) {
+        clearTimeout(buzzerStopTimer);
+        buzzerStopTimer = null;
+    }
+}
+
+function updateAudioBadge() {
+    const badge = $("tb-audio-badge");
+    if (badge) badge.textContent = audio.badge();
+    const btn = $("tb-mute");
+    if (btn) {
+        btn.innerHTML = icon(audio.muted ? "mute" : "volume");
+        btn.classList.toggle("muted", audio.muted);
+        btn.setAttribute("aria-pressed", String(audio.muted));
+        btn.title = audio.muted ? "Unmute buzzer (M)" : "Mute buzzer (M)";
+    }
+    const vol = $("tb-volume");
+    if (vol && document.activeElement !== vol) vol.value = String(Math.round(audio.volume * 100));
+}
+
+async function toggleMute() {
+    await audio.ensure();
+    audio.setMuted(!audio.muted);
+    updateAudioBadge();
+}
+
+// Start/refresh the tone from the cycle-accurate buzzer decode. The backend
+// measures edges in simulated ns; measureBuzzer converts them to 50 MHz cycles.
+function applyBuzzerAudio(per, clockNs) {
+    clearBuzzerTimer();
+    if (!per || typeof per !== "object") {
+        audio.silence();
+        updateAudioBadge();
+        return;
+    }
+    const m = measureBuzzer(per.edges, clockNs, per.activeLow !== false);
+    if (m.tone) {
+        audio.tone(m.frequency, m.duty).then(updateAudioBadge).catch(() => {});
+        log(`Buzzer: ${m.frequency} Hz (${m.cyclesPerPeriod} cycles/period, ${(m.duty * 100).toFixed(0)}% duty)`, "info");
+    } else {
+        audio.silence();
+        updateAudioBadge();
+        // Passive speaker + PNP high-side: a steady LOW is DC, not a tone.
+        if (per.tone) log(`Buzzer: ${per.frequency} Hz tone`, "info");
+    }
+    S.buzzer = { ...per, ...m };
+}
+
+// After the capture, schedule the 1 s countdown from the design's own loaded
+// down-counter (buzz1: sec_counter = 49,999,999 at release). No wall-clock
+// guessing and no multi-second GHDL run.
+function scheduleBuzzerStop(clockNs, countdown = null) {
+    if (!audio.active) return;
+    const b = S.buzzer || {};
+    if (b.level === 1) return; // already silent at the end of the capture
+    let found = countdown;
+    if (!found) {
+        const cycles = Array.from(cyclesMap.values()).sort((a, b2) => a.cycle - b2.cycle);
+        found = detectDownCounter(cycles, 1000);
+    }
+    if (!found) return; // no terminal count -> keep the tone until stop/next run
+    const secs = noteSeconds(found.terminal, clockNs);
+    if (secs > 0.02 && secs < 60) {
+        buzzerStopTimer = setTimeout(() => {
+            audio.silence();
+            updateAudioBadge();
+            buzzerStopTimer = null;
+            log(`Buzzer: ${found.name} expired -> silent`, "info");
+        }, secs * 1000);
+        log(`Buzzer: ${found.name} loaded ${found.terminal} cycles -> ${secs.toFixed(3)} s note`, "info");
+    }
+}
+
 function initComponents() {
     toolbar = createToolbar($("toolbar"), {
         onPower: togglePower,
@@ -166,11 +245,24 @@ function initComponents() {
         onFit: () => board?.fit?.(),
         onPreset: (p) => board?.setPreset?.(p),
         onTheme: toggleTheme,
+        onMute: toggleMute,
         onHelp: cheatSheet,
         onAbout: () => showAboutDialog(),
         onToggleLeft: () => toggleDrawer("left"),
         onToggleRight: () => toggleDrawer("right"),
     });
+
+    // Buzzer volume + persisted mute state.
+    const vol = $("tb-volume");
+    if (vol) {
+        vol.value = String(Math.round(audio.volume * 100));
+        vol.addEventListener("input", async () => {
+            await audio.ensure();
+            audio.setVolume(Number(vol.value) / 100);
+            updateAudioBadge();
+        });
+    }
+    updateAudioBadge();
 
     sidebar = createSidebar($("left"), {
         onFocus: (id) => {
@@ -508,9 +600,14 @@ function syncKeyStimulusAndUI(index, reason) {
     const targets = keyNetBindings[index] || [];
     for (const t of targets) {
         const p = S.entity?.ports?.find((x) => x.name === t.portName);
-        if ((p?.width || 1) > 1) {
+        const width = p?.width || 1;
+        if (width > 1) {
             const cur = editor.getStimulusValue(t.portName);
             editor.setStimulusValue(t.portName, closed ? (cur & ~(1 << t.bitOffset)) : (cur | (1 << t.bitOffset)));
+        } else if (reason === "released") {
+            // Model the release edge (not a permanent low): the design's own
+            // countdown starts here, e.g. buzz1's 1.0 s timer.
+            editor.setStimulusPulseOnce(t.portName, 1);
         } else {
             editor.setStimulusValue(t.portName, level);
         }
@@ -526,6 +623,7 @@ function syncKeyStimulusAndUI(index, reason) {
 
 function setPhysicalKeyPressed(index, pressed) {
     if (index < 0 || index >= 4) return;
+    if (pressed) audio.ensure().catch(() => {});
     if (keyHeldState[index] === Boolean(pressed)) return;
     keyHeldState[index] = Boolean(pressed);
     syncKeyStimulusAndUI(index, keyHeldState[index] ? "pressed" : "released");
@@ -651,6 +749,9 @@ function stopSession() {
     S.running = false;
     S.paused = false;
     board?.setRunning?.(false);
+    clearBuzzerTimer();
+    audio.silence();
+    updateAudioBadge();
 }
 
 function makeSession() {
@@ -701,6 +802,8 @@ function formatSummary({ topEntity, topFile, filesUsed, pinPlan, errCount, warnC
 async function compileAndProgram() {
     refreshing = false;
     S.refreshing = false;
+    // Compile is a user gesture — this is the right place to resume audio.
+    audio.ensure().catch(() => {});
     if (S.backendOk === false) {
         toast("Backend is offline — start it cleanly or retry connection", { kind: "error", timeout: 5000 });
         return;
@@ -878,6 +981,7 @@ function handleSessionMessage(msg) {
         case "sim_ready": {
             S.signals = msg.signals || [];
             S.totalCycles = msg.totalCycles || 0;
+            S.clockNs = Number(msg.clockNs) || 20;
             if (msg.board) {
                 S.compileBoard = { ...(S.compileBoard || {}), ...msg.board };
                 syncLivePinBindings();
@@ -901,7 +1005,7 @@ function handleSessionMessage(msg) {
                 toolbar.setStep(4, "active");
                 log(`Simulation running — ${S.totalCycles} cycles captured (${(S.simStats.targetSpeed / 1e6).toFixed(0)} MHz clock)`, "ok");
             }
-            applyPeripherals(msg.peripherals);
+            applyPeripherals(msg.peripherals, msg.clockNs);
             break;
         }
         case "cycle_batch": {
@@ -934,6 +1038,7 @@ function handleSessionMessage(msg) {
             else applyCycleToBoard({ values: final, time: S.simTimeNs });
             flushPendingUi();
             board?.setRunning?.(false);
+            scheduleBuzzerStop(Number(msg.clockNs) || S.clockNs || 20, msg.boardImage?.countdown);
             setStatus("idle");
             toolbar.setRunning(false, false);
             editor.setRunState(false, false);
@@ -987,6 +1092,9 @@ function handleSessionMessage(msg) {
             refreshing = false;
             S.refreshing = false;
             board?.setRunning?.(false);
+            clearBuzzerTimer();
+            audio.silence();
+            updateAudioBadge();
             flushPendingUi();
             setStatus("idle");
             toolbar.setRunning(false, false);
@@ -1069,7 +1177,7 @@ function stepSim(n) {
 }
 
 // ------------------------------------------------- peripherals (detail) --
-function applyPeripherals(per) {
+function applyPeripherals(per, clockNs = 20) {
     if (!per) return;
     if (per.uart) {
         S.uart = per.uart;
@@ -1085,8 +1193,7 @@ function applyPeripherals(per) {
         bottom.setLcd(per.lcd);
     }
     if (per.buzzer) {
-        S.buzzer = per.buzzer;
-        if (per.buzzer.tone) log(`Buzzer: ${per.buzzer.frequency} Hz tone`, "info");
+        applyBuzzerAudio(per.buzzer, clockNs);
     }
     if (per.eeprom) log("EEPROM dump available (AT24C08)", "info");
 }
@@ -1202,7 +1309,7 @@ async function init() {
 
     window.__cyclone = {
         board, state: S, api, compile: compileAndProgram, run: compileAndProgram,
-        stopSim, editor, sidebar, bottom,
+        stopSim, editor, sidebar, bottom, audio,
         pause: togglePause, resetSim, stepSim, toggleDip, setPhysicalKeyPressed,
     };
     log("Cyclone IV Studio ready — open a file, assign pins in Pin Planner, and press Compile (Ctrl+Enter).", "info");

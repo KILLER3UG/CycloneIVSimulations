@@ -394,7 +394,7 @@ export function suggestBoardDefaults(nodes, profile, existing = {}) {
             if (off < segPins.length) assign(node.nodeName, segPins[off]);
         } else if (node.direction !== "input" && /^(?:dig|digit|dtube|an|sel|tube)\d*$/.test(base)) {
             if (off < digPins.length) assign(node.nodeName, digPins[off]);
-        } else if (node.direction !== "input" && /^(?:buzzer|beep|fpga_?buzzer|spk)$/.test(base) && off === 0) {
+        } else if (node.direction !== "input" && /^(?:buzzerb?|beep|fpga_?buzzer|spk)(?:_?\d+)?$/.test(base) && off === 0) {
             assign(node.nodeName, b.buzzer?.pin);
         } else if (node.direction !== "input" && /^(?:uart_?txd?|txd|tx)$/.test(base) && off === 0) {
             assign(node.nodeName, b.uart?.pins?.UART_TXD);

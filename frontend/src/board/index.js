@@ -68,6 +68,7 @@ export class Board3D {
         this._fps = { frames: 0, last: performance.now(), value: 0 };
         this._tween = null;
         this._pulse = null;
+        this._buzzerRing = null;
         // Render throttle: the loop runs at display vsync (up to 165 Hz on
         // gaming monitors); rendering every vsync with bloom costs a full
         // CPU core. Cap to 60 fps while something is animating and drop to
@@ -903,16 +904,43 @@ export class Board3D {
             const targetY = ps.on ? ps.baseY : ps.baseY - 2.6;
             ps.cap.position.y += (targetY - ps.cap.position.y) * (1 - Math.exp(-dt / 0.06));
         }
-        // buzzer shiver
+        // buzzer shiver + pulse ring (A3/B4: visible + headless-testable)
         {
             const bz = io.buzzer;
+            if (bz.on && live) this._ensureBuzzerRing();
             if (bz.on && live && !this.deterministic) {
                 bz.phase += dt * 60;
                 bz.body.position.y = bz.baseY + Math.sin(bz.phase) * 0.05;
             } else {
                 bz.body.position.y += (bz.baseY - bz.body.position.y) * k;
             }
+            const ring = this._buzzerRing;
+            if (ring) {
+                const on = bz.on && live;
+                const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.012);
+                ring.material.opacity += ((on ? 0.30 + 0.35 * pulse : 0) - ring.material.opacity) * (1 - Math.exp(-dt / 0.05));
+                ring.scale.setScalar(1 + (on ? 0.10 * pulse : 0));
+                ring.visible = ring.material.opacity > 0.01;
+            }
         }
+    }
+
+    _ensureBuzzerRing() {
+        if (this._buzzerRing || !this.io?.buzzer || !this.boardGroup) return;
+        const p = this.io.buzzer.body.position;
+        const ring = new THREE.Mesh(
+            new THREE.RingGeometry(8.2, 9.6, 40),
+            new THREE.MeshBasicMaterial({
+                color: 0x66ccff, transparent: true, opacity: 0,
+                side: THREE.DoubleSide, depthWrite: false,
+            }),
+        );
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.set(p.x, p.y + 4.9, p.z);
+        ring.visible = false;
+        ring.renderOrder = 4;
+        this.boardGroup.add(ring);
+        this._buzzerRing = ring;
     }
 
     // ------------------------------------------------------------- dispose ----

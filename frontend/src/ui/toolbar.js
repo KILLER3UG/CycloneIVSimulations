@@ -30,6 +30,9 @@ export function createToolbar(root, h) {
                 ${icon("info")}<span id="status-text">Idle</span>
             </span>
             <button type="button" class="btn-version" data-act="about" id="tb-version" title="About Cyclone IV Studio &amp; Licenses" aria-label="About and licenses">v0.1.0</button>
+            <button class="icon-btn tb-audio" data-act="mute" id="tb-mute" title="Mute buzzer (M)" aria-label="Mute buzzer" aria-pressed="false">${icon("volume")}</button>
+            <span class="tb-audio-badge" id="tb-audio-badge" aria-live="polite">Silent</span>
+            <input type="range" id="tb-volume" class="tb-volume" min="0" max="100" step="1" value="55" aria-label="Buzzer volume" title="Buzzer volume" />
             <button class="icon-btn" data-act="theme" aria-label="Toggle dark theme" title="Theme (T)">${icon("moon")}</button>
             <button class="icon-btn" data-act="help" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">${icon("help")}</button>
             <button class="icon-btn only-narrow" data-act="right" aria-label="Toggle editor panel" title="Editor">${icon("file")}</button>
@@ -105,6 +108,7 @@ export function createToolbar(root, h) {
             case "reset": h.onReset?.(); break;
             case "step": h.onStep?.(); break;
             case "theme": h.onTheme?.(); break;
+            case "mute": h.onMute?.(); break;
             case "help": h.onHelp?.(); break;
             case "about": h.onAbout?.(); break;
             case "left": h.onToggleLeft?.(); break;

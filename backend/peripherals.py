@@ -119,29 +119,97 @@ def decode_uart(transitions: List[Tuple[float, Any]], idle_high: bool = True) ->
     return {"bytes": bytes_out, "baud": baud, "frames": frames}
 
 
-def decode_buzzer(transitions: List[Tuple[float, Any]]) -> Dict[str, Any]:
-    """Measure the toggle frequency of the buzzer drive (passive speaker)."""
-    edges: List[float] = []
+def decode_buzzer(
+    transitions: List[Tuple[float, Any]],
+    clock_ns: float = 20.0,
+    active_low: bool = True,
+    max_edges: int = 20000,
+) -> Dict[str, Any]:
+    """Measure the buzzer drive in **simulated** time (never wall-clock).
+
+    The board's BEEP net is active-low (0 = transistor ON). A passive 2-terminal
+    speaker needs the FPGA to toggle the pin, so a real tone is a square wave
+    whose period is measured from transition timestamps (ns) and converted to
+    FPGA clock cycles with ``clock_ns`` (20 ns = 50 MHz).
+
+    Returns frequency, duty, cycles-per-period, the full edge list (capped)
+    and the final level. DC levels are reported with ``tone=False``.
+    """
+    edges: List[List[float]] = []
     last: Optional[int] = None
     for t, v in transitions:
         n = _as_int(v)
         if n is None:
             continue
-        if last is not None and n != last:
-            edges.append(float(t))
+        if last is None:
+            edges.append([round(float(t), 3), n & 1])
+        elif n != last:
+            edges.append([round(float(t), 3), n & 1])
         last = n
-    if len(edges) < 3:
-        return {"tone": False, "frequency": 0, "cycles": max(0, len(edges) - 1)}
-    periods = [edges[i + 1] - edges[i] for i in range(len(edges) - 1)]
-    stable = [p for p in periods if p > 0]
-    if not stable:
-        return {"tone": False, "frequency": 0, "cycles": len(edges)}
-    # frequency = 1 / (2 * half period) for a square wave
-    half = sum(stable) / len(stable)
-    freq = int(round(1e9 / (2 * half))) if half > 0 else 0
-    jitter = (max(stable) - min(stable)) / half if half > 0 else 1.0
-    return {"tone": freq > 0, "frequency": freq, "cycles": len(edges),
-            "stable": jitter < 0.05}
+    if len(edges) > max_edges:
+        # Keep the first and last plus an even sample; enough for frequency and
+        # for scheduling, bounded payload.
+        edges = edges[: max_edges - 1] + [edges[-1]]
+
+    base = {
+        "tone": False,
+        "frequency": 0,
+        "cycles": max(0, len(edges) - 1),
+        "stable": False,
+        "edges": edges,
+        "clockNs": float(clock_ns),
+        "cyclesPerPeriod": 0.0,
+        "halfPeriodNs": 0.0,
+        "duty": 0.0,
+        "level": int(last) if last is not None else 0,
+        "activeLow": bool(active_low),
+    }
+    if len(edges) < 2:
+        return base
+
+    # Half periods from every consecutive edge pair. The first interval is
+    # usually the power-on edge (X -> 1 -> first level) and the last is
+    # truncated by the capture end; both are excluded from the frequency
+    # estimate so a 1.31 ms capture still measures 800 Hz correctly.
+    halves = [edges[i + 1][0] - edges[i][0] for i in range(len(edges) - 1)]
+    halves = [h for h in halves if h > 0]
+    if not halves:
+        return base
+    core = halves[1:-1] if len(halves) >= 3 else []
+    if not core:
+        return base
+    ordered = sorted(core)
+    mid = len(ordered) // 2
+    half = ordered[mid] if len(ordered) % 2 else (ordered[mid - 1] + ordered[mid]) / 2.0
+    freq = 1e9 / (2.0 * half) if half > 0 else 0.0
+    period_cycles = (2.0 * half) / clock_ns if clock_ns > 0 else 0.0
+
+    # Duty = fraction of the period the ON level is asserted. For an
+    # active-low PNP driver, ON = logic 0.
+    on_level = 0 if active_low else 1
+    active_ns = 0.0
+    total_ns = 0.0
+    for i in range(len(edges) - 1):
+        dt = edges[i + 1][0] - edges[i][0]
+        if dt <= 0:
+            continue
+        total_ns += dt
+        if edges[i][1] == on_level:
+            active_ns += dt
+    duty = active_ns / total_ns if total_ns > 0 else 0.0
+
+    # Jitter over the core intervals that agree with the median.
+    central = [h for h in core if abs(h - half) <= 0.2 * half]
+    jitter = (max(central) - min(central)) / half if central and half > 0 else 1.0
+    base.update({
+        "tone": freq > 0,
+        "frequency": int(round(freq)),
+        "stable": jitter < 0.05,
+        "cyclesPerPeriod": round(period_cycles, 3),
+        "halfPeriodNs": round(half, 3),
+        "duty": round(max(0.0, min(1.0, duty)), 4),
+    })
+    return base
 
 
 def decode_vga(hs: List[Tuple[float, Any]], vs: List[Tuple[float, Any]],

@@ -175,6 +175,8 @@ _SEGMENT_ALIASES = {"seg", "seg7", "sevenseg", "display", "hex"}
 _DIGIT_ALIASES = {"dig", "dtube", "digit", "tube", "sel", "scan", "com", "anode"}
 # unnumbered BUS aliases: a whole port named like the bus maps onto it
 _SWITCHBUS_ALIASES = {"sw", "dip", "switches", "keys", "buttons"}
+# Buzzer aliases: the classroom buzz1.vhd names the output "buzzerb".
+_BUZZER_ALIASES = {"buzzer", "buzzerb", "beep", "spk", "speaker", "buzz"}
 _SCALAR_ALIASES = {
     "s": "KEY", "key": "KEY", "sw": "KEY", "dip": "KEY",
     "btn": "KEY", "button": "KEY", "push": "KEY",
@@ -213,6 +215,9 @@ def resolve_port_pins(name: str, kind: Optional[str] = None) -> Optional[List[st
     if kind == "led" and norm in {"leds"}:
         pins = profile.get("LED")
         return list(pins) if pins else None
+    if kind == "buzzer" and norm in _BUZZER_ALIASES:
+        pin = BOARD.get("buzzer", {}).get("pin")
+        return [pin] if pin else None
     if norm in _RESET_ALIASES:
         pins = profile.get(BOARD.get("resetPort", "FPGA_RST"))
         return list(pins) if pins else None

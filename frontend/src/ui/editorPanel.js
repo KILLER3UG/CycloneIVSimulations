@@ -904,8 +904,12 @@ export function createEditorPanel(root, h) {
 
     // --------------------------------------------------------- run setup ---
     const DEFAULT_SETUP = {
-        duration: 655_460,
-        clockPeriod: 10,
+        // 50 MHz board clock: 1,310,920 ns / 20 ns = 65,546 cycles, the same
+        // cycle window as before (so cycle-indexed tests/expectations hold),
+        // but at the hardware-correct timebase. Long enough for one full
+        // 800 Hz buzz1 period (1.25 ms) to be measured.
+        duration: 1_310_920,
+        clockPeriod: 20,
         resetCycles: 2,
         resetActiveLow: true,
     };
@@ -946,6 +950,18 @@ export function createEditorPanel(root, h) {
         cfg.value = String(value);
     }
 
+    // One press followed by a permanent release. Used when a key is released so
+    // the design sees the edge that starts its own countdown (buzz1: 1 s).
+    function setStimulusPulseOnce(port, holdCycles = 1) {
+        const p = entity?.ports?.find((x) => x.name === port);
+        const cfg = getConfig(port, p?.width || 1);
+        const first = getStimulusValue(port) & 1;
+        cfg.kind = "pulse_once";
+        cfg.values = [first, first ? 0 : 1];
+        cfg.value = String(first);
+        cfg.holdCycles = Math.max(1, holdCycles | 0);
+    }
+
     function buildStimuli(clockPort, resetPort) {
         const out = [];
         for (const [port, cfg] of stimConfig) {
@@ -970,6 +986,7 @@ export function createEditorPanel(root, h) {
                     : [],
                 periodCycles: Math.max(1, parseInt(cfg.period, 10) || 1),
                 pulseCycles: Math.max(1, parseInt(cfg.period, 10) || 1),
+                holdCycles: Math.max(1, parseInt(cfg.holdCycles, 10) || 1),
             });
         }
         return out;
@@ -1062,6 +1079,7 @@ export function createEditorPanel(root, h) {
         setEntity, setProblems, setMessages,
         setRunState, setTheme, setDevice,
         readSetup, buildStimuli, getStimulusValue, setStimulusValue,
+        setStimulusPulseOnce,
         setCollapsed, expand,
     };
 }

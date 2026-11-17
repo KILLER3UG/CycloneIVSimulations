@@ -142,6 +142,8 @@ def _classify_port(name: str) -> Optional[str]:
         return "button"
     if re.fullmatch(r"(?:hex|seg|seven|sevenseg|display)s?\d*", lower):
         return "display"
+    if re.fullmatch(r"(?:buzzerb?|beep|spk|speaker|buzz)\d*", lower):
+        return "buzzer"
     if "led" in lower:
         return "led"
     if any(token in lower for token in ("sw", "switch", "dip")):
@@ -341,6 +343,41 @@ def _as_int(value: Any) -> int:
         if text and all(ch in "01" for ch in text):
             return int(text, 2)
     return 0
+
+
+def _detect_down_counter(model: "WaveformModel", min_terminal: int = 1000) -> Optional[dict]:
+    """Find an internal down-counter and its loaded terminal value.
+
+    Used to schedule a buzzer note without simulating the whole countdown:
+    buzz1 loads ``sec_counter = 49,999,999`` on release, so the note lasts
+    ``terminal * clock_ns`` after the release edge. Only internal integer
+    signals whose name looks like a counter and that decrement by exactly 1
+    per clock are considered.
+    """
+    times = model.clock_times(limit=4096)
+    if len(times) < 4:
+        return None
+    best: Optional[dict] = None
+    for signal in model.signals:
+        if signal.is_port:
+            continue
+        if not re.search(r"counter|_cnt|cnt$|count", signal.name, re.IGNORECASE):
+            continue
+        values = [signal.value_at(t) for t in times]
+        if any(not isinstance(v, int) or isinstance(v, bool) for v in values):
+            continue
+        run = 0
+        terminal = 0
+        for i in range(len(values) - 1):
+            if values[i] - values[i + 1] == 1:
+                run += 1
+                terminal = max(terminal, values[i])
+            elif values[i + 1] != values[i]:
+                run = 0
+        if run >= 2 and terminal >= min_terminal:
+            if best is None or terminal > best["terminal"]:
+                best = {"name": signal.name, "terminal": terminal}
+    return best
 
 
 def board_image_from_model(model: "WaveformModel", board_map: "BoardMap") -> dict:
@@ -549,6 +586,7 @@ def board_image_from_model(model: "WaveformModel", board_map: "BoardMap") -> dic
         "povBits": pov_bits,
         "scanHz": scan_hz,
         "ghosts": ghosts,
+        "countdown": _detect_down_counter(model),
         "digits": last_dig,
         "leds": leds,
         "buzzer": buzzer,

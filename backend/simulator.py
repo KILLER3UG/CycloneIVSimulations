@@ -1614,8 +1614,20 @@ class Simulator:
             try:
                 if "UART_TXD" in full_transitions:
                     peripherals["uart"] = decode_uart(full_transitions["UART_TXD"])
-                if "FPGA_BUZZER" in full_transitions:
-                    peripherals["buzzer"] = decode_buzzer(full_transitions["FPGA_BUZZER"])
+                buz_pin = str(BOARD.get("buzzer", {}).get("pin") or "").upper()
+                buz_port = next(
+                    (
+                        port for port, plist in (waveform.get("board", {}).get("pins") or {}).items()
+                        if any(str(p).upper() == buz_pin for p in (plist or []))
+                    ),
+                    None,
+                )
+                if buz_port and buz_port.upper() in full_transitions:
+                    peripherals["buzzer"] = decode_buzzer(
+                        full_transitions[buz_port.upper()],
+                        clock_ns=float(request.clock_period),
+                        active_low=bool(BOARD["buzzer"].get("activeLow", True)),
+                    )
                 if all(k in full_transitions for k in ("VGA_HSYNC", "VGA_VSYNC", "VGA_R", "VGA_G", "VGA_B")):
                     peripherals["vga"] = decode_vga(
                         full_transitions["VGA_HSYNC"],
@@ -1888,8 +1900,20 @@ class Simulator:
             try:
                 if "UART_TXD" in full_transitions:
                     peripherals["uart"] = decode_uart(full_transitions["UART_TXD"])
-                if "FPGA_BUZZER" in full_transitions:
-                    peripherals["buzzer"] = decode_buzzer(full_transitions["FPGA_BUZZER"])
+                buz_pin = str(BOARD.get("buzzer", {}).get("pin") or "").upper()
+                buz_port = next(
+                    (
+                        port for port, plist in (waveform.get("board", {}).get("pins") or {}).items()
+                        if any(str(p).upper() == buz_pin for p in (plist or []))
+                    ),
+                    None,
+                )
+                if buz_port and buz_port.upper() in full_transitions:
+                    peripherals["buzzer"] = decode_buzzer(
+                        full_transitions[buz_port.upper()],
+                        clock_ns=float(request.clock_period),
+                        active_low=bool(BOARD["buzzer"].get("activeLow", True)),
+                    )
                 if all(k in full_transitions for k in ("VGA_HSYNC", "VGA_VSYNC", "VGA_R", "VGA_G", "VGA_B")):
                     peripherals["vga"] = decode_vga(
                         full_transitions["VGA_HSYNC"],

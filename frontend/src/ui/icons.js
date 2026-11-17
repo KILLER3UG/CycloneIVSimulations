@@ -38,6 +38,8 @@ export const icons = {
     info: I('<circle cx="12" cy="12" r="9.2"/><line x1="12" y1="11" x2="12" y2="16.5"/><line x1="12" y1="7.5" x2="12" y2="7.6"/>'),
     terminal: I('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>'),
     activity: I('<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>'),
+    volume: I('<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/>'),
+    mute: I('<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>'),
     monitor: I('<rect x="2.5" y="4" width="19" height="13" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>'),
     lcd: I('<rect x="3" y="5" width="18" height="14" rx="1.5"/><rect x="6" y="8" width="12" height="8" rx="0.5"/><line x1="9" y1="11" x2="9" y2="11.1"/><line x1="12" y1="11" x2="12" y2="11.1"/><line x1="15" y1="11" x2="15" y2="11.1"/>'),
     plug: I('<path d="M9 2v6M15 2v6"/><path d="M6 8h12v3a6 6 0 0 1-12 0V8z"/><line x1="12" y1="17" x2="12" y2="22"/>'),
