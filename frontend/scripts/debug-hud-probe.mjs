@@ -19,13 +19,42 @@ const page = await browser.newPage();
 await page.goto(BASE, { waitUntil: "domcontentloaded", timeout: 60000 });
 await page.waitForFunction(() => window.__cyclone && window.__cyclone.board, { timeout: 60000 });
 await new Promise((r) => setTimeout(r, 1200));
-// reproduce the buzz1-e2e boot state (example loaded -> KEY/SW HUD labels)
+// reproduce the buzz1-e2e boot state: example -> pin defaults -> compile
 await page.evaluate(() => {
     const sel = document.querySelector("#tb-examples");
     const opt = sel && [...sel.options].find((o) => /buzz1/i.test(`${o.value} ${o.textContent}`));
     if (opt) { sel.value = opt.value; sel.dispatchEvent(new Event("change", { bubbles: true })); }
 });
-await new Promise((r) => setTimeout(r, 1500));
+await new Promise((r) => setTimeout(r, 1000));
+await page.click('[data-tab="pinmap"]').catch(() => {});
+await new Promise((r) => setTimeout(r, 300));
+await page.evaluate(() => document.querySelector("#pp-defaults")?.click());
+await new Promise((r) => setTimeout(r, 500));
+await page.click("#tb-compile");
+await page.waitForFunction(() => window.__cyclone.state.programmed === true, { timeout: 60000 })
+    .catch(() => console.log("RING never programmed"));
+await new Promise((r) => setTimeout(r, 1000));
+// hold K1 so the buzzer sounds, then dump the 3D ring state
+await page.evaluate(() => window.__cyclone.setPhysicalKeyPressed(0, true));
+await page.waitForFunction(() => document.getElementById("tb-audio-badge")?.textContent === "800 Hz", { timeout: 8000 })
+    .catch(() => console.log("RING badge never reached 800 Hz"));
+await new Promise((r) => setTimeout(r, 1200));
+const ring = await page.evaluate(() => {
+    const b = window.__cyclone.board;
+    const r = b._buzzerRing;
+    return {
+        buzzerOn: b.io?.buzzer?.on ?? null, programmed: b.programmed, power: b.power, running: b.running,
+        badge: document.getElementById("tb-audio-badge")?.textContent,
+        sbBuzzer: window.__cyclone.state?.buzzer || null,
+        mapVectors: window.__cyclone.state?.stimulusMap?.vectors ? Object.keys(window.__cyclone.state.stimulusMap.vectors).length : 0,
+        ring: r ? {
+            visible: r.visible, opacity: Number(r.material.opacity.toFixed(3)),
+            depthTest: r.material.depthTest, renderOrder: r.renderOrder,
+            inScene: !!r.parent, pos: r.position.toArray().map((v) => Math.round(v * 10) / 10),
+        } : null,
+    };
+});
+console.log("RING " + JSON.stringify(ring));
 const info = await page.evaluate(() => {
     const dump = (sel) => {
         const el = document.querySelector(sel);

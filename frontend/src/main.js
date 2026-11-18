@@ -268,11 +268,15 @@ function applyStimulusEntry(entry) {
         ? { ...entry.buzzerDecode }
         : { tone: false, frequency: 0, duty: 0, activeLow: true };
     const bz = S.buzzer;
+    const sounding = !!(canPlayBuzzer() && bz.tone && bz.frequency > 0);
     driveBuzzer(
-        !!(canPlayBuzzer() && bz.tone && bz.frequency > 0),
+        sounding,
         Number(bz.frequency) || 0,
         Number(bz.duty) || 0.5,
     );
+    // The 3D pulse ring follows the SAME decoded state as the audio — the raw
+    // image.buzzer pin level is polarity-blind (active-low buzzers sound at 0).
+    safeCall(() => board?.setBuzzerActive?.(sounding));
     S.liveValues = S.finalValues;
     safeCall(() => sidebar?.setLiveValues?.(S.finalValues));
     safeCall(() => sidebar?.setPeripherals?.(entry));

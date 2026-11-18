@@ -442,6 +442,15 @@ export class Board3D {
         }
     }
 
+    /**
+     * Drive the SP1 mesh + pulse ring from the DECODED buzzer state (tone /
+     * frequency already account for pin polarity). `immediate` paints the ring
+     * on this turn so a <1 ms stimulus flip is visible in the same frame.
+     */
+    setBuzzerActive(on) {
+        this._setBuzzerVisual(Boolean(on), true);
+    }
+
     _recomputeDisplayTargets() {
         const d = this.io?.display;
         if (!d) return;
