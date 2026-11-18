@@ -443,6 +443,7 @@ class SimSession:
                 # the client must not re-simulate to fetch them — a second
                 # GHDL run per Run click burned a core for nothing.
                 "peripherals": result.get("peripherals") or {},
+                "stimulusMap": result.get("stimulusMap"),
             },
         )
 
@@ -502,6 +503,7 @@ class SimSession:
                 "board": self._board,
                 "entity": self._entity,
                 "peripherals": payload.get("peripherals") or {},
+                "stimulusMap": payload.get("stimulusMap"),
                 # Compact refresh (board-only result): no per-cycle replay, the
                 # client paints the board image in sim_done. True only when
                 # there are no cycles to stream (a full run still streams, even
