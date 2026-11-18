@@ -98,17 +98,6 @@ export function createEditorPanel(root, h) {
             </span>
         </div>
 
-        <div class="ep-head">
-            <span class="ep-title">${icon("file")}<span>Project & Source</span></span>
-            <span class="ep-head-actions">
-                <button class="icon-btn" data-act="find" title="Find / replace">${icon("search")}</button>
-                <button class="icon-btn" data-act="upload" title="Upload files (.vhd .v .sv .qsf .mif .hex)">${icon("upload")}</button>
-                <button class="icon-btn" data-act="rename" title="Rename active file">${icon("pencil")}</button>
-                <button class="icon-btn" data-act="zip" title="Download project as zip">${icon("zip")}</button>
-                <button class="icon-btn" data-act="collapse" title="Collapse panel" aria-label="Collapse panel">${icon("chevron")}</button>
-            </span>
-        </div>
-
         <div class="ep-tabs-wrap">
             <div class="ep-tabs" id="ep-tabs" role="tablist"></div>
             <label class="ep-dev-inline" title="Target FPGA device">
@@ -164,7 +153,7 @@ export function createEditorPanel(root, h) {
     const editor = monaco.editor.create(editorHost, {
         value: "",
         language: "c4-vhdl",
-        theme: "c4-light",
+        theme: "c4-dark",
         minimap: { enabled: false },
         fontSize: 13,
         automaticLayout: true,

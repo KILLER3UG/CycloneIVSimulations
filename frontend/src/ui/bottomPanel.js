@@ -1,72 +1,41 @@
-// bottomPanel.js — bottom tabbed panel: Console, Problems, Serial Terminal,
-// VGA monitor, LCD view and the Waveform viewer.
+// bottomPanel.js — Zone 4: one collapsible bottom dock with four tabs.
+// Terminal mounts the xterm controller; Diagnostics owns every compiler error
+// and log line; Waveform keeps the VCD export; Displays holds UART/VGA/LCD.
 
 import { icon } from "./icons.js";
 import { createWaveformView } from "./waveform.js";
-
-const TABS = [
-    { id: "console", label: "Console", icon: "terminal" },
-    { id: "wave", label: "Waveform", icon: "activity" },
-    { id: "serial", label: "Serial", icon: "cable" },
-    { id: "vga", label: "VGA", icon: "monitor" },
-    { id: "lcd", label: "LCD", icon: "lcd" },
-];
 
 const TAGS = { info: "INFO", ok: "OK", warn: "WARN", error: "ERR", cmd: "CMD" };
 
 export function createBottomPanel(root, h) {
     root.classList.add("bottom-panel");
     root.innerHTML = `
-        <div class="bp-tabs" role="tablist">
-            ${TABS.map((t, i) => `
-                <button class="bp-tab ${i === 0 ? "active" : ""}" data-tab="${t.id}" role="tab" aria-selected="${i === 0}">
-                    ${icon(t.icon)}<span>${t.label}</span><em class="bp-badge hidden" data-badge="${t.id}">0</em>
-                </button>`).join("")}
+        <div class="bp-tabs" role="tablist" aria-label="Output dock views">
+            <button class="bp-tab" data-btab="terminal" role="tab" aria-selected="false">${icon("terminal")}<span>Terminal</span></button>
+            <button class="bp-tab active" data-btab="diagnostics" role="tab" aria-selected="true">${icon("activity")}<span>Diagnostics</span></button>
+            <button class="bp-tab" data-btab="waveform" role="tab" aria-selected="false">${icon("activity")}<span>Waveform</span></button>
+            <button class="bp-tab" data-btab="displays" role="tab" aria-selected="false">${icon("monitor")}<span>Serial / VGA / LCD</span></button>
+            <em class="bp-badge" id="diag-badge" title="Diagnostics">0</em>
             <span class="bp-flex"></span>
-            <button class="icon-btn" data-act="collapse" title="Collapse bottom panel">${icon("chevron")}</button>
+            <button class="icon-btn" data-act="collapse" title="Collapse bottom dock" aria-label="Collapse bottom dock">${icon("chevron")}</button>
         </div>
         <div class="bp-body">
-            <div class="bp-main">
-                <div class="bp-pane hidden" data-pane="wave">
-                    <div class="probe-bar" id="probe-bar">
-                        <span class="probe-hint">Click a pin on the 3D board to probe it.</span>
-                        <span class="bp-flex"></span>
-                        <button type="button" class="btn bp-btn" id="bp-export-vcd" title="Download the captured waveform as VCD">${icon("download")}<span>Export VCD</span></button>
-                    </div>
-                    <div class="wave-wrap" id="wave-wrap"></div>
+            <div class="bp-pane" data-pane="terminal">
+                <div class="bp-pane-tools">
+                    <span class="bp-hint">Local PTY &mdash; type <code>help</code> for commands</span>
+                    <span class="bp-flex"></span>
+                    <button class="btn" data-act="term-clear">Clear</button>
+                    <button class="btn" data-act="term-restart">Restart</button>
                 </div>
-                <div class="bp-pane hidden" data-pane="serial">
-                    <div class="bp-pane-tools">
-                        <span class="baud-badge" id="serial-baud">baud: --</span>
-                        <label><input type="radio" name="serfmt" value="hex" checked> HEX</label>
-                        <label><input type="radio" name="serfmt" value="ascii"> ASCII</label>
-                        <span class="bp-flex"></span>
-                        <span class="serial-frames" id="serial-frames">0 frames</span>
-                    </div>
-                    <div class="serial-out" id="serial-out"><div class="bp-empty">No UART traffic yet \u2014 run a design that transmits on UART_TXD.</div></div>
-                    <div class="serial-send">
-                        <input type="text" id="serial-tx" placeholder="UART RX injection requires backend support" disabled
-                            aria-label="UART send (disabled)" title="UART RX injection requires backend support">
-                        <button class="btn" disabled title="UART RX injection requires backend support">Send</button>
-                    </div>
-                </div>
-                <div class="bp-pane hidden" data-pane="vga">
-                    <div class="vga-wrap">
-                        <canvas id="vga-canvas" width="640" height="480"></canvas>
-                        <div class="vga-nosignal" id="vga-nosignal">no signal \u2014 run a design that drives VGA_HSYNC / VGA_VSYNC</div>
-                    </div>
-                </div>
-                <div class="bp-pane hidden" data-pane="lcd">
-                    <div class="lcd-panel">
-                        <div class="lcd-screen" id="lcd-screen">
-                            <div class="lcd-line" id="lcd-line0">&nbsp;</div>
-                            <div class="lcd-line" id="lcd-line1">&nbsp;</div>
-                        </div>
-                        <div class="lcd-note" id="lcd-note">1602 character display (HD44780) \u2014 LCD_RS/RW/E + LCD_D[7..0]</div>
-                    </div>
+                <div class="term-wrap" id="terminal-output"></div>
+                <div class="bp-term-input">
+                    <span aria-hidden="true">&rsaquo;</span>
+                    <input type="text" id="terminal-input" autocomplete="off" spellcheck="false"
+                        aria-label="Terminal input" placeholder="Terminal input&hellip;">
                 </div>
             </div>
-            <div class="bp-dock" data-pane="console">
+
+            <div class="bp-pane hidden" data-pane="diagnostics">
                 <div class="bp-pane-tools">
                     <label><input type="checkbox" data-lf="info" checked> INFO</label>
                     <label><input type="checkbox" data-lf="ok" checked> OK</label>
@@ -78,70 +47,123 @@ export function createBottomPanel(root, h) {
                 </div>
                 <div class="console-log" id="console-log" role="log"></div>
             </div>
+
+            <div class="bp-pane hidden" data-pane="waveform">
+                <div class="probe-bar" id="probe-bar">
+                    <span class="probe-hint">Click a pin on the 3D board to probe it.</span>
+                    <span class="bp-flex"></span>
+                    <button type="button" class="btn bp-btn" id="bp-export-vcd" title="Download the captured waveform as VCD">${icon("download")}<span>Export VCD</span></button>
+                </div>
+                <div class="wave-wrap" id="wave-wrap"></div>
+            </div>
+
+            <div class="bp-pane hidden" data-pane="displays">
+                <div class="display-cards">
+                    <section class="display-card" data-disp="uart">
+                        <header>Serial / UART <span class="baud-badge" id="serial-baud">baud: --</span></header>
+                        <div class="serial-out" id="serial-out"><div class="bp-empty">No UART traffic yet.</div></div>
+                        <div class="serial-send">
+                            <input type="text" id="serial-tx" placeholder="UART RX injection requires backend support" disabled aria-label="UART send">
+                            <button class="btn" disabled>Send</button>
+                            <span class="serial-frames" id="serial-frames">0 frames</span>
+                        </div>
+                    </section>
+                    <section class="display-card" data-disp="vga">
+                        <header>VGA</header>
+                        <div class="vga-wrap">
+                            <canvas id="vga-canvas" width="640" height="480"></canvas>
+                            <div class="vga-nosignal" id="vga-nosignal">no signal</div>
+                        </div>
+                    </section>
+                    <section class="display-card" data-disp="lcd">
+                        <header>LCD 1602</header>
+                        <div class="lcd-panel">
+                            <div class="lcd-screen" id="lcd-screen">
+                                <div class="lcd-line" id="lcd-line0">&nbsp;</div>
+                                <div class="lcd-line" id="lcd-line1">&nbsp;</div>
+                            </div>
+                            <div class="lcd-note">HD44780 &mdash; LCD_RS/RW/E + LCD_D[7..0]</div>
+                        </div>
+                    </section>
+                </div>
+            </div>
         </div>
     `;
 
     const panes = {};
     root.querySelectorAll(".bp-pane").forEach((p) => { panes[p.dataset.pane] = p; });
-    const badges = {};
-    root.querySelectorAll(".bp-badge").forEach((b) => { badges[b.dataset.badge] = b; });
-    const dock = root.querySelector(".bp-dock");
-
     const wave = createWaveformView(root.querySelector("#wave-wrap"), { onValuesAt: h.onValuesAt });
-    root.classList.add("solo-console"); // boot state: Console tab = full-width console
+    const logEl = root.querySelector("#console-log");
+    const badge = root.querySelector("#diag-badge");
+    const filters = { info: true, ok: true, warn: true, error: true, cmd: true };
+    const logRows = [];
+    let problems = [];
+    let active = "diagnostics";
 
-    // ---------------------------------------------------------------- tabs --
-    let active = "console";
+    // ------------------------------------------------------------- tabs ----
+    function showTab(id) {
+        if (!panes[id]) return;
+        active = id;
+        root.querySelectorAll(".bp-tab").forEach((t) => {
+            const on = t.dataset.btab === id;
+            t.classList.toggle("active", on);
+            t.setAttribute("aria-selected", String(on));
+        });
+        Object.entries(panes).forEach(([key, pane]) => pane.classList.toggle("hidden", key !== id));
+        if (id === "waveform") setTimeout(() => wave.resize(), 30);
+    }
     root.querySelector(".bp-tabs").addEventListener("click", (e) => {
         const tab = e.target.closest(".bp-tab");
-        if (tab) { showTab(tab.dataset.tab); return; }
-        if (e.target.closest('[data-act="collapse"]')) {
-            const section = root.closest("#bottom") || root.parentElement;
-            section.classList.toggle("collapsed");
-            h.onCollapsed?.(section.classList.contains("collapsed"));
-            setTimeout(() => wave.resize(), 60);
+        if (tab) { showTab(tab.dataset.btab); return; }
+        const act = e.target.closest("[data-act]");
+        if (!act) return;
+        const section = root.closest("#bottom") || root.parentElement;
+        switch (act.dataset.act) {
+            case "collapse":
+                section.classList.toggle("collapsed");
+                h.onCollapsed?.(section.classList.contains("collapsed"));
+                setTimeout(() => wave.resize(), 60);
+                break;
+            case "clearlog":
+                logEl.innerHTML = "";
+                logRows.length = 0;
+                updateBadge();
+                break;
+            case "term-clear": h.onTerminalClear?.(); break;
+            case "term-restart": h.onTerminalRestart?.(); break;
+            default: break;
         }
     });
 
-    function showTab(id) {
-        active = id;
-        root.querySelectorAll(".bp-tab").forEach((t) => {
-            t.classList.toggle("active", t.dataset.tab === id);
-            t.setAttribute("aria-selected", String(t.dataset.tab === id));
-        });
-        for (const [key, pane] of Object.entries(panes)) {
-            pane.classList.toggle("hidden", key !== id);
-        }
-        // Console is the pinned right dock: selecting it gives it the full
-        // width; any other tab splits the body [pane | console].
-        const soloConsole = id === "console";
-        root.classList.toggle("solo-console", soloConsole);
-        dock.classList.toggle("hidden", false);
-        if (id === "wave") setTimeout(() => wave.resize(), 30);
-    }
-
-    // ------------------------------------------------------------ console --
-    const logEl = root.querySelector("#console-log");
-    const filters = { info: true, ok: true, warn: true, error: true, cmd: true };
-    const logRows = [];
+    // ------------------------------------------------------- diagnostics ---
     root.querySelectorAll("[data-lf]").forEach((cb) => {
         cb.addEventListener("change", () => {
             filters[cb.dataset.lf] = cb.checked;
-            logRows.forEach((r) => {
-                r.el.classList.toggle("hidden", !filters[r.level]);
-            });
+            logRows.forEach((r) => r.el.classList.toggle("hidden", !filters[r.level]));
         });
     });
-    root.querySelector('[data-act="clearlog"]').addEventListener("click", () => {
-        logEl.innerHTML = "";
-        logRows.length = 0;
-    });
     root.querySelector("#bp-export-vcd")?.addEventListener("click", () => h.onExportVcd?.());
+    root.querySelector("#terminal-input")?.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        const line = e.target.value;
+        e.target.value = "";
+        h.onTerminalInput?.(line);
+    });
 
     function stamp() {
         const d = new Date();
         const p = (n, w = 2) => String(n).padStart(w, "0");
         return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
+    }
+
+    function updateBadge() {
+        const errs = problems.filter((p) => p.severity === "error").length;
+        const warns = problems.filter((p) => p.severity === "warning").length;
+        const n = problems.length || logRows.filter((r) => r.level === "error").length;
+        badge.textContent = String(n);
+        badge.classList.toggle("has-errors", errs > 0);
+        badge.classList.toggle("has-warnings", errs === 0 && warns > 0);
+        badge.title = `${errs} error(s), ${warns} warning(s), ${logRows.length} log line(s)`;
     }
 
     function log(text, level = "info") {
@@ -152,20 +174,23 @@ export function createBottomPanel(root, h) {
         row.classList.toggle("hidden", !filters[level]);
         logEl.appendChild(row);
         logRows.push({ el: row, level });
-        while (logRows.length > 600) {
-            const old = logRows.shift();
-            old.el.remove();
-        }
-        logEl.scrollTop = logEl.scrollHeight;
+        while (logRows.length > 600) logRows.shift().el.remove();
+        // Defer the scroll: reading scrollHeight forces a full document layout
+        // (backdrop-filter pills make that expensive) and would blow the
+        // <1 ms stimulus budget. The visual result is identical.
+        requestAnimationFrame(() => { logEl.scrollTop = logEl.scrollHeight; });
+        if (level === "error") updateBadge();
     }
 
-    // ----------------------------------------------------------- problems --
-    // Compile diagnostics live in the right workbench Messages panel; the
-    // bottom drawer no longer duplicates them. `setProblems` stays as a
-    // no-op for API compatibility.
-    function setProblems() { }
+    // Compiler diagnostics now live here (the right workbench keeps its own
+    // compact Code-tab drawer, but this dock is the single full log).
+    function setProblems(list = []) {
+        problems = Array.isArray(list) ? list : [];
+        logRows.filter((r) => r.level === "diag").forEach((r) => r.el.remove());
+        updateBadge();
+    }
 
-    // ------------------------------------------------------------- serial --
+    // ------------------------------------------------------------ serial ---
     const serialOut = root.querySelector("#serial-out");
     const baudEl = root.querySelector("#serial-baud");
     const framesEl = root.querySelector("#serial-frames");
@@ -174,59 +199,35 @@ export function createBottomPanel(root, h) {
         uart = u || { bytes: [], baud: null, frames: 0 };
         baudEl.textContent = `baud: ${uart.baud ?? "--"}`;
         framesEl.textContent = `${uart.frames || 0} frames`;
-        if (!uart.bytes || !uart.bytes.length) {
-            serialOut.innerHTML = `<div class="bp-empty">No UART traffic yet \u2014 run a design that transmits on UART_TXD.</div>`;
+        if (!uart.bytes?.length) {
+            serialOut.innerHTML = `<div class="bp-empty">No UART traffic yet — run a design that transmits on UART_TXD.</div>`;
             return;
         }
-        const hexMode = root.querySelector('input[name="serfmt"]:checked').value === "hex";
-        serialOut.innerHTML = uart.bytes.slice(0, 4096).map((b) => {
-            if (hexMode) return `<span class="ser-byte">0x${(b & 0xff).toString(16).toUpperCase().padStart(2, "0")}</span>`;
-            const ch = b >= 32 && b < 127 ? String.fromCharCode(b) : "\u00b7";
-            return `<span class="ser-char">${ch.replace(/</g, "<").replace(/>/g, ">").replace(/ /g, "&nbsp;")}</span>`;
-        }).join("");
+        serialOut.innerHTML = uart.bytes.slice(0, 4096).map((b) =>
+            `<span class="ser-byte">0x${(b & 0xff).toString(16).toUpperCase().padStart(2, "0")}</span>`).join("");
     }
-    root.querySelectorAll('input[name="serfmt"]').forEach((r) => r.addEventListener("change", () => setUart(uart)));
 
-    // ---------------------------------------------------------------- vga --
-    const vgaCanvas = root.querySelector("#vga-canvas");
-    const vgaCtx = vgaCanvas.getContext("2d");
+    // --------------------------------------------------------------- vga ---
+    const vgaCtx = root.querySelector("#vga-canvas").getContext("2d");
     const vgaNoSig = root.querySelector("#vga-nosignal");
     function setVga(vga) {
         vgaCtx.fillStyle = "#000";
         vgaCtx.fillRect(0, 0, 640, 480);
         const samples = vga?.samples || {};
-        const cols = Object.keys(samples);
-        if (!cols.length || vga?.frame === false) {
+        if (!Object.keys(samples).length || vga?.frame === false) {
             vgaNoSig.classList.remove("hidden");
             return;
         }
         vgaNoSig.classList.add("hidden");
-        for (const k of cols) {
-            const col = Number(k);
+        for (const k of Object.keys(samples)) {
             const [r, g, b] = samples[k];
             vgaCtx.fillStyle = `rgb(${(r || 0) * 255},${(g || 0) * 255},${(b || 0) * 255})`;
-            vgaCtx.fillRect(col, 0, 64, 480);
+            vgaCtx.fillRect(Number(k), 0, 64, 480);
         }
     }
     setVga(null);
 
-    // ---------------------------------------------------------------- lcd --
-    const probeBar = root.querySelector("#probe-bar");
-    function addProbeChip(probe, onRemove) {
-        probeBar.querySelector(".probe-hint")?.remove();
-        const chip = document.createElement("span");
-        chip.className = "probe-chip";
-        chip.innerHTML = `<b>${probe.label || probe.pinId}</b><code>${probe.pinId}</code><button type="button" aria-label="Remove probe ${probe.pinId}">\u00d7</button>`;
-        chip.querySelector("button").addEventListener("click", () => {
-            chip.remove();
-            onRemove?.();
-            if (!probeBar.querySelector(".probe-chip")) {
-                probeBar.innerHTML = `<span class="probe-hint">Click a pin on the 3D board to probe it.</span>`;
-            }
-        });
-        probeBar.appendChild(chip);
-    }
-
+    // --------------------------------------------------------------- lcd ----
     const lcdLines = [root.querySelector("#lcd-line0"), root.querySelector("#lcd-line1")];
     function setLcd(text) {
         const raw = String(text ?? "").replace(/\r/g, "");
@@ -241,8 +242,28 @@ export function createBottomPanel(root, h) {
     }
     setLcd("");
 
+    // ------------------------------------------------------------ probes ---
+    const probeBar = root.querySelector("#probe-bar");
+    function addProbeChip(probe, onRemove) {
+        probeBar.querySelector(".probe-hint")?.remove();
+        const chip = document.createElement("span");
+        chip.className = "probe-chip";
+        chip.innerHTML = `<b>${probe.label || probe.pinId}</b><code>${probe.pinId}</code><button type="button" aria-label="Remove probe">&times;</button>`;
+        chip.querySelector("button").addEventListener("click", () => {
+            chip.remove();
+            onRemove?.();
+            if (!probeBar.querySelector(".probe-chip")) {
+                probeBar.innerHTML = `<span class="probe-hint">Click a pin on the 3D board to probe it.</span>`;
+            }
+        });
+        probeBar.appendChild(chip);
+    }
+
+    updateBadge();
+
     return {
         showTab, log, setProblems, setUart, setVga, setLcd, wave, addProbeChip,
+        getTerminalHost: () => root.querySelector("#terminal-output"),
         get active() { return active; },
         root,
     };

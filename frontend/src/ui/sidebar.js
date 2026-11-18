@@ -3,6 +3,7 @@
 
 import { icon } from "./icons.js";
 import { dialog, toast } from "./toast.js";
+import { SEG_BIT_MAP_FALLBACK, SEG_GLYPHS } from "../board/layout.js";
 import {
     IO_STANDARDS,
     buildPinCatalog,
@@ -50,6 +51,7 @@ export function createSidebar(root, h) {
             <div class="sb-pane" data-pane="periph"></div>
             <div class="sb-pane hidden" data-pane="pinmap"></div>
             <div class="sb-pane hidden" data-pane="examples"></div>
+            <div class="sb-pane hidden" data-pane="board"></div>
         </div>
         <div class="sb-infocard hidden" id="sb-infocard"></div>
         <div class="sb-speccard" id="sb-speccard"></div>
@@ -61,6 +63,7 @@ export function createSidebar(root, h) {
         periph: root.querySelector('[data-pane="periph"]'),
         pinmap: root.querySelector('[data-pane="pinmap"]'),
         examples: root.querySelector('[data-pane="examples"]'),
+        board: root.querySelector('[data-pane="board"]'),
     };
     const infoCard = root.querySelector("#sb-infocard");
     const specCard = root.querySelector("#sb-speccard");
@@ -215,6 +218,81 @@ export function createSidebar(root, h) {
         })), true);
         p.appendChild(modGroup);
         renderAttachedChips();
+        renderLiveCards();
+    }
+
+    // ------------------------------------------------- live hardware cards --
+    // Monochrome cards that mirror the <1 ms stimulus entry (POV duty, LEDs,
+    // buzzer) plus the static board facts. Updated by setPeripherals().
+    let livePer = {};
+    let liveEls = null;
+    const SEG_LETTERS = ["a", "b", "c", "d", "e", "f", "g"];
+    const GLYPH_TABLE = Object.entries(SEG_GLYPHS).map(([ch, letters]) => [
+        ch,
+        SEG_LETTERS.reduce((m, name, i) => m | (letters.includes(name) ? (1 << i) : 0), 0),
+    ]);
+
+    function segGlyph(bits, segMap) {
+        const map = segMap || SEG_BIT_MAP_FALLBACK;
+        const mask = SEG_LETTERS.reduce((m, name, i) =>
+            m | (bits[map[name]] ? (1 << i) : 0), 0);
+        if (!mask) return " ";
+        const hit = GLYPH_TABLE.find(([, glyphMask]) => glyphMask === mask);
+        return hit ? hit[0] : "?";
+    }
+
+    function renderLiveCards() {
+        const p = panes.periph;
+        const wrap = document.createElement("div");
+        wrap.className = "peri-live";
+        wrap.innerHTML = `
+            <div class="peri-card"><header>7-Segment <small>glyph / duty</small></header><div class="peri-body" data-live="seg">D1–D4 &mdash;</div></div>
+            <div class="peri-card"><header>LEDs <small>live</small></header><div class="peri-body" data-live="led">&mdash;</div></div>
+            <div class="peri-card"><header>Keys / DIP <small>level</small></header><div class="peri-body" data-live="key">&mdash;</div></div>
+            <div class="peri-card"><header>Buzzer <small>Hz / duty</small></header><div class="peri-body" data-live="buz">&mdash;</div></div>
+            <div class="peri-card"><header>I2C <small>LM75 / AT24C08</small></header><div class="peri-body" data-live="i2c">&mdash;</div></div>
+            <div class="peri-card"><header>SDRAM</header><div class="peri-body" data-live="sdram">&mdash;</div></div>
+            <div class="peri-card"><header>VGA</header><div class="peri-body" data-live="vga">&mdash;</div></div>
+            <div class="peri-card"><header>LCD</header><div class="peri-body" data-live="lcd">&mdash;</div></div>
+        `;
+        p.prepend(wrap);
+        liveEls = {};
+        wrap.querySelectorAll("[data-live]").forEach((el) => { liveEls[el.dataset.live] = el; });
+        paintLive();
+    }
+
+    function paintLive() {
+        if (!liveEls) return;
+        const b = profile?.board || {};
+        const bits = livePer.povBits || [];
+        const pov = livePer.pov || [];
+        const nDig = Array.isArray(livePer.leds) ? Math.max(1, Math.floor(bits.length / 8)) : 4;
+        const seg = [];
+        for (let d = 0; d < nDig; d += 1) {
+            const digitBits = bits.slice(d * 8, d * 8 + 8);
+            const duty = Math.max(0, ...pov.slice(d * 8, d * 8 + 8));
+            seg.push(`D${d + 1}:${segGlyph(digitBits, b.displays?.segBitMap)} ${Math.round(duty * 100)}%`);
+        }
+        liveEls.seg.textContent = seg.join("  ") || "\u2014";
+        liveEls.led.textContent = Array.isArray(livePer.leds)
+            ? livePer.leds.map((v, i) => `L${i + 1}:${v ? "1" : "0"}`).join("  ") : "\u2014";
+        const keys = keyStateReader();
+        liveEls.key.textContent = keys.length
+            ? keys.map((v, i) => `K${i + 1}:${v ? "1" : "0"}`).join("  ") : "\u2014";
+        const bd = livePer.buzzerDecode || {};
+        liveEls.buz.textContent = bd.tone && bd.frequency > 0
+            ? `${Math.round(bd.frequency)} Hz / ${Math.round((bd.duty || 0) * 100)}%` : "silent";
+        liveEls.i2c.textContent = "LM75 0x48 · AT24C08 0x50";
+        liveEls.sdram.textContent = b.sdram ? "mapped · 64 Mb" : "mapped";
+        liveEls.vga.textContent = livePer.vga ? "frame active" : "no signal";
+        liveEls.lcd.textContent = livePer.lcd ? String(livePer.lcd).replace(/\n/g, " / ") : "idle";
+    }
+
+    // main.js installs the live key-state reader; keep the sidebar decoupled.
+    let keyStateReader = () => [];
+    function setPeripherals(per = {}) {
+        livePer = per || {};
+        paintLive();
     }
 
     // ---------------------------------------------------------- info cards --
@@ -519,6 +597,7 @@ export function createSidebar(root, h) {
         bar.innerHTML = `
             <div class="pp-bar-top">
                 <span class="pp-summary" id="pp-summary">${entity?.name ? `${escHtml(entity.name)}: 0/${nodes.length} pinned` : "No top-level entity"}</span>
+                <input type="search" class="pp-filter" id="pp-filter" placeholder="Filter pins&hellip;" aria-label="Filter pin assignments" autocomplete="off">
             </div>
             <div class="pp-actions">
                 <button type="button" class="btn pp-btn" id="pp-defaults" title="Fill assignments matching known board port names">Apply board defaults</button>
@@ -532,7 +611,11 @@ export function createSidebar(root, h) {
             </datalist>
         `;
         p.appendChild(bar);
-
+        const ppFilter = bar.querySelector("#pp-filter");
+        if (ppFilter) {
+            ppFilter.value = search.value;
+            ppFilter.addEventListener("input", () => setFilter(ppFilter.value));
+        }
         bar.querySelector("#pp-defaults").addEventListener("click", () => {
             if (!nodes.length) return;
             assignments = suggestBoardDefaults(nodes, profile, assignments);
@@ -704,6 +787,56 @@ export function createSidebar(root, h) {
         }
     }
 
+    // --------------------------------------------------------- board tab --
+    function renderBoard() {
+        const p = panes.board;
+        const b = profile?.board || {};
+        const pm = profile?.pinMap || b.pinMap || {};
+        const spec = (label, value) => `<div class="bd-spec"><span>${label}</span><b>${escHtml(String(value ?? "—"))}</b></div>`;
+        const rows = Object.entries(pm).map(([name, pins]) => {
+            const list = Array.isArray(pins) ? pins : [pins];
+            return `<tr><td>${escHtml(name)}</td><td>${list.filter(Boolean).map((x) => escHtml(String(x))).join(", ") || "—"}</td></tr>`;
+        }).join("");
+
+        p.innerHTML = `
+            <div class="bd-specs">
+                ${spec("Board", b.name)}
+                ${spec("Vendor", b.vendor || "—")}
+                ${spec("FPGA part", profile?.device?.part || b.fpga || "—")}
+                ${spec("Clock", `${((b.clockHz || 50000000) / 1e6).toFixed(0)} MHz`)}
+                ${spec("LEDs", b.leds?.count ?? b.leds?.pins?.length ?? 0)}
+                ${spec("Keys", b.buttons?.count ?? b.buttons?.pins?.length ?? 0)}
+                ${spec("Switches", b.switches?.count ?? b.switches?.pins?.length ?? 0)}
+                ${spec("Shared", b.switches?.sharedWithButtons ? "with buttons" : "independent")}
+            </div>
+            <div class="bd-bar">
+                <button class="btn" type="button" id="btn-load-board-json">+ Load Custom Board (.json)</button>
+                <input type="file" id="input-board-json" accept=".json" class="hidden">
+            </div>
+            <div class="bd-table-wrap">
+                <table class="pin-table bd-table">
+                    <thead><tr><th>Port / net</th><th>Package pins</th></tr></thead>
+                    <tbody>${rows || `<tr><td colspan="2">No pin reference available.</td></tr>`}</tbody>
+                </table>
+            </div>
+        `;
+        const fileInput = p.querySelector("#input-board-json");
+        p.querySelector("#btn-load-board-json")?.addEventListener("click", () => fileInput.click());
+        fileInput?.addEventListener("change", (e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                let manifest;
+                try { manifest = JSON.parse(String(reader.result || "")); }
+                catch { toast("Invalid board JSON — could not parse", { kind: "error" }); return; }
+                h.onImportBoard?.(manifest);
+            };
+            reader.readAsText(file);
+        });
+    }
+
     // -------------------------------------------------------------- api ----
     function setProfile(p) {
         profile = p;
@@ -711,6 +844,7 @@ export function createSidebar(root, h) {
         renderPeripherals();
         renderPinPlanner();
         renderSpecsCard();
+        renderBoard();
     }
 
     function setEntity(e) {
@@ -757,13 +891,19 @@ export function createSidebar(root, h) {
         updatePinValues();
         updateAttached();
     }
-    function setFilter(q) { search.value = q; search.dispatchEvent(new Event("input")); }
+    function setFilter(q) {
+        search.value = q;
+        const pp = root.querySelector("#pp-filter");
+        if (pp) pp.value = q;
+        search.dispatchEvent(new Event("input"));
+    }
 
     renderPeripherals();
     renderPinPlanner();
 
     return {
         setProfile, setEntity, setExamples, setLiveValues, setFilter,
+        setPeripherals, setKeyStateReader: (fn) => { keyStateReader = fn || (() => []); paintLive(); },
         getPinPlan, importQsfText, showTab,
         setCollapsed, expand, root,
     };

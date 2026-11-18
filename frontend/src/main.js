@@ -1,8 +1,9 @@
-// main.js — Cyclone IV Studio: wires the Quartus-inspired IDE around Board3D.
+// main.js — Cyclone IV Studio: the 2-zone workbench around Board3D.
 //
-// Flow: resolve active/pinned top-level + dependency tree -> validate Pin
-// Planner -> compile (REST) -> load board & WS simulate -> stream cycles / live
-// board updates driven exclusively through the Pin Planner table.
+// A successful Compile & Run publishes a pre-computed `stimulusMap`. Channel
+// changes are then resolved CLIENT-SIDE from that map (0 HTTP requests, <1 ms)
+// instead of re-running GHDL. Only an uncached/partial map falls back to
+// api.simulate(), with an AbortController that cancels the previous request.
 
 import "./styles.css";
 import { Board3D } from "./board/index.js";
@@ -17,98 +18,114 @@ import { createInteractions } from "./ui/interactions.js";
 import { dialog, toast, cheatSheet } from "./ui/toast.js";
 import { icon } from "./ui/icons.js";
 import { audio } from "./audio.js";
-import { detectDownCounter, measureBuzzer, noteSeconds } from "./buzzerModel.js";
 import { buildVcd } from "./vcdExport.js";
 
 const store = createStore();
 const S = store.state;
 const api = new ApiClient();
-
 const $ = (id) => document.getElementById(id);
 
-const RIGHT_COLLAPSED_KEY = "c4_right_collapsed";
-const LEFT_COLLAPSED_KEY = "c4_left_collapsed";
+// Runtime state not owned by the shared store (kept on S so window.__cyclone
+// exposes a single source of truth).
+S.stimulusMap = null;
+S.boardsList = [];
+S.activeBoardId = "";
+S.boardProfile = S.boardProfile || S.profile || null;
+S.keyState = [];
+S.dipState = [];
+S.releaseTimer = null;
+S.releaseDeadlineMs = 0;
+S.clockPeriodNs = 20;
+S.finalValues = {};
+S.buzzer = { tone: false, frequency: 0, duty: 0, activeLow: true };
 
-function loadCollapsedPref(key) {
-    try {
-        return localStorage.getItem(key) === "1";
-    } catch {
-        return false;
-    }
-}
-
-function saveCollapsedPref(key, collapsed) {
-    try {
-        localStorage.setItem(key, collapsed ? "1" : "0");
-    } catch {
-        // ignore storage restrictions
-    }
-}
-
-// ----------------------------------------------------------------- board --
 let board = null;
 let interactions = null;
+let toolbar, sidebar, editor, bottom, stats, terminal = null;
+let session = null;
+let sessionGen = 0;
+let simAbort = null;
+let rerunTimer = null;
+let cyclesMap = new Map();
+let pendingCycles = [];
+let updateAccum = 0;
+let sigPins = new Map();
+let pinValueIndex = new Map();
+let keyNetBindings = [];
 
-function initBoard() {
-    const host = $("board-host");
-    try {
-        board = new Board3D(host, {
-            quality: "balanced",
-            theme: S.theme,
-            onPick: (pick) => {
-                if (pick?.componentId) bottom.log(`Focused ${pick.componentId}`, "cmd");
-            },
-        });
-        board.mount();
-        board.setPreset("iso");
-        if (board.gpuIsSoftware) {
-            log(`3D rendering is on a SOFTWARE rasterizer (${board.gpuName}) — every frame is CPU-drawn. Enable hardware acceleration in your browser settings.`, "warn");
-        } else {
-            log(`3D renderer (GPU): ${board.gpuName}`, "info");
-        }
-        interactions = createInteractions(board, host, {
-            onPowerToggle: togglePower,
-            onDipToggle: toggleDip,
-            onKeyPress: (index, down) => setPhysicalKeyPressed(index, down),
-            onResetPress: (down) => { if (down) pressBoardReset(); },
-            onProbe: addProbe,
-            getPinValue,
-        });
+const safeCall = (fn, ...args) => {
+    if (typeof fn !== "function") return undefined;
+    try { return fn(...args); } catch { return undefined; }
+};
+const audioSettle = (p) => { if (p && typeof p.catch === "function") p.catch(() => {}); return p; };
 
-        const presets = $("cam-presets");
-        presets.addEventListener("click", (e) => {
-            const btn = e.target.closest("[data-preset]");
-            if (!btn) return;
-            presets.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === btn));
-            board.setPreset?.(btn.dataset.preset);
-        });
-        $("bt-zoin").addEventListener("click", () => board.zoomIn?.());
-        $("bt-zoout").addEventListener("click", () => board.zoomOut?.());
-        $("bt-fit").addEventListener("click", () => board.fit?.());
-        return true;
-    } catch (err) {
-        console.error("WebGL init failed", err);
-        host.innerHTML = `
-            <div class="webgl-fallback">
-                <h2>3D view unavailable</h2>
-                <p>The browser could not create a WebGL context, so the board model cannot be rendered.</p>
-                <p>The editor, Pin Planner, compile, and waveform tools still work.</p>
-            </div>`;
-        return false;
+// ------------------------------------------------------------ api adapters --
+// Cleanly target the fe-core contracts; keep a compatibility path to the
+// older REST surface so the app still boots before that branch is merged.
+async function apiGet(name, path) {
+    if (typeof api[name] === "function") {
+        const res = await api[name]();
+        return res?.data !== undefined ? res.data : res;
     }
+    const res = await api._fetch(path);
+    return res?.data !== undefined ? res.data : res;
+}
+async function apiPost(name, path, body, args = []) {
+    if (typeof api[name] === "function") {
+        const res = await api[name](...args);
+        return res?.data !== undefined ? res.data : res;
+    }
+    const res = await api._fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+    return res?.data !== undefined ? res.data : res;
 }
 
-// ------------------------------------------------------- pin / cycle glue --
-let sigPins = new Map();       // lower(port) -> [pinId_bit0, pinId_bit1, ...] ("" if unassigned)
-let pinValueIndex = new Map(); // pinId -> { port, idx }
+function makeSession(handlers) {
+    if (typeof api.connectSession === "function") return api.connectSession(handlers);
+    return new SimSession(handlers);
+}
+function sessionStart(payload) {
+    if (!session) return;
+    if (typeof session.runSim === "function") session.runSim(payload);
+    else if (typeof session.start === "function") session.start(payload);
+}
 
-// Strictly derive signal-to-package-pin routes ONLY from compileBoard.pins
-// (which comes from the Pin Planner table). Unassigned ports are never mapped.
+// ------------------------------------------------------------------ audio --
+function audioState() {
+    if (typeof audio.state === "function") return audio.state() || {};
+    return {
+        muted: !!audio.muted, volume: audio.volume,
+        active: !!audio.active, frequency: audio.frequency, duty: audio.duty,
+    };
+}
+function updateAudioBadge() {
+    toolbar?.setAudio?.(audioState());
+    const badge = $("tb-audio-badge");
+    if (badge) {
+        const st = audioState();
+        badge.textContent = st.muted ? "Muted"
+            : st.active && st.frequency ? `${Math.round(st.frequency)} Hz` : "Silent";
+    }
+}
+async function toggleMute() {
+    audioSettle(safeCall(() => audio.ensure?.()));
+    audio.setMuted(!audio.muted);
+    updateAudioBadge();
+}
+function driveBuzzer(enabled, frequency, duty) {
+    if (enabled && frequency > 0) audioSettle(audio.tone(frequency, duty));
+    else audio.silence();
+    updateAudioBadge();
+}
+
+// ------------------------------------------------------ pin / cycle glue ---
 function buildPinIndexes(boardInfo) {
     sigPins = new Map();
     pinValueIndex = new Map();
-    const pins = boardInfo?.pins || {};
-    for (const [port, list] of Object.entries(pins)) {
+    for (const [port, list] of Object.entries(boardInfo?.pins || {})) {
         const arr = Array.isArray(list) ? list : [list];
         const norm = arr.map((p) => (p ? String(p).toUpperCase() : ""));
         sigPins.set(String(port).toLowerCase(), norm);
@@ -117,7 +134,6 @@ function buildPinIndexes(boardInfo) {
         });
     }
 }
-
 function cycleToPinValues(values) {
     const out = {};
     for (const [name, val] of Object.entries(values || {})) {
@@ -134,7 +150,6 @@ function cycleToPinValues(values) {
     }
     return out;
 }
-
 function getPinValue(pinId) {
     const entry = pinValueIndex.get(String(pinId).toUpperCase());
     if (!entry) return undefined;
@@ -143,106 +158,308 @@ function getPinValue(pinId) {
     if (typeof v === "number") return String((v >>> entry.idx) & 1);
     return String(v).toUpperCase();
 }
-
 function applyCycleToBoard(cycle) {
     if (!board || !S.power) return;
     board.applyCycle({ pins: cycleToPinValues(cycle.values) }, { time: cycle.time });
 }
 
-// ------------------------------------------------------------- components --
-let toolbar, sidebar, editor, bottom, stats;
+// ------------------------------------------------------------------ board --
+function initBoard() {
+    const host = $("board-host");
+    try {
+        board = new Board3D(host, {
+            quality: "balanced", theme: "dark",
+            onPick: (pick) => { if (pick?.componentId) bottom.log(`Focused ${pick.componentId}`, "cmd"); },
+        });
+        board.mount();
+        board.setPreset("iso");
+        interactions = createInteractions(board, host, {
+            onPowerToggle: togglePower,
+            onDipToggle: toggleDip,
+            onKeyPress: (index, down) => setPhysicalKeyPressed(index, down),
+            onResetPress: (down) => { if (down) pressBoardReset(); },
+            onProbe: addProbe,
+            getPinValue,
+        });
 
+        const presets = $("cam-presets");
+        presets?.addEventListener("click", (e) => {
+            const btn = e.target.closest("[data-cam]");
+            if (!btn) return;
+            presets.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === btn));
+            const cam = btn.dataset.cam;
+            if (cam === "fit") board.fit?.();
+            else board.setPreset?.(cam === "iso" ? "iso" : cam);
+        });
+        const labelBtn = $("btn-pin-labels");
+        labelBtn?.addEventListener("click", () => {
+            const on = labelBtn.getAttribute("aria-pressed") !== "true";
+            labelBtn.setAttribute("aria-pressed", String(on));
+            safeCall(() => board.setPinLabels?.(on));
+        });
+        return true;
+    } catch (err) {
+        console.error("WebGL init failed", err);
+        host.innerHTML = `<div class="webgl-fallback">
+            <h2>3D view unavailable</h2>
+            <p>The editor, Pin Planner, compile and waveform tools still work.</p>
+        </div>`;
+        return false;
+    }
+}
+
+// --------------------------------------------------- channel / stimulus ----
+function channelConfig() {
+    return S.stimulusMap?.meta?.channels || S.boardProfile?.board?.channels || null;
+}
+
+// bit i = the logic level driven onto interactive channel i.
+// activeLow channels are idle-high (1) and pressed/closed-low (0).
+function computeChannelMask() {
+    const channels = channelConfig();
+    if (channels?.length) {
+        let mask = 0;
+        let btnSeen = 0;
+        let swSeen = 0;
+        for (const ch of channels) {
+            let closed = false;
+            if (ch.kind === "button") closed = !!S.keyState[btnSeen++];
+            else if (ch.kind === "switch") closed = !!S.dipState[swSeen++];
+            else {
+                const i = Number(ch.index) || 0;
+                closed = !!(S.keyState[i] || S.dipState[i]);
+            }
+            const low = ch.activeLow !== false;
+            const level = closed ? (low ? 0 : 1) : (low ? 1 : 0);
+            if (level) mask |= 1 << (Number(ch.index) || 0);
+        }
+        return mask;
+    }
+    const b = S.boardProfile?.board || {};
+    const btnPins = b.buttons?.pins || [];
+    const swPins = b.switches?.pins || [];
+    const shared = !!b.switches?.sharedWithButtons;
+    const btnLow = b.buttons?.activeLow !== false;
+    const swLow = b.switches?.activeLow !== false;
+    let mask = 0;
+    for (let i = 0; i < btnPins.length + (shared ? 0 : swPins.length); i += 1) {
+        const isBtn = i < btnPins.length;
+        const closed = isBtn ? !!S.keyState[i] : !!S.dipState[i - btnPins.length];
+        const low = isBtn ? btnLow : swLow;
+        const level = closed ? (low ? 0 : 1) : (low ? 1 : 0);
+        if (level) mask |= 1 << i;
+    }
+    return mask;
+}
+
+function applyStimulusEntry(entry) {
+    if (!entry) return;
+    safeCall(() => board?.applyBoardImage?.(entry));
+    S.finalValues = { ...(S.finalValues || {}), ...(entry.finalValues || {}) };
+    S.buzzer = entry.buzzerDecode
+        ? { ...entry.buzzerDecode }
+        : { tone: false, frequency: 0, duty: 0, activeLow: true };
+    const bz = S.buzzer;
+    const powered = S.powered ?? S.power;
+    driveBuzzer(
+        !!(powered && S.running && !S.paused && bz.tone && bz.frequency > 0),
+        Number(bz.frequency) || 0,
+        Number(bz.duty) || 0.5,
+    );
+    S.liveValues = S.finalValues;
+    safeCall(() => sidebar?.setLiveValues?.(S.finalValues));
+    safeCall(() => sidebar?.setPeripherals?.(entry));
+    safeCall(() => stats?.update?.(S));
+    safeCall(() => bottom?.log?.("Simulation complete — board updated", "ok"));
+}
+
+// One channel changed. Resolve synchronously whenever the pre-computed map
+// covers the resulting mask; otherwise fall back to one cancellable request.
+function handleChannelChange(changedKind, idx, newVal, prevVal) {
+    const i = Number(idx) || 0;
+    if (changedKind === "key") S.keyState[i] = !!newVal;
+    else S.dipState[i] = !!newVal;
+
+    // 0 ms visual feedback.
+    const btnCount = S.boardProfile?.board?.buttons?.pins?.length || 0;
+    const sharedMode = !!S.boardProfile?.board?.switches?.sharedWithButtons;
+    const dipVisual = changedKind === "dip" && !sharedMode ? btnCount + i : i;
+    safeCall(() => board?.pressKey?.(i, !!S.keyState[i]));
+    safeCall(() => board?.setDip?.(dipVisual, !!S.dipState[i]));
+    updateBoardControlButton(dipVisual);
+    safeCall(() => sidebar?.setPeripherals?.(S.lastStimulusEntry || {}));
+
+    if (S.releaseTimer) { clearTimeout(S.releaseTimer); S.releaseTimer = null; }
+    S.releaseDeadlineMs = 0;
+
+    const map = S.stimulusMap;
+    if (map?.vectors) {
+        const mask = computeChannelMask();
+        const release = changedKind === "key" && prevVal && !newVal
+            && !S.keyState.some(Boolean) ? map.releases?.[String(i)] : null;
+        if (release && (release.releaseCycles || 0) > 0 && release.buzzerDecode?.tone
+            && (S.powered ?? S.power) && S.running && !S.paused) {
+            S.lastStimulusEntry = release;
+            applyStimulusEntry(release);
+            const ms = Math.max(50, Math.round(
+                ((release.releaseCycles || 0) * (S.clockPeriodNs || 20)) / 1e6,
+            ));
+            S.releaseDeadlineMs = Date.now() + ms;
+            S.releaseTimer = setTimeout(() => {
+                S.releaseTimer = null;
+                S.releaseDeadlineMs = 0;
+                const cur = S.stimulusMap?.vectors?.[String(computeChannelMask())];
+                if (cur) { S.lastStimulusEntry = cur; applyStimulusEntry(cur); }
+            }, ms);
+            return;
+        }
+        const hit = map.vectors[String(mask)];
+        if (hit !== undefined) {
+            S.lastStimulusEntry = hit;
+            applyStimulusEntry(hit);
+            return;
+        }
+    }
+    fallbackSimulate();
+}
+
+async function fallbackSimulate() {
+    if (simAbort) simAbort.abort();
+    simAbort = new AbortController();
+    try {
+        const plan = editor.resolveCompilePlan();
+        const payload = simPayload({ plan, skipSynth: true, compactBoard: true });
+        const res = await api.simulate(payload, { signal: simAbort.signal });
+        const data = res?.data !== undefined ? res.data : res;
+        if (!data) return;
+        if (data.stimulusMap) {
+            S.stimulusMap = data.stimulusMap;
+            S.clockPeriodNs = Number(data.clockPeriodNs) || S.clockPeriodNs;
+        }
+        const entry = data.boardImage || data;
+        if (entry && (entry.leds || entry.buzzerDecode || entry.pov)) {
+            S.lastStimulusEntry = entry;
+            applyStimulusEntry(entry);
+        }
+    } catch (err) {
+        if (err?.name !== "AbortError") bottom.log(`Stimulus fallback failed: ${err.message}`, "warn");
+    } finally {
+        simAbort = null;
+    }
+}
+
+// --------------------------------------------------- board control cells ---
+function setPhysicalKeyPressed(index, pressed) {
+    const i = Number(index) || 0;
+    if (i < 0 || i >= S.keyState.length) return;
+    const prev = !!S.keyState[i];
+    if (prev === !!pressed) return;
+    handleChannelChange("key", i, pressed ? 1 : 0, prev ? 1 : 0);
+}
+function toggleDip(index) {
+    const i = Number(index) || 0;
+    if (i < 0 || i >= S.dipState.length) return;
+    const prev = !!S.dipState[i];
+    handleChannelChange("dip", i, prev ? 0 : 1, prev ? 1 : 0);
+}
+function updateBoardControlButton(index) {
+    const row = $("bc-row");
+    const item = row?.querySelector(`.bc-cell[data-index="${index}"]`);
+    if (!item) return;
+    const keyBtn = item.querySelector(".bc-key");
+    const dipBtn = item.querySelector(".bc-dip");
+    const valSpan = item.querySelector(".bc-val");
+    const dipIndex = Number(item.dataset.dip ?? index);
+    const closed = !!(S.keyState[index] || S.dipState[dipIndex]);
+    keyBtn?.classList.toggle("on", !!S.keyState[index]);
+    dipBtn?.classList.toggle("on", !!S.dipState[dipIndex]);
+    if (valSpan) {
+        valSpan.textContent = closed ? "0" : "1";
+        valSpan.classList.toggle("v0", !!closed);
+    }
+    const targetNames = (keyNetBindings[index] || []).map((t) => t.nodeName).join(", ");
+    item.title = targetNames ? `Channel ${index} -> ${targetNames}` : `Channel ${index} — unassigned`;
+}
+
+function buildBoardControls() {
+    const wrap = $("board-controls");
+    const row = $("bc-row");
+    if (!wrap || !row) return;
+    const b = S.boardProfile?.board || {};
+    const keyCount = b.buttons?.pins?.length || b.buttons?.count || 0;
+    const swCount = b.switches?.pins?.length || b.switches?.count || 0;
+    const shared = !!b.switches?.sharedWithButtons;
+    S.keyState = new Array(keyCount).fill(false);
+    S.dipState = new Array(shared ? keyCount : swCount).fill(false);
+    row.innerHTML = "";
+
+    const makeCell = (index, label, withKey, withDip, dipLabel, dipIndex = index) => {
+        const cell = document.createElement("div");
+        cell.className = "bc-cell";
+        cell.dataset.index = String(index);
+        cell.dataset.dip = String(dipIndex);
+        cell.innerHTML = `
+            ${withKey ? `<button type="button" class="bc-key" data-pressed="0" title="Hold for logic 0">${label}<b class="bc-val">1</b></button>` : ""}
+            ${withDip ? `<button type="button" class="bc-dip" aria-pressed="false" title="Toggle DIP switch">${dipLabel}</button>` : ""}
+            ${withKey ? "" : `<b class="bc-val">1</b>`}
+        `;
+        const keyBtn = cell.querySelector(".bc-key");
+        if (keyBtn) {
+            const release = () => {
+                if (keyBtn.dataset.pressed !== "1") return;
+                keyBtn.dataset.pressed = "0";
+                setPhysicalKeyPressed(index, false);
+            };
+            keyBtn.addEventListener("pointerdown", (e) => {
+                if (e.button !== 0) return;
+                e.preventDefault();
+                keyBtn.dataset.pressed = "1";
+                setPhysicalKeyPressed(index, true);
+            });
+            keyBtn.addEventListener("pointerup", release);
+            keyBtn.addEventListener("pointercancel", release);
+            keyBtn.addEventListener("pointerleave", release);
+            keyBtn.addEventListener("keydown", (e) => {
+                if ((e.key === " " || e.key === "Enter") && !e.repeat) {
+                    e.preventDefault();
+                    keyBtn.dataset.pressed = "1";
+                    setPhysicalKeyPressed(index, true);
+                }
+            });
+            keyBtn.addEventListener("keyup", (e) => {
+                if (e.key === " " || e.key === "Enter") { e.preventDefault(); release(); }
+            });
+        }
+        cell.querySelector(".bc-dip")?.addEventListener("click", () => toggleDip(dipIndex));
+        row.appendChild(cell);
+        updateBoardControlButton(index);
+    };
+
+    if (shared) {
+        for (let i = 0; i < keyCount; i += 1) makeCell(i, `K${i + 1}`, true, true, `S${i + 1}`);
+    } else {
+        for (let i = 0; i < keyCount; i += 1) makeCell(i, `K${i}`, true, false, "");
+        for (let i = 0; i < swCount; i += 1) {
+            makeCell(keyCount + i, "", false, true, `SW${i}`, i);
+        }
+    }
+    wrap.classList.toggle("hidden", keyCount + swCount === 0);
+}
+
+// ------------------------------------------------------------- components --
 function resizeBoardSoon() {
     requestAnimationFrame(() => board?._resize?.());
     setTimeout(() => board?._resize?.(), 60);
 }
-
-// --------------------------------------------------------------- buzzer ----
-let buzzerStopTimer = null;
-
-function clearBuzzerTimer() {
-    if (buzzerStopTimer) {
-        clearTimeout(buzzerStopTimer);
-        buzzerStopTimer = null;
-    }
+function syncPlannerToTopContext(ctx) {
+    if (!sidebar) return;
+    if (ctx?.entityObj) {
+        sidebar.setEntity(ctx.entityObj);
+        applyKeyDefaultsToEditor(ctx.entityObj, sidebar.getPinPlan());
+    } else if (!ctx?.topFile) sidebar.setEntity(null);
 }
-
-function updateAudioBadge() {
-    const badge = $("tb-audio-badge");
-    if (badge) badge.textContent = audio.badge();
-    const btn = $("tb-mute");
-    if (btn) {
-        btn.innerHTML = icon(audio.muted ? "mute" : "volume");
-        btn.classList.toggle("muted", audio.muted);
-        btn.setAttribute("aria-pressed", String(audio.muted));
-        btn.title = audio.muted ? "Unmute buzzer (M)" : "Mute buzzer (M)";
-    }
-    const vol = $("tb-volume");
-    if (vol && document.activeElement !== vol) vol.value = String(Math.round(audio.volume * 100));
-}
-
-async function toggleMute() {
-    await audio.ensure();
-    audio.setMuted(!audio.muted);
-    updateAudioBadge();
-}
-
-// Start/refresh the tone from the cycle-accurate buzzer decode. The backend
-// measures edges in simulated ns; measureBuzzer converts them to 50 MHz cycles.
-function applyBuzzerAudio(per, clockNs) {
-    clearBuzzerTimer();
-    if (!per || typeof per !== "object") {
-        audio.silence();
-        updateAudioBadge();
-        return;
-    }
-    const m = measureBuzzer(per.edges, clockNs, per.activeLow !== false);
-    if (m.tone) {
-        audio.tone(m.frequency, m.duty).then(updateAudioBadge).catch(() => {});
-        log(`Buzzer: ${m.frequency} Hz (${m.cyclesPerPeriod} cycles/period, ${(m.duty * 100).toFixed(0)}% duty)`, "info");
-    } else {
-        audio.silence();
-        updateAudioBadge();
-        // Passive speaker + PNP high-side: a steady LOW is DC, not a tone.
-        if (per.tone) log(`Buzzer: ${per.frequency} Hz tone`, "info");
-    }
-    S.buzzer = { ...per, ...m };
-}
-
-// After the capture, schedule the 1 s countdown from the design's own loaded
-// down-counter (buzz1: sec_counter = 49,999,999 at release). No wall-clock
-// guessing and no multi-second GHDL run.
-function scheduleBuzzerStop(clockNs, countdown = null) {
-    // Schedule the note end purely from the detected countdown. (The final
-    // sampled buzzer *level* is meaningless for a toggling tone — it is 0/1 at
-    // random — so it must not gate the stop.)
-    let found = countdown;
-    if (!found) {
-        const cycles = Array.from(cyclesMap.values()).sort((a, b2) => a.cycle - b2.cycle);
-        found = detectDownCounter(cycles, 1000);
-    }
-    if (!found) return; // no terminal count -> keep the tone until stop/next run
-    const cycles = found.cycles ?? found.terminal;
-    const secs = noteSeconds(cycles, clockNs);
-    // The counter was loaded at start_ns; part of the note may already have
-    // elapsed by the end of the capture.
-    const elapsed = found.start_ns !== undefined && found.capture_end_ns !== undefined
-        ? Math.max(0, (found.capture_end_ns - found.start_ns) / 1e9)
-        : 0;
-    const delay = Math.max(0, secs - elapsed);
-    if (delay > 0.02 && delay < 60) {
-        buzzerStopTimer = setTimeout(() => {
-            audio.silence();
-            updateAudioBadge();
-            buzzerStopTimer = null;
-            log(`Buzzer: ${found.name} expired -> silent`, "info");
-        }, delay * 1000);
-    }
-    log(
-        `Buzzer: ${found.name} loaded ${found.terminal} (step ${found.step ?? 1}) -> ${secs.toFixed(3)} s note`,
-        "info",
-    );
-}
+function syncPlannerToActiveTop() { syncPlannerToTopContext(editor?.getTopContext?.()); }
+function log(text, level = "info") { bottom?.log?.(text, level); }
 
 function initComponents() {
     toolbar = createToolbar($("toolbar"), {
@@ -251,226 +468,124 @@ function initComponents() {
         onStop: stopSim,
         onReset: resetSim,
         onStep: () => stepSim(1),
-        onZoomIn: () => board?.zoomIn?.(),
-        onZoomOut: () => board?.zoomOut?.(),
-        onFit: () => board?.fit?.(),
-        onPreset: (p) => board?.setPreset?.(p),
-        onTheme: toggleTheme,
+        onRun: () => compileAndProgram(),
         onMute: toggleMute,
-        onHelp: cheatSheet,
-        onAbout: () => showAboutDialog(),
-        onToggleLeft: () => toggleDrawer("left"),
-        onToggleRight: () => toggleDrawer("right"),
+        onBoard: (id) => selectBoard(id),
+        onExample: (id) => loadExample(id),
+        onToggleRight: () => toggleRight(),
+        onToggleBottom: () => toggleBottom(),
     });
 
-    // Buzzer volume + persisted mute state.
     const vol = $("tb-volume");
     if (vol) {
         vol.value = String(Math.round(audio.volume * 100));
-        vol.addEventListener("input", async () => {
-            await audio.ensure();
+        vol.addEventListener("input", () => {
+            audioSettle(safeCall(() => audio.ensure?.()));
             audio.setVolume(Number(vol.value) / 100);
             updateAudioBadge();
         });
     }
     updateAudioBadge();
 
-    sidebar = createSidebar($("left"), {
-        onFocus: (id) => {
-            if (!board?.focusComponent?.(id)) toast(`No 3D part for "${id}"`, { kind: "warn" });
-        },
-        onHighlightPin: (pinId) => {
-            if (!board?.highlightPin?.(pinId)) toast(`Pin ${pinId} is not mapped to a visible 3D part`, { kind: "info" });
-        },
-        onExample: (id) => loadExample(id),
-        onRun: () => compileAndProgram(),
-        onAttachedChanged: () => {},
-        onPinAssignmentsChanged: () => {
-            if (S.programmed && S.compileResult?.ok) {
-                syncLivePinBindings();
-            }
-        },
-        onCollapsed: (collapsed) => {
-            saveCollapsedPref(LEFT_COLLAPSED_KEY, collapsed);
-            resizeBoardSoon();
-        },
-        log: (t, l) => bottom.log(t, l),
-    });
-
-    editor = createEditorPanel($("right"), {
+    editor = createEditorPanel($("editor-host"), {
         initialSource: S.files[0].content,
         onFilesChanged: () => syncPlannerToActiveTop(),
         onTopContextChanged: (ctx) => syncPlannerToTopContext(ctx),
-        onQsfUploaded: (qsfText, qsfName) => {
-            syncPlannerToActiveTop();
-            sidebar.importQsfText(qsfText, qsfName);
-        },
+        onQsfUploaded: (qsfText) => { syncPlannerToActiveTop(); sidebar.importQsfText(qsfText); },
         onFilesUploaded: () => {},
         onRun: () => compileAndProgram(),
         onDevice: selectDevice,
-        onCollapsed: (collapsed) => {
-            saveCollapsedPref(RIGHT_COLLAPSED_KEY, collapsed);
-            resizeBoardSoon();
-        },
+        onCollapsed: () => resizeBoardSoon(),
         onResized: () => resizeBoardSoon(),
-        log: (t, l) => bottom.log(t, l),
+        log: (t, l) => log(t, l),
     });
 
+    sidebar = createSidebar($("sidebar-host"), {
+        onFocus: (id) => { if (!board?.focusComponent?.(id)) toast(`No 3D part for "${id}"`, { kind: "warn" }); },
+        onHighlightPin: (pinId) => { if (!board?.highlightPin?.(pinId)) toast(`Pin ${pinId} is not mapped`, { kind: "info" }); },
+        onExample: (id) => loadExample(id),
+        onRun: () => compileAndProgram(),
+        onPinAssignmentsChanged: () => { if (S.programmed && S.compileResult?.ok) syncLivePinBindings(); },
+        onImportBoard: (manifest) => importCustomBoard(manifest),
+        log: (t, l) => log(t, l),
+    });
+    sidebar.setKeyStateReader(() => S.keyState || []);
+
     bottom = createBottomPanel($("bottompanel"), {
-        onOpenProblem: openProblem,
+        onOpenProblem: (p) => editor.openFile(p.file || editor.getActiveFile(), p.line, p.column),
         onValuesAt: (t) => { S.simTimeNs = t; },
         onExportVcd: exportVcd,
+        onTerminalInput: (line) => {
+            if (!terminal) return;
+            if (typeof terminal.runLine === "function") terminal.runLine(line);
+            else safeCall(() => terminal.sendInput?.(line + "\n"));
+        },
+        onTerminalClear: () => terminal?.clear?.(),
+        onTerminalRestart: () => terminal?.restart?.(),
+        onCollapsed: () => setTimeout(() => bottom.wave.resize(), 60),
     });
 
     const statsEl = document.createElement("div");
     statsEl.id = "stats";
-    $("board-area").appendChild(statsEl);
+    document.querySelector(".board-hud-pill")?.appendChild(statsEl);
     stats = createStatsBlock(statsEl);
-}
 
-function showAboutDialog() {
-    const ver = S.appVersion || "0.1.0";
-    const html = `
-        <p style="margin-bottom:10px;"><b>Cyclone IV Studio v${ver}</b> — Interactive RZ-EasyFPGA A2.2 (EP4CE6E22C8N) FPGA Simulator.</p>
-        <div class="ic-title">Third-Party & Open-Source Licenses</div>
-        <ul style="padding-left:18px;margin:6px 0 10px;line-height:1.55;">
-            <li><b>GHDL</b> (bundled VHDL compiler &amp; simulator): GNU General Public License v2+ (GPL-2.0-or-later). Source code is available under the GPL written source offer in <code>THIRD_PARTY_LICENSES.md</code> and at <a href="https://github.com/ghdl/ghdl" target="_blank" rel="noreferrer">github.com/ghdl/ghdl</a>.</li>
-            <li><b>FastAPI, Uvicorn, WebSockets, Starlette, Pydantic</b>: MIT / BSD licenses.</li>
-            <li><b>Three.js, Monaco Editor, JSZip, Vite, Vitest</b>: MIT licenses.</li>
-            <li><b>Tauri</b> (desktop shell): MIT / Apache-2.0 licenses.</li>
-        </ul>
-        <p style="font-size:11px;color:var(--muted);">Vendor schematic PDFs and proprietary binary bitstream images are excluded from redistribution; only derived open pin-map metadata (<code>board/board.json</code>) is shipped.</p>
-    `;
-    dialog({
-        title: `About Cyclone IV Studio v${ver}`,
-        body: html,
-        actions: [{ label: "Close", kind: "primary" }],
-        wide: true,
+    const right = $("right");
+    right.dataset.tab = "code";
+    $("wb-tabs")?.addEventListener("click", (e) => {
+        const tab = e.target.closest("[data-tab]");
+        if (!tab) return;
+        setWorkbenchTab(tab.dataset.tab);
     });
 }
 
-function syncPlannerToTopContext(ctx) {
-    if (ctx?.entityObj) {
-        sidebar.setEntity(ctx.entityObj);
-        applyKeyDefaultsToEditor(ctx.entityObj, sidebar.getPinPlan());
-    } else if (!ctx?.topFile) {
-        sidebar.setEntity(null);
-    }
+function setWorkbenchTab(key) {
+    const right = $("right");
+    if (!right || !["code", "pinmap", "periph", "board"].includes(key)) return;
+    right.dataset.tab = key;
+    right.querySelectorAll(".wb-tab").forEach((t) => {
+        const on = t.dataset.tab === key;
+        t.classList.toggle("active", on);
+        t.setAttribute("aria-selected", String(on));
+    });
+    if (key !== "code") sidebar.showTab(key);
+    resizeBoardSoon();
+}
+function toggleRight() {
+    const right = $("right");
+    if (!right) return;
+    right.classList.toggle("collapsed");
+    resizeBoardSoon();
+}
+function toggleBottom() {
+    $("bottom")?.classList.toggle("collapsed");
+    setTimeout(() => bottom?.wave?.resize?.(), 60);
 }
 
-function syncPlannerToActiveTop() {
-    const ctx = editor?.getTopContext?.();
-    syncPlannerToTopContext(ctx);
+// ------------------------------------------------------------------ theme --
+function setTheme() {
+    document.documentElement.dataset.theme = "dark";
+    safeCall(() => board?.setTheme?.("dark"));
+    safeCall(() => editor?.setTheme?.(true));
 }
+function toggleTheme() { /* the studio is intentionally dark-only */ }
 
-function log(text, level = "info") {
-    bottom.log(text, level);
-}
-
-// -------------------------------------------------------------- drawers --
-function toggleDrawer(which) {
-    const isNarrow = window.matchMedia("(max-width: 1150px)").matches;
-    if (!isNarrow) {
-        if (which === "right") {
-            const el = $("right");
-            editor?.setCollapsed?.(!el?.classList.contains("collapsed"));
-        } else {
-            const el = $("left");
-            sidebar?.setCollapsed?.(!el?.classList.contains("collapsed"));
-        }
-        return;
-    }
-    if (which === "right" && $("right")?.classList.contains("collapsed")) editor?.expand?.();
-    if (which === "left" && $("left")?.classList.contains("collapsed")) sidebar?.expand?.();
-    const cls = which === "left" ? "drawer-left" : "drawer-right";
-    document.body.classList.toggle(cls);
-    syncBackdrop();
-}
-
-function syncBackdrop() {
-    const open = document.body.classList.contains("drawer-left")
-        || document.body.classList.contains("drawer-right");
-    const backdrop = $("drawer-backdrop");
-    if (backdrop) backdrop.hidden = !open;
-}
-
-function setStatus(status, detail = "") {
-    S.status = status;
-    S.statusDetail = detail;
-    toolbar.setStatus(status, detail);
-}
-
-// ---------------------------------------------------------------- theme --
-function toggleTheme() {
-    setTheme(S.theme === "dark" ? "light" : "dark");
-}
-
-function setTheme(theme) {
-    S.theme = theme;
-    document.documentElement.dataset.theme = theme;
-    board?.setTheme?.(theme);
-    editor?.setTheme(theme === "dark");
-    toolbar?.setTheme(theme === "dark");
-}
-
-// ---------------------------------------------------------------- power --
-function togglePower() {
-    setPower(!S.power);
-}
-
-// Silence the buzzer immediately: ramp gain to 0, cancel any pending
-// release-note countdown timer, refresh the toolbar badge.
-function silenceBuzzer() {
-    clearBuzzerTimer();
-    audio.silence();
-    updateAudioBadge();
-}
-
-// Reset the interactive board state to "powered-on idle": every key and DIP
-// open (logic 1) and the editor stimulus re-applied from that state.
-function resetInteractiveState() {
-    for (let i = 0; i < 4; i += 1) {
-        keyHeldState[i] = false;
-        dipLatchedState[i] = false;
-        board?.pressKey?.(i, false);
-        board?.setDip?.(i, false);
-        updateBoardControlButton(i);
-    }
-    if (S.entity) applyKeyDefaultsToEditor(S.entity, sidebar.getPinPlan());
-}
-
+// ------------------------------------------------------------------ power --
+function togglePower() { setPower(!S.power); }
 function setPower(on) {
-    const wasProgrammed = Boolean(S.programmed && S.compileResult?.ok);
-    console.log("[dbg] setPower on=" + on + " wasProgrammed=" + wasProgrammed + " backendOk=" + S.backendOk);
     S.power = !!on;
+    S.powered = S.power;
     if (!S.power) {
-        // Power OFF: silence the buzzer first (gain 0 + cancel the release-note
-        // timer), halt any in-flight playback/run, then clear the board
-        // outputs. The compiled design stays loaded so Power On can restore it.
-        silenceBuzzer();
+        driveBuzzer(false, 0, 0);
         stopSession();
-    } else {
-        // Power ON: reload the initial powered-on idle state (keys open = '1',
-        // D1 lit, buzzer silent) and restore the compiled design so pressing a
-        // key works immediately without clicking Compile again.
-        resetInteractiveState();
     }
-    board?.setPower(S.power);
+    safeCall(() => board?.setPower?.(S.power));
     toolbar.setPower(S.power);
-    if (S.power) {
-        // Re-attach the compiled design so the board is live immediately.
-        if (wasProgrammed && S.compileBoard) {
-            board?.setDesign?.(S.compileBoard);
-            S.programmed = true;
-        }
-        log("Board power ON — idle (keys open = '1', buzzer silent)", "ok");
-        if (wasProgrammed) refresh();
-    } else {
-        log("Board power OFF — buzzer silenced, outputs cleared (design stays loaded)", "warn");
-    }
+    log(S.power ? "Board power ON" : "Board power OFF — outputs cleared", S.power ? "ok" : "warn");
+    if (S.power && S.compileResult?.ok) refresh();
 }
 
-// ---------------------------------------------------------------- probes --
+// ----------------------------------------------------------------- probes --
 function addProbe(probe) {
     if (S.probes.some((p) => p.pinId === probe.pinId)) {
         toast(`${probe.pinId} is already probed`, { kind: "warn" });
@@ -481,56 +596,114 @@ function addProbe(probe) {
         S.probes = S.probes.filter((p) => p.pinId !== probe.pinId);
     });
     bottom.wave.addProbeSignal(probe.pinId);
-    bottom.showTab("wave");
-    log(`Probe added: ${probe.label} (${probe.pinId}) → Waveform`, "ok");
+    log(`Probe added: ${probe.label} (${probe.pinId})`, "ok");
 }
 
-// ---------------------------------------------------------- backend load --
+// ------------------------------------------------------- backend / data ----
+function applyProfile(data) {
+    const b = data?.board || {};
+    const profile = { board: b, pinMap: b.pinMap || data.pinMap || {}, facts: b.facts || [], device: data.device };
+    S.profile = profile;
+    S.boardProfile = profile;
+    S.device = data.device || S.device;
+    S.clockPeriodNs = 1e9 / (b.clockHz || 50000000);
+    S.simStats.targetSpeed = b.clockHz || 50000000;
+    safeCall(() => board?.setProfile?.(profile));
+    safeCall(() => sidebar?.setProfile?.(profile));
+    buildBoardControls();
+    stats?.update(S);
+    return profile;
+}
+
 async function checkHealth() {
     try {
-        const { httpOk, data } = await api.health();
-        const ok = httpOk && data?.ok;
+        const data = await apiGet("health", "/api/health");
+        const ok = !!data?.ok;
         S.backendOk = ok;
         S.ghdlVersion = data?.version || "";
-        if (data?.appVersion) { S.appVersion = data.appVersion; toolbar?.setVersion?.(S.appVersion); }
-        $("backend-banner").classList.toggle("hidden", !!ok);
-        if (ok) {
-            const m = String(S.ghdlVersion).match(/\d+\.\d+\.\d+/);
-            log(`Backend ready — GHDL ${m ? m[0] : "available"}`, "ok");
-        } else {
-            log("Backend health check failed", "error");
-        }
+        if (data?.appVersion) S.appVersion = data.appVersion;
+        $("backend-banner")?.classList.toggle("hidden", !!ok);
+        log(ok ? `Backend ready — GHDL ${data.version || "available"}` : "Backend health check failed", ok ? "ok" : "error");
     } catch (err) {
         S.backendOk = false;
-        $("backend-banner").classList.remove("hidden");
+        $("backend-banner")?.classList.remove("hidden");
         log(`Backend unreachable: ${err.message}`, "error");
     }
 }
 
 async function loadProfile() {
     try {
-        const { httpOk, data } = await api.board();
-        if (!httpOk || !data?.board) throw new Error(data?.message || "HTTP error");
-        const merged = data.board;
-        S.profile = { board: merged, pinMap: merged.pinMap || {}, facts: merged.facts || [], device: data.device };
-        S.device = data.device;
-        board?.setProfile?.(S.profile);
-        sidebar.setProfile(S.profile);
-        const hz = merged.clockHz || 50000000;
-        S.simStats.targetSpeed = hz;
-        log(`Board profile: ${merged.name} (${merged.fpga}) — ${(hz / 1e6).toFixed(0)} MHz`, "info");
+        const data = await apiGet("board", "/api/board");
+        if (!data?.board) throw new Error("no board profile");
+        const profile = applyProfile(data);
+        log(`Board profile: ${profile.board.name} — ${(profile.board.clockHz / 1e6).toFixed(0)} MHz`, "info");
     } catch (err) {
         log(`Board profile unavailable: ${err.message}`, "warn");
     }
 }
 
+async function loadBoards() {
+    try {
+        const data = await apiGet("getBoards", "/api/boards");
+        S.boardsList = data?.boards || [];
+        S.activeBoardId = data?.activeBoard || S.activeBoardId;
+        toolbar.setBoards(S.boardsList, S.activeBoardId);
+        if (data?.board) {
+            const profile = applyProfile({ board: data.board, device: data.device });
+            if (!S.compileResult) buildBoardControls();
+        }
+    } catch {
+        toolbar.setBoards(S.boardsList, S.activeBoardId);
+    }
+}
+
+async function selectBoard(id) {
+    try {
+        const data = await apiPost("selectBoard", "/api/boards/select", { board: id }, [id]);
+        if (data && data.ok === false) throw new Error(data.message || "select failed");
+        S.stimulusMap = null;
+        S.lastStimulusEntry = null;
+        S.compileResult = null;
+        S.programmed = false;
+        S.boardsList = data?.boards || S.boardsList;
+        S.activeBoardId = data?.activeBoard || id;
+        if (data?.board) applyProfile({ board: data.board, device: data.device });
+        safeCall(() => board?.rebuildBoard?.(S.boardProfile));
+        safeCall(() => board?.resetVisual?.());
+        S.stimulusMap = null;
+        buildBoardControls();
+        toolbar.setBoards(S.boardsList, S.activeBoardId);
+        toolbar.setActiveBoard(S.activeBoardId);
+        if (data?.device) safeCall(() => editor.setDevice?.(data.device.key || data.device.part));
+        log(`Selected board: ${S.boardProfile?.board?.name || id}`, "ok");
+    } catch (err) {
+        log(`Board select failed: ${err.message}`, "error");
+    }
+}
+
+async function importCustomBoard(manifest) {
+    try {
+        const data = await apiPost("importBoard", "/api/boards/import", { manifest, select: true }, [manifest, true]);
+        if (data && data.ok === false) throw new Error(data.message || "import failed");
+        S.stimulusMap = null;
+        S.activeBoardId = data?.activeBoard || manifest?.id || S.activeBoardId;
+        if (data?.board) applyProfile({ board: data.board, device: data.device });
+        safeCall(() => board?.rebuildBoard?.(S.boardProfile));
+        safeCall(() => board?.resetVisual?.());
+        buildBoardControls();
+        await loadBoards();
+        toolbar.setActiveBoard(S.activeBoardId);
+        log(`Imported custom board: ${S.boardProfile?.board?.name || S.activeBoardId}`, "ok");
+    } catch (err) {
+        log(`Board import failed: ${err.message}`, "error");
+    }
+}
+
 async function loadExamples() {
     try {
-        const { httpOk, data } = await api.examples();
-        S.examples = httpOk ? (data?.examples || []) : [];
-    } catch {
-        S.examples = [];
-    }
+        const data = await apiGet("examples", "/api/examples");
+        S.examples = data?.examples || [];
+    } catch { S.examples = []; }
     sidebar.setExamples(S.examples);
     toolbar.setExamples(S.examples);
 }
@@ -539,8 +712,10 @@ async function loadExample(id) {
     const ex = S.examples.find((e) => e.id === id);
     if (!ex) return;
     try {
-        const { httpOk, data } = await api.example(id);
-        const source = httpOk ? (data?.source ?? ex.source) : ex.source;
+        const data = typeof api.example === "function"
+            ? await api.example(id)
+            : (await api._fetch(`/api/examples/${encodeURIComponent(id)}`)).data;
+        const source = data?.source ?? ex.source;
         editor.setFiles([{ name: ex.file || `${ex.id}.vhd`, content: source }], false);
         log(`Loaded example: ${ex.name}`, "cmd");
     } catch (err) {
@@ -550,8 +725,8 @@ async function loadExample(id) {
 
 async function selectDevice(key) {
     try {
-        const { httpOk, data } = await api.selectDevice(key);
-        if (!httpOk || !data?.ok) throw new Error(data?.message || "select failed");
+        const data = await apiPost("selectDevice", "/api/device/select", { device: key }, [key]);
+        if (data && data.ok === false) throw new Error(data.message || "select failed");
         S.deviceKey = key;
         S.device = data.device;
         log(`Device selected: ${data.device?.part || key}`, "ok");
@@ -561,79 +736,49 @@ async function selectDevice(key) {
     }
 }
 
-// ------------------------------------------------- board KEY/DIP controls --
-// Active-low KEY1..KEY4 (PIN_88..91, 10k pull-ups R38-R41) & DIP SW2 (R42-R45):
-// - Both start OPEN / RELEASED -> logic 1.
-// - Pressing a key reads logic 0 ONLY while held down, returning to 1 on release.
-// - Closing a DIP lever latches the shared net to 0 until opened back to 1.
-let rerunTimer = null;
-const keyHeldState = [false, false, false, false];
-const dipLatchedState = [false, false, false, false];
-let keyNetBindings = [null, null, null, null]; // index 0..3 -> [{ portName, bitOffset, width }] | null
-
+// --------------------------------------------- key defaults / live binding --
 function keyPinList() {
-    // board.json is the only source of KEY pin numbers (A1: no fallback map).
-    const pins = S.profile?.board?.buttons?.pins || [];
-    return pins.map((p) => String(p).toUpperCase());
+    return (S.boardProfile?.board?.buttons?.pins || []).map((p) => String(p).toUpperCase());
 }
-
 function applyKeyDefaultsToEditor(entityObj, pinPlan) {
     if (!entityObj?.ports) return;
     const keyPins = keyPinList();
     const boundByPort = new Map();
-    if (pinPlan?.nodes) {
-        for (const n of pinPlan.nodes) {
-            const loc = pinPlan.validation?.validByNode?.get(n.nodeName);
-            if (!loc) continue;
-            const kIdx = keyPins.indexOf(loc);
-            if (kIdx >= 0) {
-                const set = boundByPort.get(n.portName) || new Set();
-                set.add(n.bitOffset || 0);
-                boundByPort.set(n.portName, set);
-            }
+    for (const n of pinPlan?.nodes || []) {
+        const loc = pinPlan.validation?.validByNode?.get(n.nodeName);
+        if (!loc) continue;
+        const kIdx = keyPins.indexOf(String(loc).toUpperCase());
+        if (kIdx >= 0) {
+            const set = boundByPort.get(n.portName) || new Set();
+            set.add(n.bitOffset || 0);
+            boundByPort.set(n.portName, set);
         }
     }
     for (const port of entityObj.ports) {
         if (port.direction !== "in") continue;
-        const w = port.width || 1;
-        const isKeyNamed = /^(?:key|sw|switch|btn|dip|ckey)[_]?\d+$|^(?:[sk][1-4])$/i.test(port.name);
+        const width = port.width || 1;
+        const isKeyNamed = /^(?:key|sw|switch|btn|dip|ckey)[_]?\d+$/i.test(port.name);
         const boundBits = boundByPort.get(port.name);
         if (!boundBits && !isKeyNamed) continue;
         let cur = editor.getStimulusValue(port.name);
-        // Ensure assigned KEY pins match current held/latched hardware state (all open = 1 initially)
-        for (let b = 0; b < w; b += 1) {
-            if (boundBits && boundBits.has(b)) {
+        for (let b = 0; b < width; b += 1) {
+            if (boundBits?.has(b)) {
                 const loc = pinPlan.portPins?.[port.name]?.[b];
                 const kIdx = keyPins.indexOf(String(loc || "").toUpperCase());
-                const closed = kIdx >= 0 ? (keyHeldState[kIdx] || dipLatchedState[kIdx]) : false;
-                if (closed) cur &= ~(1 << b);
-                else cur |= (1 << b);
-            } else if (!boundBits && isKeyNamed) {
-                cur |= (1 << b);
-            }
+                const closed = kIdx >= 0 ? !!(S.keyState[kIdx] || S.dipState[kIdx]) : false;
+                if (closed) cur &= ~(1 << b); else cur |= (1 << b);
+            } else if (!boundBits && isKeyNamed) cur |= (1 << b);
         }
         editor.setStimulusValue(port.name, cur);
     }
 }
 
-function scheduleRerun() {
-    if (rerunTimer) clearTimeout(rerunTimer);
-    rerunTimer = setTimeout(() => {
-        rerunTimer = null;
-        if (!S.backendOk || !S.compileResult?.ok) return;
-        refresh();
-    }, 90);
-}
-
-// Compute KEY1..KEY4 -> assigned top-level entity port bit bindings ONLY via Pin Planner.
 function syncLivePinBindings() {
     const keyPins = keyPinList();
     const plan = sidebar.getPinPlan();
     if (S.compileBoard) {
         S.compileBoard.pins = {};
-        for (const [port, arr] of Object.entries(plan.portPins || {})) {
-            S.compileBoard.pins[port] = [...arr];
-        }
+        for (const [port, arr] of Object.entries(plan.portPins || {})) S.compileBoard.pins[port] = [...arr];
     }
     buildPinIndexes(S.compileBoard);
     keyNetBindings = keyPins.map((pin) => {
@@ -646,220 +791,21 @@ function syncLivePinBindings() {
         }
         return targets.length ? targets : null;
     });
-    buildBoardControls();
 }
 
-function syncKeyStimulusAndUI(index, reason) {
-    const closed = Boolean(keyHeldState[index] || dipLatchedState[index]);
-    const level = closed ? 0 : 1;
-    const targets = keyNetBindings[index] || [];
-    for (const t of targets) {
-        const p = S.entity?.ports?.find((x) => x.name === t.portName);
-        const width = p?.width || 1;
-        if (width > 1) {
-            const cur = editor.getStimulusValue(t.portName);
-            editor.setStimulusValue(t.portName, closed ? (cur & ~(1 << t.bitOffset)) : (cur | (1 << t.bitOffset)));
-        } else if (reason === "released") {
-            // Model the release edge (not a permanent low): the design's own
-            // countdown starts here, e.g. buzz1's 1.0 s timer.
-            editor.setStimulusPulseOnce(t.portName, 1);
-        } else {
-            editor.setStimulusValue(t.portName, level);
-        }
-    }
-    board?.pressKey?.(index, keyHeldState[index]);
-    board?.setDip?.(index, dipLatchedState[index]);
-    updateBoardControlButton(index);
-    if (targets.length && S.programmed && !S.power) {
-        // The board is powered off: the keys/DIP are inert, so only reflect
-        // the visuals and never trigger a stimulus run.
-        log(`KEY${index + 1} (${keyPinList()[index]}) → ${reason} (board powered off — ignored)`, "warn");
-        return;
-    }
-    if (targets.length && S.programmed) {
-        log(`KEY${index + 1} (${keyPinList()[index]}) → ${reason} (logic ${level})`, "cmd");
-        scheduleRerun();
-    }
+function scheduleRerun() {
+    if (rerunTimer) clearTimeout(rerunTimer);
+    rerunTimer = setTimeout(() => {
+        rerunTimer = null;
+        if (S.backendOk && S.compileResult?.ok) refresh();
+    }, 90);
 }
-
-function setPhysicalKeyPressed(index, pressed) {
-    if (index < 0 || index >= 4) return;
-    if (pressed) audio.ensure().catch(() => {});
-    if (keyHeldState[index] === Boolean(pressed)) return;
-    keyHeldState[index] = Boolean(pressed);
-    syncKeyStimulusAndUI(index, keyHeldState[index] ? "pressed" : "released");
-}
-
-function toggleDip(index) {
-    if (index < 0 || index >= 4) return;
-    dipLatchedState[index] = !dipLatchedState[index];
-    syncKeyStimulusAndUI(index, dipLatchedState[index] ? "DIP closed" : "DIP open");
-}
-
 function pressBoardReset() {
-    if (!S.programmed) return;
-    // The 3D RESET key drives PIN_25 (active low). Cancel the release-note
-    // countdown, silence the buzzer, release the key/DIP overrides and re-run
-    // from the design's initial state.
-    silenceBuzzer();
-    resetInteractiveState();
-    log("RESET pressed — restarting captured run (power-on reset)", "cmd");
+    log("RESET pressed — restarting captured run", "cmd");
     scheduleRerun();
 }
 
-function updateBoardControlButton(index) {
-    const row = $("bc-row");
-    if (!row) return;
-    const item = row.querySelector(`.bc-cell[data-index="${index}"]`);
-    if (!item) return;
-    const keyBtn = item.querySelector(".bc-key");
-    const dipBtn = item.querySelector(".bc-dip");
-    const valSpan = item.querySelector(".bc-val");
-    const closed = Boolean(keyHeldState[index] || dipLatchedState[index]);
-    const level = closed ? 0 : 1;
-    keyBtn?.classList.toggle("on", keyHeldState[index]);
-    dipBtn?.classList.toggle("on", dipLatchedState[index]);
-    if (valSpan) {
-        valSpan.textContent = String(level);
-        valSpan.classList.toggle("v0", level === 0);
-    }
-    const targetNames = (keyNetBindings[index] || []).map((t) => t.nodeName).join(", ");
-    item.title = targetNames
-        ? `KEY${index + 1} (${keyPinList()[index]}) -> ${targetNames} | reads ${level}`
-        : `KEY${index + 1} (${keyPinList()[index]}) unassigned in Pin Planner`;
-}
-
-function buildBoardControls() {
-    const wrap = $("board-controls");
-    const row = $("bc-row");
-    if (!wrap || !row) return;
-    const anyBound = keyNetBindings.some(Boolean);
-    row.innerHTML = "";
-    if (!anyBound) {
-        wrap.classList.add("hidden");
-        return;
-    }
-    wrap.classList.remove("hidden");
-
-    for (let i = 0; i < 4; i += 1) {
-        const targets = keyNetBindings[i];
-        const cell = document.createElement("div");
-        cell.className = `bc-cell ${targets ? "" : "bc-unbound"}`;
-        cell.dataset.index = String(i);
-        cell.innerHTML = `
-            <button type="button" class="bc-key" ${targets ? "" : "disabled"} title="Hold for logic 0, release for logic 1">
-                <span>KEY${i + 1}</span>
-                <b class="bc-val">1</b>
-            </button>
-            <button type="button" class="bc-dip" ${targets ? "" : "disabled"} title="Toggle DIP switch SW${i + 1} (latch 0/1)">
-                SW${i + 1}
-            </button>
-        `;
-        const keyBtn = cell.querySelector(".bc-key");
-        const dipBtn = cell.querySelector(".bc-dip");
-
-        const releaseKey = () => {
-            if (keyHeldState[i]) setPhysicalKeyPressed(i, false);
-        };
-        keyBtn.addEventListener("pointerdown", (e) => {
-            if (e.button !== 0 || !targets) return;
-            e.preventDefault();
-            setPhysicalKeyPressed(i, true);
-        });
-        keyBtn.addEventListener("pointerup", releaseKey);
-        keyBtn.addEventListener("pointercancel", releaseKey);
-        keyBtn.addEventListener("pointerleave", releaseKey);
-        keyBtn.addEventListener("keydown", (e) => {
-            if ((e.key === " " || e.key === "Enter") && !e.repeat) {
-                e.preventDefault();
-                setPhysicalKeyPressed(i, true);
-            }
-        });
-        keyBtn.addEventListener("keyup", (e) => {
-            if (e.key === " " || e.key === "Enter") {
-                e.preventDefault();
-                releaseKey();
-            }
-        });
-        dipBtn.addEventListener("click", () => {
-            if (targets) toggleDip(i);
-        });
-
-        row.appendChild(cell);
-        updateBoardControlButton(i);
-    }
-}
-
-// ------------------------------------------------------------------ run --
-let session = null;
-let cyclesMap = new Map();
-let updateAccum = 0;
-let pendingCycles = [];
-
-function flushPendingUi() {
-    if (pendingCycles.length) {
-        bottom.wave.addCycles(pendingCycles);
-        pendingCycles = [];
-    }
-    sidebar.setLiveValues(S.liveValues);
-}
-
-// ENG-01B: download the captured waveform as a standard VCD (GTKWave etc.).
-function exportVcd() {
-    const signals = S.signals || [];
-    const cycles = Array.from(cyclesMap.values()).sort((a, b) => a.cycle - b.cycle);
-    if (!cycles.length) {
-        toast("No waveform to export — compile and run first", { kind: "warn" });
-        return;
-    }
-    const durationNs = Number(cycles[cycles.length - 1].time) || Number(S.simTimeNs) || 0;
-    const text = buildVcd(signals, cycles, {
-        timescaleNs: Number(S.clockNs) || 20,
-        durationNs,
-    });
-    const blob = new Blob([text], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "waveform.vcd";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    log(`Exported waveform.vcd (${cycles.length} cycles)`, "ok");
-    toast("Exported waveform.vcd", { kind: "info" });
-}
-
-let sessionGen = 0;
-
-function stopSession() {
-    sessionGen += 1;
-    if (session) {
-        session.close();
-        session = null;
-    }
-    S.running = false;
-    S.paused = false;
-    board?.setRunning?.(false);
-    clearBuzzerTimer();
-    audio.silence();
-    updateAudioBadge();
-}
-
-function makeSession() {
-    const gen = sessionGen;
-    return new SimSession({
-        onMessage: (msg) => { if (gen === sessionGen) handleSessionMessage(msg); },
-        onClose: (byUser) => {
-            if (gen !== sessionGen) return;
-            if (!byUser && (S.running || S.paused)) {
-                setStatus("error", "connection lost");
-                log("Simulation WebSocket closed unexpectedly", "error");
-            }
-        },
-    });
-}
-
+// ------------------------------------------------------------------- run ---
 function simPayload({ skipSynth = false, compactBoard = false, plan = null } = {}) {
     const cPlan = plan || editor.resolveCompilePlan();
     const pinPlan = sidebar.getPinPlan();
@@ -867,17 +813,8 @@ function simPayload({ skipSynth = false, compactBoard = false, plan = null } = {
     const setup = editor.readSetup();
     const boardInfo = S.compileBoard || {};
     const ports = S.entity?.ports || [];
-    // A buzzer design needs >1 full tone period in the capture to measure the
-    // frequency (800 Hz = 1.25 ms). A 7-seg design needs a capture spanning at
-    // least one full 4-digit scan period so the POV lights every tube (a
-    // 1 kHz/divider scan spans 200k+ cycles at 50 MHz). The cycle table stays
-    // compact; the board image is computed server-side from the transitions.
-    const hasBuzzer = ports.some(
-        (p) => p.direction === "out" && /buzzer|beep|spk/i.test(p.name || ""),
-    );
-    const hasDisplay = ports.some(
-        (p) => p.direction === "out" && /^(seg|dig|seven_seg|dtube)/i.test(p.name || ""),
-    );
+    const hasBuzzer = ports.some((p) => p.direction === "out" && /buzzer|beep|spk/i.test(p.name || ""));
+    const hasDisplay = ports.some((p) => p.direction === "out" && /^(seg|dig|seven_seg|dtube)/i.test(p.name || ""));
     let duration = hasBuzzer ? Math.max(setup.duration, 3_900_000) : setup.duration;
     if (hasDisplay) duration = Math.max(duration, 10_000_000);
     return {
@@ -894,6 +831,7 @@ function simPayload({ skipSynth = false, compactBoard = false, plan = null } = {
         clockPort: boardInfo.clock || undefined,
         stimuli: editor.buildStimuli(boardInfo.clock, boardInfo.reset),
         maxCycles: Math.min(131072, Math.max(100, Math.ceil((setup.duration || 1000) / Math.max(1, setup.clockPeriod || 10)))),
+        includeStimulusMap: true,
         skipSynth,
         compactBoard: compactBoard || hasDisplay,
     };
@@ -905,58 +843,47 @@ function formatSummary({ topEntity, topFile, filesUsed, pinPlan, errCount, warnC
     return `Top: ${topEntity || "—"} (${topFile || "—"}) · Files: ${filesUsed} · Pins: ${assigned}/${total} · ${errCount} err, ${warnCount} warn`;
 }
 
+function showCompileFailure(summary, msgs, errCount, step = 1) {
+    editor.setMessages(summary, msgs);
+    bottom.setProblems(msgs.filter((m) => m.severity === "error" || m.severity === "warning"));
+    editor.setProblems(msgs);
+    toolbar.setStep(step, "error");
+    setStatus("error", "compile failed");
+    log(`Compile failed (${errCount} error(s)) — previous board state retained.`, "error");
+    for (const e of msgs.slice(0, 12)) log(`${e.message || e} (${e.file || "project"}${e.line ? ":" + e.line : ""})`, "error");
+    toast(`Compile failed (${errCount} error${errCount > 1 ? "s" : ""})`, { kind: "error" });
+}
+
+function setStatus(status, detail = "") { S.status = status; S.statusDetail = detail; toolbar.setStatus(status, detail); }
+
 async function compileAndProgram() {
     refreshing = false;
-    S.refreshing = false;
-    // Compile is a user gesture — this is the right place to resume audio.
-    audio.ensure().catch(() => {});
+    refreshPending = false;
+    audioSettle(safeCall(() => audio.ensure?.()));
     if (S.backendOk === false) {
-        toast("Backend is offline — start it cleanly or retry connection", { kind: "error", timeout: 5000 });
+        toast("Backend is offline — start it cleanly or retry connection", { kind: "error" });
         return;
     }
-
     const plan = editor.resolveCompilePlan();
     if (!plan.includedFiles.length) {
-        const msg = { file: "", line: 1, column: 1, severity: "error", message: "No source files in project to compile." };
-        editor.setMessages("No project files", [msg]);
-        toast("Add a .vhd or .v file first", { kind: "error" });
+        showCompileFailure("No project files", [{ severity: "error", message: "No source files in project to compile." }], 1, 0);
         return;
     }
-
-    // Ensure Pin Planner matches the selected top-level ports before validation
     syncPlannerToTopContext({ entityObj: plan.topEntityObj, topFile: plan.topFile });
     const pinPlan = sidebar.getPinPlan();
-
-    toolbar.setStep(0, "active");
-    setStatus("compiling");
-    log(`Compiling top-level '${plan.topEntity}' (${plan.includedFiles.map((f) => f.name).join(", ")})…`, "cmd");
-    for (const info of plan.ignoreInfos) log(info.message, "info");
-
-    // Client-side missing dependency or Pin Planner errors fail BEFORE touching board state
     const preErrors = [...plan.missingErrors, ...pinPlan.validation.errors];
     const pinWarnings = [...pinPlan.validation.warnings];
     if (preErrors.length) {
-        const allMsgs = [...preErrors, ...pinWarnings, ...plan.ignoreInfos];
         const summary = formatSummary({
-            topEntity: plan.topEntity,
-            topFile: plan.topFile,
-            filesUsed: plan.includedFiles.length,
-            pinPlan,
-            errCount: preErrors.length,
-            warnCount: pinWarnings.length,
+            topEntity: plan.topEntity, topFile: plan.topFile, filesUsed: plan.includedFiles.length,
+            pinPlan, errCount: preErrors.length, warnCount: pinWarnings.length,
         });
-        editor.setMessages(summary, allMsgs);
-        bottom.setProblems(allMsgs);
-        editor.setProblems(allMsgs);
-        toolbar.setStep(plan.missingErrors.length ? 0 : 2, "error");
-        setStatus("error", "compile failed");
-        log(`Compile failed (${preErrors.length} error(s)) — previous board state retained.`, "error");
-        for (const e of preErrors.slice(0, 12)) log(`${e.message} (${e.file || "project"}${e.line ? ":" + e.line : ""})`, "error");
-        toast(`Compile failed (${preErrors.length} error${preErrors.length > 1 ? "s" : ""})`, { kind: "error" });
+        showCompileFailure(summary, [...preErrors, ...pinWarnings, ...plan.ignoreInfos], preErrors.length, 0);
         return;
     }
 
-    // 1 — compile on backend (never clear running board until compile passes!)
+    setStatus("compiling");
+    log(`Compiling top-level '${plan.topEntity}'…`, "cmd");
     let res;
     try {
         res = await api.compile({
@@ -975,72 +902,56 @@ async function compileAndProgram() {
     }
 
     const backendErrors = res.data?.errors || [];
-    const backendWarnings = (res.data?.warnings || []).filter((w) => !/without a pin assignment|no pin assignment/i.test(w.message || ""));
+    const backendWarnings = (res.data?.warnings || []).filter((w) => !/without a pin assignment/i.test(w.message || ""));
     const allErrors = [...backendErrors];
     const allWarnings = [...pinWarnings, ...backendWarnings];
-    const combinedMsgs = [...allErrors, ...allWarnings, ...plan.ignoreInfos];
+    const combined = [...allErrors, ...allWarnings, ...plan.ignoreInfos];
     const summary = formatSummary({
-        topEntity: res.data?.entity?.name || plan.topEntity,
-        topFile: plan.topFile,
-        filesUsed: plan.includedFiles.length,
-        pinPlan,
-        errCount: allErrors.length,
-        warnCount: allWarnings.length,
+        topEntity: res.data?.entity?.name || plan.topEntity, topFile: plan.topFile,
+        filesUsed: plan.includedFiles.length, pinPlan,
+        errCount: allErrors.length, warnCount: allWarnings.length,
     });
-
-    S.problems = [...allErrors, ...allWarnings];
+    S.problems = combined.filter((m) => m.severity !== "info");
     bottom.setProblems(S.problems);
     editor.setProblems(S.problems);
-    editor.setMessages(summary, combinedMsgs);
-
+    editor.setMessages(summary, combined);
     if (!res.httpOk || !res.data?.ok || allErrors.length) {
-        toolbar.setStep(1, "error");
-        setStatus("error", "compile failed");
-        log(`Compilation failed${allErrors.length ? ` — ${allErrors.length} error(s)` : ""} — board kept previous state.`, "error");
-        for (const e of allErrors.slice(0, 12)) log(`${e.message || e} (${e.file || "?"}${e.line ? ":" + e.line : ""})`, "error");
-        if (!allErrors.length && res.data?.message) log(res.data.message, "error");
+        showCompileFailure(summary, combined, allErrors.length || 1);
         return;
     }
 
-    // Compile succeeded -> now stop old simulation session and load new design onto board
     stopSession();
     cyclesMap = new Map();
     pendingCycles = [];
     bottom.wave.setData([], 0);
-
-    // Sync Pin Planner with authoritative compiled entity if ports updated
     S.entity = res.data.entity;
     S.compileResult = res.data;
     S.compileBoard = res.data.board || {};
+    if (res.data.stimulusMap) S.stimulusMap = res.data.stimulusMap;
     sidebar.setEntity(S.entity);
     const updatedPinPlan = sidebar.getPinPlan();
     editor.setEntity(S.entity);
     applyKeyDefaultsToEditor(S.entity, updatedPinPlan);
-
-    // Re-reset momentary holds to released (logic 1) on fresh program
-    for (let i = 0; i < 4; i += 1) keyHeldState[i] = false;
+    for (let i = 0; i < S.keyState.length; i += 1) S.keyState[i] = false;
     syncLivePinBindings();
-    for (let i = 0; i < 4; i += 1) {
-        board?.pressKey?.(i, false);
-        board?.setDip?.(i, dipLatchedState[i]);
-    }
-
+    buildBoardControls();
     toolbar.setStep(1, "done");
     toolbar.setStep(2, "done");
-    log(`Compiled ${S.entity.name}: ${S.entity.ports.length} ports (${updatedPinPlan.validation.assignedCount} pinned, ${updatedPinPlan.validation.unassignedCount} unassigned)`, "ok");
-    if (updatedPinPlan.validation.unassignedCount > 0) {
-        log(`Warning: ${updatedPinPlan.validation.unassignedCount} unassigned port(s) will do nothing on the board.`, "warn");
-    }
+    log(`Compiled ${S.entity.name}: ${S.entity.ports.length} ports`, "ok");
 
-    toolbar.setStep(3, "active");
-    setStatus("programming");
-    log("Programming via JTAG (auto-loading compiled design onto board)…", "cmd");
-    board?.setDesign?.(S.compileBoard);
-    board?.resetVisual?.();
-
-    // 4 — WS session
+    safeCall(() => board?.setDesign?.(S.compileBoard));
+    safeCall(() => board?.resetVisual?.());
     const payload = simPayload({ plan });
-    session = makeSession();
+    const gen = ++sessionGen;
+    session = makeSession({
+        onMessage: (msg) => { if (gen === sessionGen) handleSessionMessage(msg); },
+        onSimReady: (msg) => { if (gen === sessionGen) handleSimReady(msg); },
+        onClose: (byUser) => {
+            if (gen !== sessionGen) return;
+            if (!byUser && (S.running || S.paused)) log("Simulation WebSocket closed unexpectedly", "error");
+        },
+        onOpen: () => {},
+    });
     try {
         await session.connect();
     } catch (err) {
@@ -1049,94 +960,82 @@ async function compileAndProgram() {
         log(`Could not open simulation session: ${err.message}`, "error");
         return;
     }
-    session.start(payload);
+    sessionStart(payload);
 }
 
 let refreshing = false;
-let pendingRefresh = false;
+let refreshPending = false;
 async function refresh() {
-    console.log("[dbg] refresh enter power=" + S.power + " compileOk=" + (S.compileResult?.ok ?? null) + " refreshing=" + refreshing);
     if (!S.backendOk) return;
-    if (!S.power) {
-        // Powered off: the design is not configured and the board is inert.
-        toast("Board is powered off — turn Power ON to run", { kind: "warn" });
-        return;
-    }
+    if (!S.power) { toast("Board is powered off — turn Power ON to run", { kind: "warn" }); return; }
     if (!S.compileResult || !S.compileBoard) { compileAndProgram(); return; }
-    if (refreshing) { pendingRefresh = true; return; }
+    if (refreshing) { refreshPending = true; return; }
     refreshing = true;
-    S.refreshing = true;
-    pendingRefresh = false;
+    refreshPending = false;
     cyclesMap = new Map();
     pendingCycles = [];
     bottom.wave.setData([], 0);
-    board?.resetDisplayHold?.();
     setStatus("running", "applying inputs");
     const payload = simPayload({ skipSynth: true, compactBoard: true });
     S.lastPayload = payload;
     stopSession();
-    session = new SimSession({ onMessage: (msg) => handleSessionMessage(msg) });
-    try {
-        await session.connect();
-    } catch (err) {
+    const gen = ++sessionGen;
+    session = makeSession({
+        onMessage: (msg) => { if (gen === sessionGen) handleSessionMessage(msg); },
+        onSimReady: (msg) => { if (gen === sessionGen) handleSimReady(msg); },
+        onClose: () => {},
+        onOpen: () => {},
+    });
+    try { await session.connect(); }
+    catch (err) {
         refreshing = false;
-        S.refreshing = false;
         setStatus("error", "websocket failed");
         log(`Refresh failed: ${err.message}`, "error");
-        if (pendingRefresh) { pendingRefresh = false; refresh(); }
+        if (refreshPending) { refreshPending = false; refresh(); }
         return;
     }
-    session.start(payload);
+    sessionStart(payload);
+}
+
+function handleSimReady(msg) {
+    if (!msg) return;
+    if (msg.stimulusMap) {
+        S.stimulusMap = msg.stimulusMap;
+        S.clockPeriodNs = Number(msg.clockPeriodNs) || S.clockPeriodNs;
+    }
+    S.signals = msg.signals || S.signals || [];
+    S.totalCycles = msg.totalCycles || 0;
+    S.clockNs = Number(msg.clockNs) || 20;
+    if (msg.board) {
+        S.compileBoard = { ...(S.compileBoard || {}), ...msg.board };
+        syncLivePinBindings();
+        safeCall(() => board?.setDesign?.(S.compileBoard));
+    }
+    if (msg.entity) { S.entity = msg.entity; editor.setEntity(msg.entity); }
+    bottom.wave.setSignals(S.signals);
+    S.running = true;
+    S.paused = false;
+    S.programmed = true;
+    safeCall(() => board?.setRunning?.(true));
+    setStatus("running");
+    toolbar.setRunning(true, false);
+    editor.setRunState(true, false);
+    log(`Simulation running — ${S.totalCycles} cycles captured`, "ok");
+    applyPeripherals(msg.peripherals, msg.clockNs);
 }
 
 function handleSessionMessage(msg) {
     switch (msg.type) {
-        case "sim_ready": {
-            S.signals = msg.signals || [];
-            S.totalCycles = msg.totalCycles || 0;
-            S.clockNs = Number(msg.clockNs) || 20;
-            if (msg.board) {
-                S.compileBoard = { ...(S.compileBoard || {}), ...msg.board };
-                syncLivePinBindings();
-                board?.setDesign?.(S.compileBoard);
-            }
-            if (msg.entity) {
-                S.entity = msg.entity;
-                editor.setEntity(msg.entity);
-            }
-            bottom.wave.setSignals(S.signals);
-            S.running = true;
-            S.paused = false;
-            S.programmed = true;
-            board?.setRunning?.(true);
-            if (msg.compactBoard) {
-                setStatus("running", "applying inputs");
-            } else {
-                setStatus("running");
-                toolbar.setRunning(true, false);
-                editor.setRunState(true, false);
-                toolbar.setStep(4, "active");
-                log(`Simulation running — ${S.totalCycles} cycles captured (${(S.simStats.targetSpeed / 1e6).toFixed(0)} MHz clock)`, "ok");
-            }
-            applyPeripherals(msg.peripherals, msg.clockNs);
-            break;
-        }
+        case "sim_ready": handleSimReady(msg); break;
         case "cycle_batch": {
-            const t0 = performance.now();
-            const cycles = msg.cycles || [];
-            for (const c of cycles) {
+            for (const c of msg.cycles || []) {
                 cyclesMap.set(c.cycle, c);
                 applyCycleToBoard(c);
+                pendingCycles.push(c);
             }
-            const last = cycles[cycles.length - 1];
-            if (last) {
-                S.liveValues = last.values || {};
-                S.simTimeNs = last.time;
-                S.cursorCycle = last.cycle;
-            }
+            const last = (msg.cycles || []).slice(-1)[0];
+            if (last) { S.liveValues = last.values || {}; S.simTimeNs = last.time; S.cursorCycle = last.cycle; }
             if (msg.stats) S.simStats = { ...S.simStats, ...msg.stats };
-            for (const c of cycles) pendingCycles.push(c);
-            updateAccum += performance.now() - t0;
             break;
         }
         case "sim_done": {
@@ -1144,85 +1043,60 @@ function handleSessionMessage(msg) {
             S.running = false;
             S.paused = false;
             refreshing = false;
-            S.refreshing = false;
             const final = msg.final || {};
             S.liveValues = final;
-            if (msg.boardImage && board) board.applyBoardImage(msg.boardImage);
-            else applyCycleToBoard({ values: final, time: S.simTimeNs });
+            if (msg.stimulusMap) S.stimulusMap = msg.stimulusMap;
+            if (msg.boardImage && board) {
+                S.lastStimulusEntry = msg.boardImage;
+                board.applyBoardImage(msg.boardImage);
+            } else applyCycleToBoard({ values: final, time: S.simTimeNs });
             flushPendingUi();
-            board?.setRunning?.(false);
-            S.countdown = msg.boardImage?.countdown || null;
-            scheduleBuzzerStop(Number(msg.clockNs) || S.clockNs || 20, msg.boardImage?.countdown);
+            safeCall(() => board?.setRunning?.(false));
+            driveBuzzer(false, 0, 0);
             setStatus("idle");
             toolbar.setRunning(false, false);
             editor.setRunState(false, false);
-            toolbar.setStep(5, "done");
-            if (wasRefresh && msg.boardImage) {
-                log("Simulation complete — board updated", "ok");
-            } else {
-                log(`Simulation complete — ${msg.totalCycles ?? S.totalCycles} cycles, t = ${(S.simTimeNs / 1e3).toFixed(3)} µs`, "ok");
-            }
-            if (pendingRefresh) { pendingRefresh = false; refresh(); }
+            log(wasRefresh && msg.boardImage ? "Simulation complete — board updated"
+                : `Simulation complete — ${msg.totalCycles ?? S.totalCycles} cycles`, "ok");
+            if (refreshPending) { refreshPending = false; refresh(); }
             break;
         }
-        case "sim_paused": {
-            S.paused = true;
-            S.running = false;
-            board?.setRunning?.(false);
+        case "sim_paused":
+            S.paused = true; S.running = false;
+            safeCall(() => board?.setRunning?.(false));
             flushPendingUi();
             setStatus("paused");
             toolbar.setRunning(true, true);
             editor.setRunState(true, true);
-            log(`Paused at cycle ${msg.cursor ?? S.cursorCycle}`, "cmd");
+            driveBuzzer(false, 0, 0);
             break;
-        }
-        case "sim_resumed": {
-            S.paused = false;
-            S.running = true;
-            board?.setRunning?.(true);
+        case "sim_resumed":
+            S.paused = false; S.running = true;
+            safeCall(() => board?.setRunning?.(true));
             setStatus("running");
             toolbar.setRunning(true, false);
             editor.setRunState(true, false);
-            log("Resumed", "cmd");
             break;
-        }
-        case "sim_reset": {
-            S.cursorCycle = 0;
-            S.simTimeNs = 0;
-            S.liveValues = {};
+        case "sim_reset":
+            S.cursorCycle = 0; S.simTimeNs = 0; S.liveValues = {};
             const first = Array.from(cyclesMap.values()).sort((a, b) => a.cycle - b.cycle)[0];
-            if (first) {
-                S.liveValues = first.values;
-                applyCycleToBoard(first);
-            }
+            if (first) { S.liveValues = first.values; applyCycleToBoard(first); }
             sidebar.setLiveValues(S.liveValues);
             stats.update(S);
-            log("Simulation cursor reset to cycle 0", "cmd");
             break;
-        }
-        case "sim_stopped": {
-            S.running = false;
-            S.paused = false;
-            refreshing = false;
-            S.refreshing = false;
-            board?.setRunning?.(false);
-            clearBuzzerTimer();
-            audio.silence();
-            updateAudioBadge();
+        case "sim_stopped":
+            S.running = false; S.paused = false; refreshing = false; refreshPending = false;
+            safeCall(() => board?.setRunning?.(false));
+            driveBuzzer(false, 0, 0);
             flushPendingUi();
             setStatus("idle");
             toolbar.setRunning(false, false);
             editor.setRunState(false, false);
             toolbar.setStep(-1);
-            log(`Simulation stopped at cycle ${msg.cursor ?? "?"}`, "cmd");
             break;
-        }
-        case "sim_error": {
-            S.running = false;
-            S.paused = false;
-            refreshing = false;
-            S.refreshing = false;
-            board?.setRunning?.(false);
+        case "sim_error":
+            S.running = false; S.paused = false; refreshing = false; refreshPending = false;
+            safeCall(() => board?.setRunning?.(false));
             setStatus("error", msg.message || "simulation error");
             toolbar.setRunning(false, false);
             editor.setRunState(false, false);
@@ -1235,63 +1109,58 @@ function handleSessionMessage(msg) {
                 editor.setMessages("Simulation failed", msg.errors);
             }
             break;
-        }
         default: break;
     }
 }
 
-// ------------------------------------------------------------ controls --
+function flushPendingUi() {
+    if (pendingCycles.length) { bottom.wave.addCycles(pendingCycles); pendingCycles = []; }
+    sidebar.setLiveValues(S.liveValues);
+}
+
+// --------------------------------------------------------------- controls --
+function stopSession() {
+    sessionGen += 1;
+    if (session) {
+        safeCall(() => session.close?.());
+        session = null;
+    }
+    S.running = false;
+    S.paused = false;
+    safeCall(() => board?.setRunning?.(false));
+    if (S.releaseTimer) { clearTimeout(S.releaseTimer); S.releaseTimer = null; }
+    driveBuzzer(false, 0, 0);
+}
 function togglePause() {
     if (S.paused) {
-        if (session) session.resume();
-        // Resume the buzzer tone from the last decoded state (the countdown
-        // continues with the simulation).
-        if (S.buzzer?.tone) {
-            audio.tone(S.buzzer.frequency, S.buzzer.duty).then(updateAudioBadge).catch(() => {});
-        }
+        safeCall(() => session?.resume?.());
+        if (S.buzzer?.tone) driveBuzzer(true, S.buzzer.frequency, S.buzzer.duty);
         log("Simulation resumed", "cmd");
         return;
     }
-    // Pause: silence the buzzer immediately (even with no run in flight) and
-    // freeze the countdown timer so the note does not keep playing.
-    silenceBuzzer();
-    if (session && (S.running || S.paused)) session.pause();
+    driveBuzzer(false, 0, 0);
+    if (S.running) safeCall(() => session?.pause?.());
     log("Simulation paused — buzzer silenced", "cmd");
 }
-
 function stopSim() {
-    // Stop: silence everything, cancel the release-note timer, clear the SP1
-    // pulse ring and return the board peripherals to idle.
-    silenceBuzzer();
-    board?.resetVisual?.();
-    if (!session || (!S.running && !S.paused)) {
-        setStatus("idle");
-        return;
-    }
-    session.stop();
+    driveBuzzer(false, 0, 0);
+    safeCall(() => board?.resetVisual?.());
+    if (!session || (!S.running && !S.paused)) { setStatus("idle"); return; }
+    safeCall(() => session?.stop?.());
 }
-
 function resetSim() {
     if (!session || (!S.running && !S.paused)) {
         toast("No simulation session — press Compile first", { kind: "warn" });
         return;
     }
-    // Reset: abort any release-note countdown, silence the buzzer, release the
-    // key/DIP overrides and restart the capture from t = 0 (the re-run pulses
-    // the PIN_25 reset for designs that use it).
-    silenceBuzzer();
-    resetInteractiveState();
-    session.reset();
+    driveBuzzer(false, 0, 0);
+    if (S.releaseTimer) { clearTimeout(S.releaseTimer); S.releaseTimer = null; }
+    safeCall(() => session?.reset?.());
 }
-
 function stepSim(n) {
-    if (!session || !S.paused) {
-        toast("Stepping requires a paused simulation", { kind: "warn" });
-        return;
-    }
-    if (n > 0) {
-        session.step(n);
-    } else {
+    if (!session || !S.paused) { toast("Stepping requires a paused simulation", { kind: "warn" }); return; }
+    if (n > 0) safeCall(() => session?.step?.(n));
+    else {
         const target = Math.max(0, S.cursorCycle + n);
         const cycle = cyclesMap.get(target);
         if (cycle) {
@@ -1301,43 +1170,56 @@ function stepSim(n) {
             applyCycleToBoard(cycle);
             sidebar.setLiveValues(S.liveValues);
             stats.update(S);
-            log(`Stepped back to cycle ${target}`, "cmd");
-        } else {
-            toast("No recorded cycle that far back", { kind: "warn" });
         }
     }
 }
 
-// ------------------------------------------------- peripherals (detail) --
 function applyPeripherals(per, clockNs = 20) {
     if (!per) return;
     S.lastPeripherals = per;
-    if (per.uart) {
-        S.uart = per.uart;
-        bottom.setUart(per.uart);
-        if (per.uart.frames) log(`UART: ${per.uart.frames} frame(s) decoded at ${per.uart.baud ?? "?"} baud`, "ok");
+    if (per.uart) { S.uart = per.uart; bottom.setUart(per.uart); }
+    if (per.vga) { S.vga = per.vga; bottom.setVga(per.vga); }
+    if (per.lcd !== undefined) { S.lcd = per.lcd; bottom.setLcd(per.lcd); }
+    safeCall(() => sidebar?.setPeripherals?.(per));
+    if (per.buzzer?.tone) {
+        S.buzzer = { ...per.buzzer };
+        if (clockNs) S.clockPeriodNs = Number(clockNs) || S.clockPeriodNs;
     }
-    if (per.vga) {
-        S.vga = per.vga;
-        bottom.setVga(per.vga);
-    }
-    if (per.lcd !== undefined) {
-        S.lcd = per.lcd;
-        bottom.setLcd(per.lcd);
-    }
-    if (per.buzzer) {
-        applyBuzzerAudio(per.buzzer, clockNs);
-    }
-    if (per.eeprom) log("EEPROM dump available (AT24C08)", "info");
 }
 
-// --------------------------------------------------------------- problems --
-function openProblem(p) {
-    const file = p.file || editor.getActiveFile();
-    editor.openFile(file, p.line, p.column);
+// ------------------------------------------------------------------- VCD ---
+function exportVcd() {
+    const signals = S.signals || [];
+    const cycles = Array.from(cyclesMap.values()).sort((a, b) => a.cycle - b.cycle);
+    if (!cycles.length) { toast("No waveform to export — compile and run first", { kind: "warn" }); return; }
+    const durationNs = Number(cycles[cycles.length - 1].time) || Number(S.simTimeNs) || 0;
+    const text = buildVcd(signals, cycles, { timescaleNs: Number(S.clockNs) || 20, durationNs });
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "waveform.vcd";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    log(`Exported waveform.vcd (${cycles.length} cycles)`, "ok");
 }
 
-// ----------------------------------------------------------------- stats --
+// -------------------------------------------------------------- terminal ---
+async function mountTerminal() {
+    try {
+        const modulePath = "./ui/terminal.js";
+        const mod = await import(/* @vite-ignore */ modulePath);
+        const make = mod.createTerminalController;
+        if (typeof make !== "function" || !bottom?.getTerminalHost) return;
+        terminal = make(bottom.getTerminalHost());
+        safeCall(() => terminal.connect?.());
+        if (window.__cyclone) window.__cyclone.terminal = terminal;
+        log("Terminal ready", "ok");
+    } catch (err) {
+        log(`Terminal unavailable: ${err.message}`, "warn");
+    }
+}
+
+// ----------------------------------------------------------------- loops ---
 let lastStatsTick = performance.now();
 function startLoops() {
     setInterval(() => {
@@ -1347,39 +1229,19 @@ function startLoops() {
         S.updateLoad = Math.min(100, (updateAccum / Math.max(1, windowMs)) * 100);
         updateAccum = 0;
         const s = board?.stats?.();
-        if (s) {
-            S.fps = s.fps;
-            S.drawCalls = s.drawCalls;
-        }
+        if (s) { S.fps = s.fps; S.drawCalls = s.drawCalls; }
         flushPendingUi();
         stats.update(S);
     }, 250);
 }
 
-// ------------------------------------------------------------- shortcuts --
 function bindShortcuts() {
     document.addEventListener("keydown", (e) => {
         const inEditor = e.target.closest?.(".monaco-editor, input, textarea, select");
-        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-            e.preventDefault();
-            compileAndProgram();
-            return;
-        }
-        if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "b") {
-            e.preventDefault();
-            toggleDrawer("left");
-            return;
-        }
-        if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key === "\\") {
-            e.preventDefault();
-            toggleDrawer("right");
-            return;
-        }
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); compileAndProgram(); return; }
+        if ((e.ctrlKey || e.metaKey) && e.key === "\\") { e.preventDefault(); toggleRight(); return; }
         if ((e.ctrlKey || e.metaKey) && e.altKey && e.key.toLowerCase() === "b") {
-            e.preventDefault();
-            $("bottom").classList.toggle("collapsed");
-            setTimeout(() => bottom.wave.resize(), 60);
-            return;
+            e.preventDefault(); toggleBottom(); return;
         }
         if (inEditor) return;
         switch (e.key) {
@@ -1392,48 +1254,31 @@ function bindShortcuts() {
             case "1": board?.setPreset?.("top"); break;
             case "2": board?.setPreset?.("front"); break;
             case "3": board?.setPreset?.("iso"); break;
-            case "4": board?.setPreset?.("ports"); break;
             case "p": case "P": togglePower(); break;
-            case "t": case "T": toggleTheme(); break;
-            case "?": cheatSheet(); break;
             default: break;
         }
     });
-
-    const backdrop = $("drawer-backdrop");
-    if (backdrop) {
-        backdrop.addEventListener("click", () => {
-            document.body.classList.remove("drawer-left", "drawer-right");
-            syncBackdrop();
-        });
-    }
 }
 
-// ----------------------------------------------------------------- init --
+// ------------------------------------------------------------------- init --
 async function init() {
     initComponents();
-    const ok3d = initBoard();
-    if (ok3d) {
-        setTheme("light");
-        toolbar.setPower(true);
-    }
-
-    // Restore persisted sidebar collapse states before profile/example load
-    if (loadCollapsedPref(RIGHT_COLLAPSED_KEY)) editor.setCollapsed(true);
-    if (loadCollapsedPref(LEFT_COLLAPSED_KEY)) sidebar.setCollapsed(true);
+    initBoard();
+    setTheme("dark");
+    toolbar.setPower(true);
     resizeBoardSoon();
-
     bindShortcuts();
     startLoops();
 
-    $("backend-retry").addEventListener("click", async () => {
-        $("backend-banner").classList.add("hidden");
+    $("backend-retry")?.addEventListener("click", async () => {
+        $("backend-banner")?.classList.add("hidden");
         await checkHealth();
-        if (S.backendOk) { await loadProfile(); await loadExamples(); }
+        if (S.backendOk) { await loadProfile(); await loadBoards(); await loadExamples(); }
     });
 
     await checkHealth();
     await loadProfile();
+    await loadBoards();
     await loadExamples();
 
     const def = S.examples.find((e) => e.id === "sevseg_keys")
@@ -1442,10 +1287,12 @@ async function init() {
 
     window.__cyclone = {
         board, state: S, api, compile: compileAndProgram, run: compileAndProgram,
-        stopSim, editor, sidebar, bottom, audio,
-        pause: togglePause, resetSim, stepSim, toggleDip, setPhysicalKeyPressed,
+        stopSim, editor, sidebar, bottom, audio, pause: togglePause, resetSim, stepSim,
+        toggleDip, setPhysicalKeyPressed, selectBoard, importCustomBoard,
+        computeChannelMask, applyStimulusEntry, handleChannelChange, terminal,
     };
-    log("Cyclone IV Studio ready — open a file, assign pins in Pin Planner, and press Compile (Ctrl+Enter).", "info");
+    log("Cyclone IV Studio ready — press Compile & Run (Ctrl+Enter).", "info");
+    mountTerminal();
 }
 
 init();
