@@ -438,6 +438,15 @@ function buildBoardControls() {
             });
         }
         cell.querySelector(".bc-dip")?.addEventListener("click", () => toggleDip(dipIndex));
+        // Single-row HUD: .bc-cell is display:contents, so order the buttons
+        // directly — all keys first (K1..K4), then all DIPs (S1..S4).
+        if (keyBtn) keyBtn.style.order = String(index);
+        const dipBtn = cell.querySelector(".bc-dip");
+        if (dipBtn) dipBtn.style.order = String(10 + dipIndex);
+        if (!withKey) {
+            const val = cell.querySelector(":scope > .bc-val");
+            if (val) val.style.order = String(10 + dipIndex);
+        }
         row.appendChild(cell);
         updateBoardControlButton(index);
     };

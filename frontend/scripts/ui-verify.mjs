@@ -94,7 +94,6 @@ const run = await page.evaluate(() => ({
     logs: [...document.querySelectorAll("#console-log .log-line")].slice(-6).map((l) => l.textContent.trim()),
     simTime: document.getElementById("st-time")?.textContent,
     waveCycles: window.__cyclone?.state?.totalCycles,
-    fps: document.getElementById("st-fps")?.textContent,
 }));
 await page.screenshot({ path: resolve(outDir, "02-after-run.png") });
 

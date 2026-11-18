@@ -1336,11 +1336,13 @@ input[type="checkbox"], input[type="radio"] { accent-color: #ffffff; }
     background: #ffffff; color: #0a0a0b; font-weight: 650;
 }
 .board-hud-pill {
-    position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
-    z-index: 8; display: flex; flex-direction: column; align-items: center;
-    gap: 6px; max-width: calc(100% - 24px); pointer-events: none;
+    position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
+    z-index: 8; display: flex; flex-direction: row; align-items: center;
+    gap: 8px; max-width: calc(100% - 24px); height: 36px; pointer-events: none;
 }
 .board-hud-pill > * { pointer-events: auto; }
+#stats.stats-block { order: 0; }
+#board-controls { order: 1; }
 #stats.stats-block, #stats.stats-block.stats-pill {
     position: static !important; inset: auto !important; height: auto !important;
     max-width: none; display: inline-flex; flex-direction: row; flex-wrap: nowrap;
@@ -1357,24 +1359,23 @@ input[type="checkbox"], input[type="radio"] { accent-color: #ffffff; }
 #stats .hud-latency { color: #f4f4f5; }
 #stats .hud-bar, #stats .hud-sep { color: #52525b; }
 .board-controls, #board-controls {
-    position: static !important; display: inline-flex; flex-wrap: wrap;
-    justify-content: center; gap: 5px; padding: 6px 9px;
+    position: static !important; display: inline-flex; flex-wrap: nowrap;
+    justify-content: center; align-items: center; gap: 5px; padding: 4px 8px;
     background: rgba(17, 17, 19, 0.9); border: var(--hair);
-    border-radius: 10px; backdrop-filter: blur(8px);
+    border-radius: 999px; backdrop-filter: blur(8px);
 }
 /* HUD chrome is pointer-transparent so canvas orbit drags pass through;
    the key/DIP buttons inside remain clickable. */
 #board-controls, #board-controls .bc-row, #board-controls .bc-cell { pointer-events: none; }
 #board-controls button { pointer-events: auto; }
-.bc-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; }
-.bc-cell {
-    display: inline-flex; align-items: stretch; gap: 2px;
-    padding: 2px; background: #18181b; border: var(--hair); border-radius: 7px;
-}
+.bc-row { display: flex; flex-wrap: nowrap; justify-content: center; align-items: center; gap: 5px; }
+/* One visual row: the per-channel wrappers dissolve (display:contents) and
+   their key/DIP buttons are ordered K1..K4 then S1..S4 by inline order. */
+.bc-cell { display: contents; }
 .bc-key, .bc-dip {
     display: inline-flex; align-items: center; justify-content: center; gap: 5px;
-    height: 25px; min-width: 46px; padding: 0 8px; border: 0; border-radius: 5px;
-    background: transparent; color: #a1a1aa; font-family: var(--mono); font-size: 10px;
+    height: 25px; min-width: 46px; padding: 0 8px; border: 0; border-radius: 7px;
+    background: #18181b; color: #a1a1aa; font-family: var(--mono); font-size: 10px;
 }
 .bc-key:hover, .bc-dip:hover { background: #27272a; color: #f4f4f5; }
 .bc-key.on, .bc-dip.on { background: #ffffff; color: #0a0a0b; font-weight: 700; }

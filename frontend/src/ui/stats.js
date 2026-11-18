@@ -38,8 +38,6 @@ export function createStatsBlock(container) {
         <span class="hud-item" id="st-sw">SW 1..4</span>
         <span class="hud-sep">&middot;</span>
         <span class="hud-item" id="st-time">Sim: 0 ns</span>
-        <span class="hud-sep">&middot;</span>
-        <span class="hud-item" id="st-fps">-- FPS</span>
     `;
     const el = {
         status: container.querySelector("#st-status"),
@@ -48,14 +46,12 @@ export function createStatsBlock(container) {
         keys: container.querySelector("#st-keys"),
         sw: container.querySelector("#st-sw"),
         time: container.querySelector("#st-time"),
-        fps: container.querySelector("#st-fps"),
     };
 
     function update(state) {
         const { keys, switches, shared } = counts(state);
         el.target.textContent = fmtClock(state.simStats?.targetSpeed || state.clockHz);
         el.time.textContent = `Sim: ${fmtSimTime(state.simTimeNs)}`;
-        el.fps.textContent = `${Math.round(state.fps || 0)} FPS`;
         el.status.textContent = state.status || "Live";
         el.latency.textContent = state.stimulusMap ? "<1ms" : "GHDL";
         el.keys.textContent = keys ? (shared ? `KEY 1..${keys}` : `KEY 0..${keys - 1}`) : "KEY --";
