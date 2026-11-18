@@ -20,7 +20,7 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 
-import { PCB_OUTLINE, LAYOUT, buildPinIndex, SEG_GLYPHS, buildDynamicBoardModel } from "./layout.js";
+import { PCB_OUTLINE, LAYOUT, BOARD_TOP, buildPinIndex, SEG_GLYPHS, buildDynamicBoardModel } from "./layout.js";
 import { brightness, ghostOverlay, isInstantaneousScan, normalizePov } from "./displayModel.js";
 import { createMaterials, setupEnvironment, setupLights, applyTheme, applyPcbColor } from "./materials.js";
 import { buildPCB } from "./pcb.js";

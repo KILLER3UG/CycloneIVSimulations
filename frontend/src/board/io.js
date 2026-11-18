@@ -5,7 +5,7 @@
 
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
-import { LAYOUT, BOARD_TOP, SEG_BIT_MAP_FALLBACK, worldX, worldZ } from "./layout.js";
+import { PCB_OUTLINE, LAYOUT, BOARD_TOP, SEG_BIT_MAP_FALLBACK } from "./layout.js";
 import { createCanvas, canvasTexture, glowTexture } from "./util.js";
 
 // Segment geometry only — the bit map itself comes from board.json via
@@ -44,13 +44,20 @@ export function buildIO(mats, {
     const ledCount = dyn ? dyn.leds.length : countOf(board.leds, 4);
     const defOf = (canonicalId, dynamicDef) => (dyn ? dynamicDef : LAYOUT.find((r) => r.id === canonicalId));
 
+    const bW = dyn ? dyn.pcb.w : PCB_OUTLINE.w;
+    const bD = dyn ? dyn.pcb.d : PCB_OUTLINE.d;
+    const wx = (cx) => cx - bW / 2;
+    const wz = (cy) => cy - bD / 2;
+
     // ------------------------------------------------------------- power switch
     const powerSwitch = (() => {
-        const def = LAYOUT.find((r) => r.id === "SW1");
-        const [cx, cy] = def.pos;
-        const x = worldX(cx), z = worldZ(cy);
+        const canonical = LAYOUT.find((r) => r.id === "SW1");
+        const pos = dyn?.powerPos || canonical.pos;
+        const size = dyn ? [9, 6] : canonical.size;
+        const [cx, cy] = pos;
+        const x = wx(cx), z = wz(cy);
         const body = new THREE.Mesh(
-            new RoundedBoxGeometry(def.size[0], 6.5, def.size[1], 1, 0.5), mats.silver);
+            new RoundedBoxGeometry(size[0], 6.5, size[1], 1, 0.5), mats.silver);
         body.position.set(x, BOARD_TOP + 3.25, z);
         body.castShadow = true;
         body.userData = { componentId: "SW1", kind: "power-switch", pinId: null, polarity: null, label: "SW1 power (self-locking)" };
@@ -68,7 +75,7 @@ export function buildIO(mats, {
     // Photo: square silver metal shell + round near-black actuator cap.
     const mkKey = (def, userData) => {
         const [cx, cy] = def.pos;
-        const x = worldX(cx), z = worldZ(cy);
+        const x = wx(cx), z = wz(cy);
         const base = new THREE.Mesh(new RoundedBoxGeometry(7.2, 3.2, 7.2, 1, 0.5), mats.silver);
         base.position.set(x, BOARD_TOP + 1.6, z);
         base.castShadow = true;
@@ -84,7 +91,7 @@ export function buildIO(mats, {
 
     const keys = [];
     for (let i = 0; i < keyCount; i += 1) {
-        const def = defOf(`S${i + 1}`, dyn.keys[i]);
+        const def = defOf(`S${i + 1}`, dyn ? dyn.keys[i] : null);
         if (!def || !Array.isArray(def.pos)) continue;
         const entry = pinOf(`KEY[${i}]`);
         const el = mkKey(def, {
@@ -100,7 +107,8 @@ export function buildIO(mats, {
         });
     }
 
-    const resetDef = LAYOUT.find((r) => r.id === "RESET");
+    const canonicalReset = LAYOUT.find((r) => r.id === "RESET");
+    const resetDef = dyn ? { pos: dyn.resetPos, size: [7, 8.7] } : canonicalReset;
     const resetEntry = pinOf("FPGA_RST");
     const reset = mkKey(resetDef, {
         componentId: "RESET", kind: "reset", pinId: resetEntry ? resetEntry.pinId : "FPGA_RST",
@@ -119,7 +127,7 @@ export function buildIO(mats, {
         const def = defOf("SW2", dyn?.dip?.[0]) || LAYOUT.find((r) => r.id === "SW2");
         if (!def || !Array.isArray(def.pos)) return [];
         const [cx, cy] = def.pos;
-        const x = worldX(cx), z = worldZ(cy);
+        const x = wx(cx), z = wz(cy);
         const body = new THREE.Mesh(new RoundedBoxGeometry(def.size[0], 6.8, def.size[1], 1, 0.5), mats.red);
         body.position.set(x, BOARD_TOP + 3.4, z);
         body.castShadow = true;
@@ -179,7 +187,7 @@ export function buildIO(mats, {
         const def = defOf(`LED${i + 1}`, dyn?.leds?.[i]);
         if (!def || !Array.isArray(def.pos)) continue;
         const [cx, cy] = def.pos;
-        const x = worldX(cx), z = worldZ(cy);
+        const x = wx(cx), z = wz(cy);
         const entry = pinOf(`LED[${i}]`);
         // Dual naming: LED[i] is the FPGA net on this pin, the physical diode
         // is D1..D4 and the silkscreen/net name runs the opposite way.
@@ -223,7 +231,7 @@ export function buildIO(mats, {
         const canonical = LAYOUT.find((r) => r.id === "DISP1");
         const def = dyn?.display || canonical;
         const [cx, cy] = Array.isArray(def?.pos) ? def.pos : canonical.pos;
-        const x = worldX(cx), z = worldZ(cy);
+        const x = wx(cx), z = wz(cy);
         const body = new THREE.Mesh(new RoundedBoxGeometry(30, 8, 16, 1, 0.6), mats.darkEpoxy);
         body.position.set(x, BOARD_TOP + 4, z);
         body.castShadow = true;
@@ -327,7 +335,7 @@ export function buildIO(mats, {
         const canonical = LAYOUT.find((r) => r.id === "SP1");
         const def = dyn?.buzzer || canonical;
         const [cx, cy] = Array.isArray(def?.pos) ? def.pos : canonical.pos;
-        const x = worldX(cx), z = worldZ(cy);
+        const x = wx(cx), z = wz(cy);
         const entry = pinOf("FPGA_BUZZER");
         const body = new THREE.Mesh(new THREE.CylinderGeometry(7.5, 7.5, 9, 28), mats.plasticBlack);
         body.position.set(x, BOARD_TOP + 4.5, z);

@@ -633,9 +633,11 @@ export function buildDynamicBoardModel(profile) {
     const dip = modelPositions(l, "dipPositions", dipCount > 0 ? 1 : 0, [w * 0.5, d * 0.65], 0)
         .map((_, i) => mk("SW", KIND.DIP, Array.isArray(l.dipPos) ? l.dipPos : [w * 0.5, d * 0.65], [12.6, 11], { index: i, positions: dipCount }));
 
-    const displayPos = Array.isArray(l.displayPos) ? l.displayPos : [w * 0.72, d * 0.12];
-    const buzzerPos = Array.isArray(l.buzzerPos) ? l.buzzerPos : [w * 0.16, d * 0.2];
-    const fpgaPos = Array.isArray(l.fpgaPos) ? l.fpgaPos : [w * 0.38, d * 0.46];
+    const displayPos = Array.isArray(l.displayPos) ? l.displayPos : [w * 0.72, d * 0.18];
+    const buzzerPos = Array.isArray(l.buzzerPos) ? l.buzzerPos : [w * 0.18, d * 0.28];
+    const fpgaPos = Array.isArray(l.fpgaPos) ? l.fpgaPos : [w * 0.46, d * 0.5];
+    const powerPos = Array.isArray(l.powerPos) ? l.powerPos : [Math.min(w - 10, Math.max(10, w * 0.34)), 8.5];
+    const resetPos = Array.isArray(l.resetPos) ? l.resetPos : [13, Math.min(d - 8, d * 0.62)];
 
     return {
         id,
@@ -651,6 +653,8 @@ export function buildDynamicBoardModel(profile) {
         leds,
         keys,
         dip,
+        powerPos,
+        resetPos,
         display: { pos: displayPos, size: [30, 16], count: displayCount > 0 ? 4 : 0 },
         buzzer: { pos: buzzerPos, size: [15, 15], present: buzzerPresent },
         segBitMap: b.displays?.segBitMap || SEG_BIT_MAP_FALLBACK,

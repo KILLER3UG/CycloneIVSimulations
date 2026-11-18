@@ -349,11 +349,18 @@ def eng_09() -> str:
     return "3D parts pickable"
 
 
-@case("ENG-10", "6", "Toggling a switch updates the port (auto re-run)", "UI",
-      "Click updates the live stimulus and schedules a re-run on the current UI")
+@case("ENG-10", "6", "Toggling a switch updates the port (zero-delay lookup or fallback)", "UI",
+      "Click resolves instantaneously via stimulusMap or schedules fallback simulation")
 def eng_10() -> str:
     text = (ROOT / "frontend" / "src" / "main.js").read_text(encoding="utf-8")
     check("toggleDip" in text, "no DIP toggle handler")
-    check("syncKeyStimulusAndUI" in text, "DIP click does not update the live stimulus")
-    check("scheduleRerun" in text, "DIP click does not schedule a re-run")
-    return "DIP click updates the stimulus and schedules an immediate re-run"
+    check(
+        "syncKeyStimulusAndUI" in text
+        or ("handleChannelChange" in text and "applyStimulusEntry" in text),
+        "DIP click does not update the live stimulus",
+    )
+    check(
+        "scheduleRerun" in text or "fallbackSimulate" in text,
+        "DIP click has neither re-run nor cancellable fallback path",
+    )
+    return "DIP click resolves instantaneously via stimulusMap with cancellable fallback"

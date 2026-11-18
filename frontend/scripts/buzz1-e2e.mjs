@@ -93,11 +93,16 @@ try {
         () => (window.__cyclone.state.examples || []).some((e) => /buzz1/i.test(`${e.id} ${e.name}`)),
         { timeout: 30000 },
     );
-    await page.click('[data-tab="examples"]');
+    await page.waitForFunction(
+        () => [...document.querySelectorAll("#tb-examples option")].some((o) => /buzz1/i.test(`${o.value} ${o.textContent}`)),
+        { timeout: 30000 },
+    );
     const loaded = await page.evaluate(() => {
-        const btn = [...document.querySelectorAll(".sb-example")].find((b) => /buzz1/i.test(b.textContent));
-        if (!btn) return false;
-        btn.click();
+        const sel = document.querySelector("#tb-examples");
+        const opt = sel && [...sel.options].find((o) => /buzz1/i.test(`${o.value} ${o.textContent}`));
+        if (!opt) return false;
+        sel.value = opt.value;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
         return true;
     });
     step("buzz1 example listed and loaded", loaded);

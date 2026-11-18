@@ -20,22 +20,11 @@ export function createBottomPanel(root, h) {
             <button class="icon-btn" data-act="collapse" title="Collapse bottom dock" aria-label="Collapse bottom dock">${icon("chevron")}</button>
         </div>
         <div class="bp-body">
-            <div class="bp-pane" data-pane="terminal">
-                <div class="bp-pane-tools">
-                    <span class="bp-hint">Local PTY &mdash; type <code>help</code> for commands</span>
-                    <span class="bp-flex"></span>
-                    <button class="btn" data-act="term-clear">Clear</button>
-                    <button class="btn" data-act="term-restart">Restart</button>
-                </div>
-                <div class="term-wrap" id="terminal-output"></div>
-                <div class="bp-term-input">
-                    <span aria-hidden="true">&rsaquo;</span>
-                    <input type="text" id="terminal-input" autocomplete="off" spellcheck="false"
-                        aria-label="Terminal input" placeholder="Terminal input&hellip;">
-                </div>
+            <div class="bp-pane hidden" data-pane="terminal">
+                <div class="term-wrap" id="terminal-mount" style="flex:1 1 auto;min-height:0;display:flex;flex-direction:column;"></div>
             </div>
 
-            <div class="bp-pane hidden" data-pane="diagnostics">
+            <div class="bp-pane" data-pane="diagnostics">
                 <div class="bp-pane-tools">
                     <label><input type="checkbox" data-lf="info" checked> INFO</label>
                     <label><input type="checkbox" data-lf="ok" checked> OK</label>
@@ -263,7 +252,7 @@ export function createBottomPanel(root, h) {
 
     return {
         showTab, log, setProblems, setUart, setVga, setLcd, wave, addProbeChip,
-        getTerminalHost: () => root.querySelector("#terminal-output"),
+        getTerminalHost: () => root.querySelector("#terminal-mount"),
         get active() { return active; },
         root,
     };

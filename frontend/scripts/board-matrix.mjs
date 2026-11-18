@@ -415,50 +415,52 @@ step("M9 clock-driven counter: LED nibble = 8 at cycle 65545 (one increment per 
 await page.screenshot({ path: join(OUT, "counter-final.png") });
 
 // ------------------------------------ M10 3D key press drives the shared net
-// Press S1 on the 3D board (pointer events on the key cap, like a finger):
-// the stimulus must flip and a re-run must start; release flips back.
-// Tested from the all-open state so the press has a visible contrast.
+// The 2-zone core resolves channel changes from the pre-computed stimulus map
+// on the same turn (no GHDL re-run, no HTTP request). What must stay true is
+// the observable contract: the 3D cap press flips live channel state and the
+// board image lights LED1; release flips it back and darkens the LED.
 {
     await upload("key_led4.vhd", "key_led4");
     await runAndWait();
-    await setSw(0b1111); // all keys open -> stim 15 -> every LED dark
+    await setSw(0b1111); // all keys open -> every LED dark
     const openState = await display();
-    const before = await completions();
     await page.evaluate(() => window.__cyclone.board.focusComponent("S1"));
-    await wait(900); // camera tween frames the key cap
+    await wait(1200); // camera tween (750 ms) must settle before projecting
     const pt = await page.evaluate(() => {
         const b = window.__cyclone.board;
         const key = b.io.keys[0];
         const v = key.cap.getWorldPosition(b.camera.position.clone());
         v.project(b.camera);
         const r = b.renderer.domElement.getBoundingClientRect();
-        return { x: r.left + (v.x + 1) / 2 * r.width, y: r.top + (1 - v.y) / 2 * r.height };
+        const x = r.left + (v.x + 1) / 2 * r.width, y = r.top + (1 - v.y) / 2 * r.height;
+        const hit = document.elementFromPoint(x, y);
+        return { x, y, hit: hit?.tagName + "." + hit?.className };
     });
+    // The HUD pill sits at the bottom; if it covers the projected cap, hide
+    // it for this one pointer gesture so the real 3D raycast can be proven.
+    const covered = !String(pt.hit).startsWith("CANVAS");
+    if (covered) await page.evaluate(() => { document.querySelector("#board-controls").style.visibility = "hidden"; });
     await page.mouse.move(pt.x, pt.y);
     await page.mouse.down();
-    await wait(600); // hold past the 250 ms re-run debounce
+    await wait(400); // hold long enough for the cap press + map resolution
     const held = await page.evaluate(() => ({
         pressed: window.__cyclone.board.io.keys[0].pressed,
-        stim: window.__cyclone.editor.getStimulusValue("key"),
+        keyState: window.__cyclone.state.keyState[0],
     }));
-    const okPress = await waitRunComplete(before, 60000); // press re-run
-    await wait(250);
     const heldLeds = await display();
     await page.mouse.up();
-    const okRelease = await waitRunComplete(before + 1, 60000); // release re-run
+    if (covered) await page.evaluate(() => { document.querySelector("#board-controls").style.visibility = ""; });
     await wait(250);
     const after = await page.evaluate(() => ({
-        stim: window.__cyclone.editor.getStimulusValue("key"),
+        keyState: window.__cyclone.state.keyState[0],
         leds: window.__cyclone.board.io.leds.map((l) => Number(l.level.toFixed(2))),
     }));
     // held: key net bit0 = 0 -> LED1 lit, others dark; released: all dark.
-    // (The key-cap visual is cleared by resetVisual on re-run, so the proof
-    // is the stimulus flip + LED response, not the cap position.)
     const heldOk = heldLeds.ledLevels[0] > 0.5 && heldLeds.ledLevels.slice(1).every((v) => v < 0.5);
-    step("M10 3D key press drives the design (press -> key0=0 re-run lights LED1; release -> key0=1 re-run darkens it)",
-        openState.ledLevels.every((v) => v < 0.5) && held.stim === 14 && okPress && heldOk
-            && okRelease && after.stim === 15 && after.leds.every((v) => v < 0.5),
-        `held=${JSON.stringify(held)} heldLeds=${JSON.stringify(heldLeds.ledLevels)} after=${JSON.stringify(after)}`);
+    step("M10 3D key press drives the design via the zero-latency stimulus map (press lights LED1; release darkens it)",
+        openState.ledLevels.every((v) => v < 0.5) && held.pressed && held.keyState === true && heldOk
+            && after.keyState === false && after.leds.every((v) => v < 0.5),
+        `pt=${JSON.stringify(pt)} covered=${covered} held=${JSON.stringify(held)} heldLeds=${JSON.stringify(heldLeds.ledLevels)} after=${JSON.stringify(after)}`);
 }
 
 // ----------------------------------------- M11 power cycle loses the config
@@ -472,7 +474,8 @@ await page.screenshot({ path: join(OUT, "counter-final.png") });
         leds: window.__cyclone.board.io.leds.map((l) => Number(l.level.toFixed(2))),
     }));
     await page.evaluate(() => document.querySelector('#toolbar [data-act="power"]').click());
-    await wait(300);
+    await page.waitForFunction(() => window.__cyclone.board.programmed === true, { timeout: 15000 })
+        .catch(() => {});
     const on = await page.evaluate(() => ({
         programmed: window.__cyclone.board.programmed,
         power: window.__cyclone.board.power,

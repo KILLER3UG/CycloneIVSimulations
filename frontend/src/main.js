@@ -19,6 +19,7 @@ import { dialog, toast, cheatSheet } from "./ui/toast.js";
 import { icon } from "./ui/icons.js";
 import { audio } from "./audio.js";
 import { buildVcd } from "./vcdExport.js";
+import { createTerminalController } from "./ui/terminal.js";
 
 const store = createStore();
 const S = store.state;
@@ -252,6 +253,13 @@ function computeChannelMask() {
     return mask;
 }
 
+// A finished capture leaves S.running === false (idle render tier), but the
+// design is still programmed and the pre-computed stimulus map stays live.
+// Interactive key/DIP play therefore must not be gated on the streaming flag.
+function canPlayBuzzer() {
+    return !!(S.programmed && (S.powered ?? S.power) && !S.paused);
+}
+
 function applyStimulusEntry(entry) {
     if (!entry) return;
     safeCall(() => board?.applyBoardImage?.(entry));
@@ -260,9 +268,8 @@ function applyStimulusEntry(entry) {
         ? { ...entry.buzzerDecode }
         : { tone: false, frequency: 0, duty: 0, activeLow: true };
     const bz = S.buzzer;
-    const powered = S.powered ?? S.power;
     driveBuzzer(
-        !!(powered && S.running && !S.paused && bz.tone && bz.frequency > 0),
+        !!(canPlayBuzzer() && bz.tone && bz.frequency > 0),
         Number(bz.frequency) || 0,
         Number(bz.duty) || 0.5,
     );
@@ -298,7 +305,7 @@ function handleChannelChange(changedKind, idx, newVal, prevVal) {
         const release = changedKind === "key" && prevVal && !newVal
             && !S.keyState.some(Boolean) ? map.releases?.[String(i)] : null;
         if (release && (release.releaseCycles || 0) > 0 && release.buzzerDecode?.tone
-            && (S.powered ?? S.power) && S.running && !S.paused) {
+            && canPlayBuzzer()) {
             S.lastStimulusEntry = release;
             applyStimulusEntry(release);
             const ms = Math.max(50, Math.round(
@@ -537,6 +544,42 @@ function initComponents() {
         if (!tab) return;
         setWorkbenchTab(tab.dataset.tab);
     });
+
+    // The 2-zone layout moved the drag handle out of the editor panel into
+    // #workspace; keep dragging it to resize the right workbench column.
+    const wbResizer = document.querySelector("#workspace > .ep-resizer");
+    if (wbResizer) {
+        let drag = null;
+        const applyWidth = (px, persist) => {
+            const w = Math.min(900, Math.max(340, Math.round(px)));
+            document.documentElement.style.setProperty("--right-w", `${w}px`);
+            if (persist) {
+                try { localStorage.setItem("c4_right_w", String(w)); } catch { /* ignore */ }
+            }
+            resizeBoardSoon();
+        };
+        wbResizer.addEventListener("pointerdown", (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            drag = { x: e.clientX, w: $("right").getBoundingClientRect().width };
+            try { wbResizer.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+            document.body.classList.add("resizing");
+        });
+        wbResizer.addEventListener("pointermove", (e) => {
+            if (!drag) return;
+            applyWidth(drag.w - (e.clientX - drag.x), false);
+        });
+        const endDrag = (e) => {
+            if (!drag) return;
+            const w = drag.w - (e.clientX - drag.x);
+            drag = null;
+            document.body.classList.remove("resizing");
+            try { wbResizer.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+            applyWidth(Number.isFinite(w) ? w : $("right").getBoundingClientRect().width, true);
+        };
+        wbResizer.addEventListener("pointerup", endDrag);
+        wbResizer.addEventListener("pointercancel", endDrag);
+    }
 }
 
 function setWorkbenchTab(key) {
@@ -549,6 +592,7 @@ function setWorkbenchTab(key) {
         t.setAttribute("aria-selected", String(on));
     });
     if (key !== "code") sidebar.showTab(key);
+    else requestAnimationFrame(() => editor?.editor?.layout?.());
     resizeBoardSoon();
 }
 function toggleRight() {
@@ -581,6 +625,16 @@ function setPower(on) {
     }
     safeCall(() => board?.setPower?.(S.power));
     toolbar.setPower(S.power);
+    if (S.power) {
+        // Power cycling releases momentary buttons: the restored design boots
+        // idle, and the next key press starts from a clean channel mask.
+        for (let i = 0; i < (S.keyState || []).length; i += 1) {
+            S.keyState[i] = false;
+            safeCall(() => board?.pressKey?.(i, false));
+            updateBoardControlButton(i);
+        }
+        driveBuzzer(false, 0, 0);
+    }
     log(S.power ? "Board power ON" : "Board power OFF — outputs cleared", S.power ? "ok" : "warn");
     if (S.power && S.compileResult?.ok) refresh();
 }
@@ -1050,9 +1104,21 @@ function handleSessionMessage(msg) {
                 S.lastStimulusEntry = msg.boardImage;
                 board.applyBoardImage(msg.boardImage);
             } else applyCycleToBoard({ values: final, time: S.simTimeNs });
+            // The async sidebar mirror must see the compiled POV image too —
+            // otherwise the Peripherals 7-segment readout stays at 0%.
+            safeCall(() => sidebar?.setPeripherals?.(S.lastStimulusEntry || {}));
             flushPendingUi();
             safeCall(() => board?.setRunning?.(false));
-            driveBuzzer(false, 0, 0);
+            // A capture that finishes while the student is holding a key must
+            // not silence/clear the live channel state: re-resolve the current
+            // input mask from the pre-computed map before falling back to the
+            // stale final cycle captured with the old inputs.
+            const held = (S.keyState || []).some(Boolean) || (S.dipState || []).some(Boolean);
+            const liveEntry = held ? S.stimulusMap?.vectors?.[String(computeChannelMask())] : null;
+            if (liveEntry) {
+                S.lastStimulusEntry = liveEntry;
+                applyStimulusEntry(liveEntry);
+            } else driveBuzzer(false, 0, 0);
             setStatus("idle");
             toolbar.setRunning(false, false);
             editor.setRunState(false, false);
@@ -1133,11 +1199,15 @@ function stopSession() {
 }
 function togglePause() {
     if (S.paused) {
+        S.paused = false;
         safeCall(() => session?.resume?.());
         if (S.buzzer?.tone) driveBuzzer(true, S.buzzer.frequency, S.buzzer.duty);
         log("Simulation resumed", "cmd");
         return;
     }
+    // Interactive play has no streaming session, so the local flag is the
+    // authoritative pause state for the stimulus-map path.
+    S.paused = true;
     driveBuzzer(false, 0, 0);
     if (S.running) safeCall(() => session?.pause?.());
     log("Simulation paused — buzzer silenced", "cmd");
@@ -1206,11 +1276,10 @@ function exportVcd() {
 // -------------------------------------------------------------- terminal ---
 async function mountTerminal() {
     try {
-        const modulePath = "./ui/terminal.js";
-        const mod = await import(/* @vite-ignore */ modulePath);
-        const make = mod.createTerminalController;
-        if (typeof make !== "function" || !bottom?.getTerminalHost) return;
-        terminal = make(bottom.getTerminalHost());
+        // Static import keeps the controller in the production bundle; the old
+        // @vite-ignore dynamic import resolved against dist/assets and 404'd.
+        if (!bottom?.getTerminalHost) return;
+        terminal = createTerminalController(bottom.getTerminalHost());
         safeCall(() => terminal.connect?.());
         if (window.__cyclone) window.__cyclone.terminal = terminal;
         log("Terminal ready", "ok");

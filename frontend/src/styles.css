@@ -227,11 +227,11 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--blue); margin:
 .btn:active:not(:disabled) { transform: translateY(1px); }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-primary, .btn.primary {
-    color: #ffffff; border-color: var(--blue);
-    background: linear-gradient(180deg, #3b74f0, var(--blue) 55%, var(--blue-deep));
-    box-shadow: 0 4px 14px rgba(37, 99, 235, 0.3); font-weight: 700;
+    color: #0a0a0b; border-color: #ffffff;
+    background: #ffffff;
+    box-shadow: none; font-weight: 700;
 }
-.btn-primary:hover:not(:disabled) { background: linear-gradient(180deg, #4d82f2, #2f6ceb 55%, #1e50cf); }
+.btn-primary:hover:not(:disabled) { background: #e4e4e7; border-color: #e4e4e7; }
 .btn.running { position: relative; color: transparent; }
 .btn.running .icon { opacity: 0; }
 .btn.running::after {
@@ -1220,7 +1220,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: #ffffff; }
 
 /* Two-zone shell: toolbar / [board | workbench] / bottom dock. #left is gone. */
 #app {
-    --right-w: clamp(360px, 38vw, 760px);
     height: 100vh;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -1349,13 +1348,15 @@ input[type="checkbox"], input[type="radio"] { accent-color: #ffffff; }
 .board-hud-pill > * { pointer-events: auto; }
 #stats.stats-block, #stats.stats-block.stats-pill {
     position: static !important; inset: auto !important; height: auto !important;
-    max-width: none; display: inline-flex; flex-wrap: wrap; justify-content: center;
-    align-items: center; gap: 7px; padding: 6px 12px;
+    max-width: none; display: inline-flex; flex-direction: row; flex-wrap: nowrap;
+    justify-content: center; align-items: center; gap: 7px; padding: 6px 12px;
     border-radius: 999px; background: rgba(17, 17, 19, 0.9);
     border: var(--hair); backdrop-filter: blur(8px);
     font-family: var(--mono); font-size: 10.5px; color: #a1a1aa;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
+/* Read-only HUD: never intercept pointer events meant for the 3D orbit. */
+#stats.stats-block, #stats.stats-block.stats-pill { pointer-events: none; }
 #stats .hud-item { color: #a1a1aa; white-space: nowrap; }
 #stats .hud-live { color: #ffffff; font-weight: 650; }
 #stats .hud-latency { color: #f4f4f5; }
@@ -1366,6 +1367,10 @@ input[type="checkbox"], input[type="radio"] { accent-color: #ffffff; }
     background: rgba(17, 17, 19, 0.9); border: var(--hair);
     border-radius: 10px; backdrop-filter: blur(8px);
 }
+/* HUD chrome is pointer-transparent so canvas orbit drags pass through;
+   the key/DIP buttons inside remain clickable. */
+#board-controls, #board-controls .bc-row, #board-controls .bc-cell { pointer-events: none; }
+#board-controls button { pointer-events: auto; }
 .bc-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; }
 .bc-cell {
     display: inline-flex; align-items: stretch; gap: 2px;
@@ -1401,18 +1406,44 @@ input[type="checkbox"], input[type="radio"] { accent-color: #ffffff; }
 }
 .wb-tab:hover { background: #1f1f23; color: #f4f4f5; }
 .wb-tab.active { background: #27272a; color: #ffffff; font-weight: 650; }
-#editor-host, #sidebar-host { display: none; flex: 1 1 auto; min-height: 0; overflow: hidden; }
-#right[data-tab="code"] #editor-host { display: flex; }
-#right:not([data-tab="code"]) #sidebar-host { display: flex; }
-#editor-host .editor-panel { flex: 1 1 auto; min-height: 0; }
+#editor-host, #sidebar-host { display: none; flex: 1 1 auto; min-height: 0; min-width: 0; width: 100%; overflow: hidden; }
+#right[data-tab="code"] #editor-host { display: flex; flex-direction: column; flex: 1 1 auto; width: 100%; min-width: 0; min-height: 0; }
+/* Sidebar views grow into the free space; the editor footer is pinned below
+   them so Compile, the message summary and the message drawer remain usable
+   from every workbench tab. Only the editor's code surfaces are hidden. */
+#right:not([data-tab="code"]) #sidebar-host {
+    display: flex; flex-direction: column; flex: 1 1 auto; width: 100%; min-height: 0; min-width: 0; overflow: hidden; order: 1;
+}
+#right:not([data-tab="code"]) #editor-host {
+    display: flex; flex-direction: column; flex: 0 0 auto; width: 100%; height: auto; min-width: 0; order: 2; overflow: visible;
+}
+#right:not([data-tab="code"]) #editor-host .editor-panel { flex: 0 0 auto; min-height: 0; }
+#right:not([data-tab="code"]) #editor-host .ep-head,
+#right:not([data-tab="code"]) #editor-host .ep-tabs-wrap,
+#right:not([data-tab="code"]) #editor-host .ep-editor-wrap { display: none !important; }
+#right:not([data-tab="code"]) #editor-host .ep-messages {
+    flex: 0 0 auto; min-height: 0; max-height: 120px;
+}
+#editor-host .editor-panel { flex: 1 1 auto; min-height: 0; min-width: 0; width: 100%; display: flex; flex-direction: column; }
 #editor-host .ep-resizer { display: none !important; }
 #editor-host .ep-head {
-    background: #111113; border-bottom: var(--hair); height: 38px; min-height: 38px;
+    background: #111113; border-bottom: var(--hair); height: 34px; min-height: 34px;
     padding: 0 10px;
 }
-#editor-host .ep-title span { font-size: 11px; text-transform: uppercase;
-    letter-spacing: 0.08em; color: #71717a; }
-#editor-host .ep-tabs-wrap { background: #111113; border-bottom: var(--hair); }
+#editor-host .ep-title { display: none; }
+#editor-host .ep-tabs-wrap {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: #111113; border-bottom: var(--hair); padding-right: 8px;
+}
+#editor-host .ep-tabs { flex: 1 1 auto; min-width: 0; }
+#editor-host .ep-editor-wrap { position: relative; flex: 1 1 auto; min-height: 200px; min-width: 0; width: 100%; }
+#editor-host #ep-editor { position: absolute; inset: 0; width: 100%; height: 100%; }
+#editor-host .ep-footer { background: #111113; border-top: var(--hair); padding: 8px 10px; }
+#editor-host .ep-footer .ep-run {
+    height: 32px; background: #ffffff; color: #0a0a0b; border: 1px solid #ffffff;
+    box-shadow: none; font-size: 12px; font-weight: 700;
+}
+#editor-host .ep-footer .ep-run:hover { background: #e4e4e7; }
 #editor-host .ep-editor-wrap { flex: 1 1 auto; min-height: 0; }
 #editor-host .ep-messages { background: #111113; border-top: var(--hair); }
 .monaco-editor, .monaco-editor-background, .monaco-editor .margin,
@@ -1479,7 +1510,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: #ffffff; }
 .bp-body { flex: 1 1 auto; min-height: 0; display: flex; }
 .bp-pane { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column;
     gap: 8px; padding: 8px 10px; overflow: hidden; }
-.bp-pane.hidden { display: none; }
+.bp-pane.hidden { display: none !important; }
 .bp-pane-tools { display: flex; align-items: center; gap: 10px; flex: 0 0 auto;
     font-size: 10px; color: #71717a; }
 .bp-pane-tools .btn, .bp-hint + .btn { background: #18181b; border: var(--hair);

@@ -41,6 +41,7 @@ export function buildPinCatalog(profile) {
             peripheral: extra.peripheral || "",
             role: extra.role || extra.peripheral || "io",
             index: extra.index ?? null,
+            aliases: Array.isArray(extra.aliases) ? [...extra.aliases] : [],
             priority: extra.priority || 1,
         });
     };
@@ -59,7 +60,9 @@ export function buildPinCatalog(profile) {
         const diode = b.leds?.diodes?.[i];
         const net = b.leds?.nets?.[i];
         const dual = diode && net ? ` / ${diode} (net ${net})` : "";
-        reg(pin, `LED${i + 1}${dual} (${b.leds?.activeLow ? "active-low " : ""}red)`, "out", { peripheral: "led", index: i, priority: 10 });
+        reg(pin, `LED${i + 1}${dual} (${b.leds?.activeLow ? "active-low " : ""}red)`, "out", {
+            peripheral: "led", index: i, priority: 10, aliases: [`LED[${i}]`],
+        });
     });
     (b.buttons?.pins || []).forEach((pin, i) => {
         reg(pin, `KEY${i + 1} / SW${i + 1} (${b.buttons?.activeLow ? "active-low " : ""}input)`, "in", {
@@ -72,7 +75,7 @@ export function buildPinCatalog(profile) {
     if (b.switches && b.switches.sharedWithButtons === false) {
         (b.switches.pins || []).forEach((pin, i) => {
             reg(pin, `SW${i + 1} (${b.switches?.activeLow ? "active-low" : "active-high"} DIP switch)`, "in", {
-                peripheral: "switch", role: "switch", index: i, priority: 10,
+                peripheral: "switch", role: "switch", index: i, priority: 10, aliases: [`SW[${i}]`],
             });
         });
     }
