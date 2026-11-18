@@ -1,15 +1,14 @@
-// stats.js — single-line floating HUD pill for the 3D canvas.
-// Updated at ~4 Hz by main.js via `update()`.
+// stats.js — compact horizontal HUD strip for the 3D canvas.
+// The board viewport keeps this inline inside .board-hud-pill (never stretched).
 
 function fmtClock(hz) {
     if (!Number.isFinite(hz) || hz <= 0) return "--";
     if (hz >= 1e9) return (hz / 1e9).toFixed(2) + " GHz";
-    if (hz >= 1e6) return (hz / 1e6).toFixed(2) + " MHz";
-    if (hz >= 1e3) return (hz / 1e3).toFixed(2) + " kHz";
+    if (hz >= 1e6) return (hz / 1e6).toFixed(0) + " MHz";
+    if (hz >= 1e3) return (hz / 1e3).toFixed(0) + " kHz";
     return Math.round(hz) + " Hz";
 }
 
-// Compact simulation time: picks the largest sensible unit.
 export function fmtSimTime(ns) {
     if (!Number.isFinite(ns) || ns < 0) ns = 0;
     if (ns < 1000) return `${Math.round(ns)} ns`;
@@ -18,29 +17,52 @@ export function fmtSimTime(ns) {
     return `${(ns / 1e9).toFixed(3)} s`;
 }
 
+function counts(state) {
+    const b = state.boardProfile?.board || state.profile?.board || {};
+    const keys = b.buttons?.pins?.length || b.buttons?.count || 0;
+    const switches = b.switches?.pins?.length || b.switches?.count || 0;
+    const shared = !!b.switches?.sharedWithButtons;
+    return { keys, switches, shared };
+}
+
 export function createStatsBlock(container) {
     container.classList.add("stats-block", "stats-pill");
     container.innerHTML = `
-        <span class="hud-item" id="st-status">Idle</span>
-        <span class="hud-sep">\u00b7</span>
-        <span class="hud-item" id="st-target">--</span>
-        <span class="hud-sep">\u00b7</span>
+        <span class="hud-item hud-live" id="st-status">Live</span>
+        <span class="hud-sep">&middot;</span>
+        <span class="hud-item" id="st-target">50 MHz</span>
+        <span class="hud-sep">&middot;</span>
+        <span class="hud-item hud-latency" id="st-latency">&lt;1ms</span>
+        <span class="hud-bar">|</span>
+        <span class="hud-item" id="st-keys">KEY 1..4</span>
+        <span class="hud-item" id="st-sw">SW 1..4</span>
+        <span class="hud-sep">&middot;</span>
         <span class="hud-item" id="st-time">Sim: 0 ns</span>
-        <span class="hud-sep">\u00b7</span>
+        <span class="hud-sep">&middot;</span>
         <span class="hud-item" id="st-fps">-- FPS</span>
     `;
     const el = {
         status: container.querySelector("#st-status"),
         target: container.querySelector("#st-target"),
+        latency: container.querySelector("#st-latency"),
+        keys: container.querySelector("#st-keys"),
+        sw: container.querySelector("#st-sw"),
         time: container.querySelector("#st-time"),
         fps: container.querySelector("#st-fps"),
     };
+
     function update(state) {
-        el.target.textContent = fmtClock(state.simStats.targetSpeed);
+        const { keys, switches, shared } = counts(state);
+        el.target.textContent = fmtClock(state.simStats?.targetSpeed || state.clockHz);
         el.time.textContent = `Sim: ${fmtSimTime(state.simTimeNs)}`;
         el.fps.textContent = `${Math.round(state.fps || 0)} FPS`;
-        el.status.textContent = state.status || "Idle";
+        el.status.textContent = state.status || "Live";
+        el.latency.textContent = state.stimulusMap ? "<1ms" : "GHDL";
+        el.keys.textContent = keys ? (shared ? `KEY 1..${keys}` : `KEY 0..${keys - 1}`) : "KEY --";
+        el.sw.textContent = switches
+            ? (shared ? `SW shared` : `SW 0..${switches - 1}`)
+            : "SW --";
     }
-    // refresh from shared state on the 4 Hz tick handled by main.js
+
     return { update, el: container };
 }
