@@ -26,7 +26,7 @@ export function createToolbar(root, h) {
                 <button class="icon-btn" data-act="reset" aria-label="Reset simulation" title="Reset">${icon("reset")}</button>
                 <button class="icon-btn" data-act="step" aria-label="Step one cycle" title="Step +1 cycle">${icon("step")}</button>
             </div>
-            <button type="button" class="btn btn-primary tb-compile" id="tb-compile" title="Compile &amp; run (Ctrl+Enter)">${icon("play")}<span>Compile &amp; Run</span></button>
+            <button type="button" class="btn btn-primary tb-compile" id="tb-compile" data-act="compile" title="Compile &amp; run (Ctrl+Enter)">${icon("play")}<span>Compile &amp; Run</span></button>
         </div>
 
         <div class="tb-group tb-right">
