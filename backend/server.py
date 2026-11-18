@@ -30,7 +30,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from . import __version__
-from .device import DEVICE, DEVICES, get_device, set_device
+from .device import (
+    DEVICE,
+    DEVICES,
+    get_active_board_id,
+    get_active_board_raw,
+    get_device,
+    import_board_manifest,
+    list_available_boards,
+    select_board,
+    set_device,
+)
+from .terminal import TerminalSession, cleanup_all_terminals, exec_terminal_command
 from .paths import bundle_root, projects_dir, user_data_dir
 from .ghdl_tool import GhdlNotFoundError
 from .session import SimSession
@@ -51,6 +62,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("shutdown")
+def _on_shutdown() -> None:
+    """Never leave terminal child processes behind on server shutdown."""
+    cleanup_all_terminals()
 
 
 @app.middleware("http")
@@ -179,21 +196,79 @@ def device() -> dict:
     return {"ok": True, "device": DEVICE(), "devices": DEVICES}
 
 
+def _active_profile() -> dict:
+    """Full active board profile: board fields + pin map + facts + layout."""
+    raw = get_active_board_raw()
+    profile = dict(raw["board"])
+    profile["pinMap"] = raw.get("pinMap", {})
+    profile["facts"] = raw.get("facts", [])
+    profile.setdefault("id", raw.get("id"))
+    profile.setdefault("layout3d", raw.get("layout3d", {}))
+    return profile
+
+
+def _clear_simulator_request_cache() -> None:
+    """Drop interactive result caches so a board change cannot be served stale."""
+    if _simulator is not None:
+        try:
+            _simulator.clear_request_cache()
+        except Exception:  # pragma: no cover - cache is best-effort
+            pass
+
+
+@app.get("/api/boards")
+def boards_list() -> dict:
+    return {
+        "ok": True,
+        "activeBoard": get_active_board_id(),
+        "boards": list_available_boards(),
+    }
+
+
+@app.post("/api/boards/select")
+def boards_select(payload: Dict[str, Any] = Body(...)) -> Any:
+    board_id = payload.get("board") or payload.get("id")
+    try:
+        select_board(str(board_id or ""))
+    except ValueError as exc:
+        return _error_response(str(exc), 400)
+    _clear_simulator_request_cache()
+    return {
+        "ok": True,
+        "activeBoard": get_active_board_id(),
+        "board": _active_profile(),
+        "device": DEVICE(),
+    }
+
+
+@app.post("/api/boards/import")
+def boards_import(payload: Dict[str, Any] = Body(...)) -> Any:
+    if not isinstance(payload, dict):
+        return _error_response("Expected a board manifest object", 400)
+    manifest = payload.get("manifest")
+    raw = manifest if isinstance(manifest, dict) else payload
+    select = True
+    if isinstance(manifest, dict) and "select" in payload:
+        flag = payload.get("select")
+        select = flag if isinstance(flag, bool) else str(flag).lower() in ("1", "true", "yes", "on")
+    try:
+        import_board_manifest(raw, select=select)
+    except (ValueError, TypeError, KeyError) as exc:
+        return _error_response(str(exc), 400)
+    _clear_simulator_request_cache()
+    return {
+        "ok": True,
+        "activeBoard": get_active_board_id(),
+        "board": _active_profile(),
+        "device": DEVICE(),
+        "boards": list_available_boards(),
+    }
+
+
 @app.get("/api/board")
 def board() -> dict:
-    """The canonical board profile (pins, polarities, parts, tags).
-
-    The frontend and backend both load their board parameters from
-    board/board.json; this endpoint exposes it to the UI.  The shape is
-    ``{"ok": true, "board": {...}, "device": {...}}`` so the UI can use
-    ``data.board`` directly as its profile.
-    """
-    from .device import load_board_json
-    raw = load_board_json()
-    profile = dict(raw["board"])
-    profile["pinMap"] = raw["pinMap"]
-    profile["facts"] = raw["facts"]
-    return {"ok": True, "board": profile, "device": DEVICE()}
+    """The *active* board profile plus its device (default: board/board.json)."""
+    return {"ok": True, "board": _active_profile(), "device": DEVICE()}
 
 
 @app.get("/api/examples")
@@ -376,6 +451,111 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await session.stop()
             except Exception:  # pragma: no cover - socket already dying
                 pass
+
+
+@app.websocket("/ws/terminal")
+async def websocket_terminal(websocket: WebSocket) -> None:
+    """Interactive OS shell with GHDL on PATH; killed on disconnect."""
+    await websocket.accept()
+    loop = asyncio.get_running_loop()
+    outputs: asyncio.Queue[str] = asyncio.Queue()
+    exits: asyncio.Queue[int] = asyncio.Queue()
+
+    def on_output(text: str) -> None:
+        loop.call_soon_threadsafe(outputs.put_nowait, text)
+
+    def on_exit(code: int) -> None:
+        loop.call_soon_threadsafe(exits.put_nowait, code)
+
+    term = TerminalSession(on_output=on_output, on_exit=on_exit)
+    try:
+        term.start()
+    except Exception as exc:
+        await websocket.send_json({"type": "error", "message": str(exc)})
+        await websocket.close()
+        return
+
+    async def send_ready() -> None:
+        await websocket.send_json({
+            "type": "ready",
+            "cwd": term.cwd,
+            "ghdlOnPath": term.ghdl_on_path,
+            "pid": getattr(term._proc, "pid", None),
+        })
+
+    await send_ready()
+
+    async def receive_loop() -> None:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                message = json.loads(raw)
+            except json.JSONDecodeError:
+                await websocket.send_json({"type": "error", "message": "Invalid JSON"})
+                continue
+            if not isinstance(message, dict):
+                await websocket.send_json(
+                    {"type": "error", "message": "Invalid message: expected a JSON object"}
+                )
+                continue
+            kind = message.get("type", "")
+            try:
+                if kind == "input":
+                    term.write(str(message.get("data", "")))
+                elif kind == "interrupt":
+                    term.interrupt()
+                elif kind == "resize":
+                    term.resize(int(message.get("cols", 80)), int(message.get("rows", 24)))
+                elif kind == "restart":
+                    await asyncio.to_thread(term.close)
+                    term.start()
+                    await send_ready()
+                else:
+                    await websocket.send_json(
+                        {"type": "error", "message": f"Unknown message type '{kind}'"}
+                    )
+            except Exception as exc:
+                await websocket.send_json({"type": "error", "message": str(exc)})
+
+    async def pump() -> None:
+        while True:
+            data = await outputs.get()
+            await websocket.send_json({"type": "output", "data": data})
+
+    async def exit_watch() -> None:
+        code = await exits.get()
+        await websocket.send_json({"type": "exit", "code": code})
+
+    # Drive the lifecycle from the receive task: it ends naturally on a
+    # client disconnect.  Cancelling it mid-handshake is what makes Starlette's
+    # TestClient raise CancelledError on websocket close, so only the helper
+    # tasks are cancelled here.
+    pump_task = asyncio.create_task(pump())
+    exit_task = asyncio.create_task(exit_watch())
+    try:
+        await receive_loop()
+    except WebSocketDisconnect:
+        logger.info("terminal WebSocket client disconnected")
+    except Exception:  # pragma: no cover - socket already failing
+        pass
+    finally:
+        for task in (pump_task, exit_task):
+            task.cancel()
+        await asyncio.gather(pump_task, exit_task, return_exceptions=True)
+        # taskkill/wait/join are blocking; keep the event loop responsive.
+        await asyncio.to_thread(term.close)
+
+
+@app.post("/api/terminal/exec")
+def terminal_exec(payload: Dict[str, Any] = Body(...)) -> dict:
+    command = str(payload.get("command") or "")
+    if not command.strip():
+        return {"ok": False, "error": "No command provided"}
+    return exec_terminal_command(
+        command,
+        payload.get("cwd"),
+        float(payload.get("timeout", 15.0)),
+    )
 
 
 async def _ws_compile(websocket: WebSocket, simulator: Simulator, message: dict) -> None:

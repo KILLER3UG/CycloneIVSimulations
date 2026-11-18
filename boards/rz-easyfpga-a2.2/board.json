@@ -1,0 +1,1168 @@
+{
+  "schema": "rz-easyfpga-board/1",
+  "title": "RZ-EasyFPGA A2.2 board ground truth",
+  "generatedFrom": [
+    "board/board_spec.md (reconciled, tagged)",
+    "board/vendor/Pinos_RZEasyFPGA.txt (kit pin file)",
+    "board/vendor/instructor_pin_table.png",
+    "board/schematic/Diagrama_Esquematico_RZ-EasyFPGA.pdf",
+    "board/schematic/Esquemas_Eletricos_Ampliados.pdf",
+    "board/vendor/examples/*/*.qsf"
+  ],
+  "tagLegend": {
+    "VERIFIED": "read directly from the vendor schematic / vendor files, or 2+ independent sources agree (schematic + datasheet)",
+    "INFERRED": "deduced from verified evidence; the reasoning is stated",
+    "UNVERIFIED": "cannot be proven from available documents; needs a physical check (see board/real_board_tests.md)"
+  },
+  "devices": {
+    "ep4ce6": {
+      "key": "ep4ce6",
+      "family": "Cyclone IV E",
+      "part": "EP4CE6E22C8N",
+      "quartusDevice": "EP4CE6E22C8",
+      "package": "EQFP-144",
+      "speedGrade": "8",
+      "logicElements": 6272,
+      "m9kBlocks": 30,
+      "memoryKbit": 270,
+      "multipliers18x18": 15,
+      "plls": 2,
+      "userIo": 91,
+      "coreVoltage": "1.2 V",
+      "ioStandard": "3.3 V LVTTL"
+    },
+    "ep4ce10": {
+      "key": "ep4ce10",
+      "family": "Cyclone IV E",
+      "part": "EP4CE10E22C8N",
+      "quartusDevice": "EP4CE10E22C8",
+      "package": "EQFP-144",
+      "speedGrade": "8",
+      "logicElements": 10320,
+      "m9kBlocks": 46,
+      "memoryKbit": 414,
+      "multipliers18x18": 23,
+      "plls": 2,
+      "userIo": 91,
+      "coreVoltage": "1.2 V",
+      "ioStandard": "3.3 V LVTTL"
+    }
+  },
+  "board": {
+    "name": "RZ-EasyFPGA A2.2",
+    "vendor": "RZRD (www.rzrd.net)",
+    "fpga": "EP4CE6E22C8N",
+    "dimensions": "21 x 15 x 11 cm",
+    "inputVoltage": "5 V",
+    "clockHz": 50000000,
+    "clockPort": "CLOCK_50",
+    "clockAliases": [
+      "FPGA_CLK",
+      "CLK"
+    ],
+    "clockPin": "PIN_23",
+    "clockSource": "50 MHz active oscillator, 4-pin (VCC=4, GND=2, NC=1, CLKout=3), 3.3 V, 33 ohm series R3",
+    "resetPort": "FPGA_RST",
+    "resetPin": "PIN_25",
+    "resetActiveLow": true,
+    "resetPullup": "10 kohm + 100 nF RC",
+    "leds": {
+      "port": "LED",
+      "count": 4,
+      "pins": [
+        "PIN_87",
+        "PIN_86",
+        "PIN_85",
+        "PIN_84"
+      ],
+      "activeLow": true,
+      "seriesResistor": "470 ohm (R30-R33)",
+      "wiring": "anodes to 3.3 V, cathodes through 470 ohm to the FPGA pins",
+      "diodes": [
+        "D1",
+        "D2",
+        "D3",
+        "D4"
+      ],
+      "nets": [
+        "LED4",
+        "LED3",
+        "LED2",
+        "LED1"
+      ],
+      "labelNote": "LED[i] is the FPGA net on PIN_87/86/85/84; the physical diode at that position is D1..D4 and the silkscreen/net name runs the opposite way (PIN_87 = LED[0] / D1 / net LED4 ... PIN_84 = LED[3] / D4 / net LED1)."
+    },
+    "buttons": {
+      "port": "KEY",
+      "count": 4,
+      "pins": [
+        "PIN_88",
+        "PIN_89",
+        "PIN_90",
+        "PIN_91"
+      ],
+      "activeLow": true,
+      "pullup": "10 kohm to 3.3 V (R38-R41)",
+      "seriesResistor": "220 ohm (R34-R37)",
+      "wiring": "key closes the net to GND through 220 ohm"
+    },
+    "switches": {
+      "port": "KEY",
+      "count": 4,
+      "pins": [
+        "PIN_88",
+        "PIN_89",
+        "PIN_90",
+        "PIN_91"
+      ],
+      "sharedWithButtons": true,
+      "activeLow": true,
+      "onValue": 0,
+      "pullup": "10 kohm to 3.3 V (R42-R45)",
+      "wiring": "DIP common pins 1-4 to GND, switched pins 8/7/6/5 to the KEY nets"
+    },
+    "displays": {
+      "part": "4-digit common-anode seven-segment display, 12-pin",
+      "ports": [
+        "SEG"
+      ],
+      "digitPort": "DIG",
+      "count": 4,
+      "segmentsPerDigit": 8,
+      "multiplexed": true,
+      "segmentActiveLow": true,
+      "digitActiveLow": true,
+      "segBitMap": {
+        "a": 0,
+        "b": 1,
+        "c": 2,
+        "d": 3,
+        "e": 4,
+        "f": 5,
+        "g": 6,
+        "dp": 7
+      },
+      "segmentResistors": "220 ohm (R50-R57)",
+      "digitResistors": "10 kohm base resistors R46-R49 into 8550 PNP high-side drivers Q1-Q4 from 3.3 V",
+      "pins": {
+        "SEG": [
+          "PIN_128",
+          "PIN_121",
+          "PIN_125",
+          "PIN_129",
+          "PIN_132",
+          "PIN_126",
+          "PIN_124",
+          "PIN_127"
+        ],
+        "DIG": [
+          "PIN_133",
+          "PIN_135",
+          "PIN_136",
+          "PIN_137"
+        ]
+      },
+      "digitOrder": "right-to-left: DIG[3] (PIN_137, schematic DIG4 -> Q1 -> D1) is the LEFTMOST tube; DIG[0] (PIN_133, DIG1 -> Q4 -> D4) is the RIGHTMOST tube",
+      "digitCommons": "D1/D2/D3/D4 = package pins 12/9/8/6, left to right",
+      "digitLabels": [
+        {
+          "dig": "DIG[0]",
+          "pin": "PIN_133",
+          "resistor": "R49",
+          "transistor": "Q1",
+          "diode": "D4",
+          "position": "rightmost"
+        },
+        {
+          "dig": "DIG[1]",
+          "pin": "PIN_135",
+          "resistor": "R48",
+          "transistor": "Q2",
+          "diode": "D3",
+          "position": ""
+        },
+        {
+          "dig": "DIG[2]",
+          "pin": "PIN_136",
+          "resistor": "R47",
+          "transistor": "Q3",
+          "diode": "D2",
+          "position": ""
+        },
+        {
+          "dig": "DIG[3]",
+          "pin": "PIN_137",
+          "resistor": "R46",
+          "transistor": "Q4",
+          "diode": "D1",
+          "position": "leftmost"
+        }
+      ]
+    },
+    "buzzer": {
+      "port": "FPGA_BUZZER",
+      "pin": "PIN_110",
+      "type": "passive",
+      "typeTag": "UNVERIFIED",
+      "typeConfidence": "unverified on real hardware (schematic proves the drive topology only)",
+      "activeLow": true,
+      "pullup": "10 kohm to 3.3 V (R17)",
+      "drive": "BEEP -> 2 kohm (R18) -> base of 8550 PNP (Q5) high-side from 3.3 V via 33 ohm (R19); no on-board oscillator"
+    },
+    "vga": {
+      "connector": "DB15",
+      "pins": {
+        "VGA_R": "PIN_106",
+        "VGA_G": "PIN_105",
+        "VGA_B": "PIN_104",
+        "VGA_HSYNC": "PIN_101",
+        "VGA_VSYNC": "PIN_103"
+      },
+      "colors": 8,
+      "resistors": "R/G/B 1 kohm (R16/R15/R14); HS/VS 33 ohm (R13/R12)",
+      "db15": {
+        "1": "R",
+        "2": "G",
+        "3": "B",
+        "13": "HSYNC",
+        "14": "VSYNC",
+        "grounds": "4-10"
+      }
+    },
+    "ps2": {
+      "connector": "6-pin DIN",
+      "pins": {
+        "PS_CLOCK": "PIN_119",
+        "PS_DATA": "PIN_120"
+      },
+      "pullup": "10 kohm to 5 V (R23/R24) + 470 ohm series (R21/R22)",
+      "openCollector": true,
+      "bus": "open-collector, device pulls low, idle high; connector pin 4 = 5 V, pin 3 = GND",
+      "deviceTypeTag": "UNVERIFIED"
+    },
+    "uart": {
+      "transceiver": "MAX3232E",
+      "pins": {
+        "UART_TXD": "PIN_114",
+        "UART_RXD": "PIN_115"
+      },
+      "db9": {
+        "tx": 7,
+        "rx": 8,
+        "gnd": 5
+      },
+      "db9StandardMismatch": true,
+      "db9Note": "Standard DTE DB9 is RXD=2, TXD=3, GND=5; this board puts TX on 7 and RX on 8, so a straight-through PC cable fails and a crossover (7->2, 8->3, 5<->5) is required",
+      "fittedPartNote": "schematic says MAX3232E (U4); the vendor annotated photo labels the fitted chip SP3232 and the OMDAZZ manual says SP232 - pin- and function-compatible 2-driver/2-receiver 3.3 V RS-232 transceivers",
+      "chargePumpCaps": "4 x 100 nF (C41-C44)"
+    },
+    "infrared": {
+      "part": "3-pin IR receiver module (U10), part number not marked on the schematic",
+      "pin": "PIN_100",
+      "activeLow": true,
+      "pullup": "none fitted on the output (the receiver idles high via its internal pull-up); R58 100 ohm is a series supply resistor from 3.3 V to VCC (pin 1)",
+      "carrierHz": 38000,
+      "carrierTag": "UNVERIFIED",
+      "protocol": "NEC-compatible assumed",
+      "protocolTag": "UNVERIFIED",
+      "outputTag": "INFERRED"
+    },
+    "i2c": {
+      "buses": [
+        {
+          "name": "EEPROM",
+          "scl": "PIN_99",
+          "sda": "PIN_98",
+          "pullup": "5.1 kohm to 3.3 V (R25/R26)",
+          "device": {
+            "part": "AT24C08",
+            "address": 80,
+            "addressTag": "VERIFIED",
+            "bytes": 1024,
+            "pageSize": 16,
+            "writeCycleMs": 5,
+            "writeProtected": true,
+            "wpTag": "VERIFIED",
+            "wpNote": "WP pin 7 tied to VCC (3.3 V) on the board, so writes are blocked and the chip is read-only in hardware",
+            "controlByte": "1010 A2 A1 A0 R/W; only A2 is a physical pin, A1/A0 are word-address bits 9/8",
+            "blocks": 4,
+            "blockWordAddresses": [
+              0,
+              256,
+              512,
+              768
+            ]
+          }
+        },
+        {
+          "name": "LM75",
+          "scl": "PIN_112",
+          "sda": "PIN_113",
+          "pullup": "5.1 kohm to 3.3 V (R27/R28)",
+          "device": {
+            "part": "LM75",
+            "address": 72,
+            "addressTag": "VERIFIED",
+            "temperatureRegister": "0x00, 9-bit, 0.5 C LSB",
+            "powerUpDefaults": "Thyst = 75 C (0x4B00), Tos = 80 C (0x5000), config = 0x00",
+            "powerUpDefaultsTag": "VERIFIED",
+            "ambientTag": "UNVERIFIED"
+          }
+        }
+      ],
+      "legacyFlatKeys": {
+        "I2C_SCL": "PIN_99",
+        "I2C_SDA": "PIN_98",
+        "FPGA_SCL": "PIN_112",
+        "FPGA_SDA": "PIN_113",
+        "pullup": "5.1 kohm to 3.3 V",
+        "eeprom": {
+          "part": "AT24C08",
+          "address": 80,
+          "bytes": 1024,
+          "pageSize": 16,
+          "writeCycleMs": 5,
+          "writeProtected": true
+        },
+        "tempSensor": {
+          "part": "LM75",
+          "address": 72
+        }
+      }
+    },
+    "lcd": {
+      "socket": "20-pin, 1602/12864",
+      "pins": {
+        "LCD_RS": "PIN_141",
+        "LCD_RW": "PIN_138",
+        "LCD_E": "PIN_143",
+        "LCD_D0": "PIN_142",
+        "LCD_D1": "PIN_1",
+        "LCD_D2": "PIN_144",
+        "LCD_D3": "PIN_3",
+        "LCD_D4": "PIN_2",
+        "LCD_D5": "PIN_10",
+        "LCD_D6": "PIN_7",
+        "LCD_D7": "PIN_11"
+      },
+      "contrastTrimmer": "10 kohm (designator RW) from 5 V, wiper to VBG; R29 1 kohm to GND",
+      "backlightPins": "5 V on socket pins 19/20",
+      "socketPinOrderTag": "UNVERIFIED"
+    },
+    "sdram": {
+      "part": "HY57V641620",
+      "bits": 64,
+      "dataBits": 16,
+      "banks": 4,
+      "refreshCycles": 4096,
+      "refreshMs": 64,
+      "A": [
+        "PIN_76",
+        "PIN_77",
+        "PIN_80",
+        "PIN_83",
+        "PIN_68",
+        "PIN_67",
+        "PIN_66",
+        "PIN_65",
+        "PIN_64",
+        "PIN_60",
+        "PIN_75",
+        "PIN_59"
+      ],
+      "DQ": [
+        "PIN_28",
+        "PIN_30",
+        "PIN_31",
+        "PIN_32",
+        "PIN_33",
+        "PIN_34",
+        "PIN_38",
+        "PIN_39",
+        "PIN_54",
+        "PIN_53",
+        "PIN_52",
+        "PIN_51",
+        "PIN_50",
+        "PIN_49",
+        "PIN_46",
+        "PIN_44"
+      ],
+      "CKE": "PIN_58",
+      "CLK": "PIN_43",
+      "CS": "PIN_72",
+      "RAS": "PIN_71",
+      "CAS": "PIN_70",
+      "WE": "PIN_69",
+      "BS0": "PIN_73",
+      "BS1": "PIN_74",
+      "LDQM": "PIN_42",
+      "UDQM": "PIN_55",
+      "timingModeled": false
+    },
+    "config": {
+      "flash": "EPCS16 (U7; footprint accepts EPCS4/EPCS16)",
+      "flashSizeBits": 16777216,
+      "flashMarkingNote": "vendor annotated photo labels the fitted part M25P16 and the OMDAZZ manual says EPCS16N; both are AS-compatible serial flashes fitting the same footprint - read the physical marking before JIC programming (test T-FLASH-1)",
+      "asModePins": [
+        "ASDI",
+        "ASDO",
+        "DCLK",
+        "nCS"
+      ],
+      "jtag": "2x5 header (TCK/TDO/TMS/TDI; R8 1 kohm, R9/R10 10 kohm to 2.5 V)",
+      "as": "2x5 header (DCLK/CONF_DONE/nCONFIG/DATA/ASDO/nCE/nCSO; R11 10 kohm)",
+      "sof": "volatile (lost on power cycle)",
+      "pof": "persistent (auto-loads from EPCS at power-on)",
+      "unusedPins": "weak pull-up, \"as input tri-stated\" (vendor .qsf)"
+    },
+    "rails": {
+      "input": "5 V",
+      "rails": [
+        "3.3 V",
+        "2.5 V",
+        "1.2 V"
+      ],
+      "regulators": [
+        "1117-3.3 (U1, from 5 V)",
+        "1117-2.5 (U3, from 5 V)",
+        "1117-1.2 (U2, from 3.3 V)"
+      ],
+      "powerSwitch": "self-locking SW-DPDT cuts the 5 V input; R1 2 kohm + D1 LED power indicator"
+    },
+    "headers": {
+      "P1": {
+        "size": "19x2",
+        "note": "header pins 1/2 = GND; 3=BEEP(110), 4=111, 5=SCL(112), 6=SDA(113), 7=TXD(114), 8=RXD(115), 9=PS_CLOCK(119), 10=PS_DATA(120), 11-18=SEG1/6/2/5/7/0/3/4 (121,124,125,126,127,128,129,132), 19-22=DIG1-4 (133,135,136,137), 23-33=LCD2/1/4/3/6/5/8/7/10/9/11 (138,141,142,143,144,1,3,2,7,10,11), 34=24 (free GPIO), 35/36=3.3 V, 37/38=5 V (zoom_p1_pins.png)"
+      },
+      "P2": {
+        "size": "22x2",
+        "note": "header pins 1/2 = 5 V, 3/4 = 3.3 V, 5/6 = GND; pins 7-44 = SDRAM breakout, all 38 SDRAM nets (7=83/A3, 8=80/A2, 9=77/A1, 10=76/A0, 11=75/A10, 12=74/BS1, 13=73/BS0, 14=72/CS, 15=71/RAS, 16=70/CAS, 17=69/WE, 18=68/A4, 19=67/A5, 20=66/A6, 21=65/A7, 22=64/A8, 23=60/A9, 24=59/A11, 25=58/CKE, 26=55/UDQM, 27=54/DQ8, 28=53/DQ9, 29=52/DQ10, 30=51/DQ11, 31=50/DQ12, 32=49/DQ13, 33=46/DQ14, 34=44/DQ15, 35=43/CLK, 36=42/LDQM, 37=39/DQ7, 38=38/DQ6, 39=34/DQ5, 40=33/DQ4, 41=32/DQ3, 42=31/DQ2, 43=30/DQ1, 44=28/DQ0). No KEY nets on P2; earlier 'pins 43/44 not connected' was wrong - hp43/44 carry SDRAM_DQ[1]/DQ[0] (re-read from the schematic PDF at 10x zoom + text coordinates)"
+      },
+      "P3": {
+        "size": "10x2",
+        "note": "header pins 1/2 = GND; left column 3=LED1(84), 5=LED3(86), 7=KEY1(88), 9=KEY3(90), 11=I2C_SDA(98), 13=IR(100), 15=VGA_VSYNC(103), 17=VGA_G(105), 19=5 V; right column 4=LED2(85), 6=LED4(87), 8=KEY2(89), 10=KEY4(91), 12=I2C_SCL(99), 14=VGA_HSYNC(101), 16=VGA_B(104), 18=VGA_R(106), 20=3.3 V (zoom_p3_pins.png)"
+      }
+    },
+    "modelNotes": [
+      {
+        "topic": "Buzzer",
+        "status": "unverified on real hardware",
+        "detail": "Modelled as a passive speaker: the schematic shows a 2-terminal SPEAKER behind a single 8550 transistor with no on-board oscillator, so a tone requires toggling pin 110. Whether the fitted part is active or passive needs physical test T-BUZZER-1."
+      },
+      {
+        "topic": "AT24C08 EEPROM",
+        "status": "per schematic (verified)",
+        "detail": "WP pin tied to VCC on the board: writes are blocked, reads work. Address 0x50 on its own bus, I2C_SCL/I2C_SDA = pins 99/98."
+      },
+      {
+        "topic": "LM75 temperature sensor",
+        "status": "per schematic (verified); ambient value unverified",
+        "detail": "Sits on the SECOND I2C bus, FPGA_SCL/FPGA_SDA = pins 112/113, address 0x48. The simulated temperature is a UI setting, not a measured value."
+      },
+      {
+        "topic": "PS/2 port",
+        "status": "unverified on real hardware",
+        "detail": "Model sends keyboard-style scancodes (make/break) with open-collector timing; the fitted device type is not shown on the schematic (pull-ups are to 5 V, pins 119/120)."
+      },
+      {
+        "topic": "IR receiver",
+        "status": "unverified on real hardware",
+        "detail": "Model emits NEC frames (active-low bursts, idle high) on pin 100; the receiver part number and protocol are not marked on the schematic."
+      },
+      {
+        "topic": "RS232 DB9",
+        "status": "per schematic (verified, non-standard)",
+        "detail": "Board TX exits on DB9 pin 7 and RX enters on pin 8, GND pin 5 - a straight-through PC cable will NOT work; a crossover (7->2, 8->3, 5<->5) is needed."
+      },
+      {
+        "topic": "7-segment display",
+        "status": "per schematic (verified)",
+        "detail": "Common anode behind 8550 PNP digit drivers: digits and segments are active-low. SEG0=a, SEG1=b, SEG2=c, SEG3=d, SEG4=e, SEG5=f, SEG6=g, SEG7=dp (SEG0->R52->display pin 11=a, SEG1->R57->pin 7=b; zoom_seg_map.png)."
+      },
+      {
+        "topic": "Keys and DIP switch",
+        "status": "per schematic (verified)",
+        "detail": "The DIP is wired across the same nets as the keys (pins 88-91): pressed/closed reads 0. They cannot be used independently."
+      },
+      {
+        "topic": "SDRAM / VGA / LCD",
+        "status": "per schematic (verified pin maps)",
+        "detail": "SDRAM HY57V641620 pin map only (no timing model). VGA is 1 bit per channel (8 colours). LCD socket signals follow the vendor pin table."
+      }
+    ],
+    "clock2Pin": "PIN_24",
+    "clock2Note": "Dedicated input-only clock pin (CLK2 / DIFFCLK_1p) on U5I; routed to the P1 expansion header pin 34. Output/InOut assignments are rejected.",
+    "headerIo": [
+      {
+        "pin": "PIN_111",
+        "header": "P1",
+        "headerPin": 4,
+        "fpga": "U5G IO, DIFFIO_T19n",
+        "note": "general-purpose header I/O"
+      }
+    ],
+    "id": "rz-easyfpga-a2.2",
+    "layout3d": {
+      "pcb": {
+        "w": 132,
+        "d": 104,
+        "thickness": 1.6,
+        "cornerRadius": 3
+      },
+      "pcbColor": "#141619"
+    }
+  },
+  "facts": [
+    {
+      "id": "F01",
+      "statement": "Chip is EP4CE6E22C8N, Cyclone IV E, EQFP-144, speed grade 8",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH U5 title",
+        "QSF DEVICE EP4CE6E22C8"
+      ]
+    },
+    {
+      "id": "F02",
+      "statement": "EP4CE6 resources: 6272 LE, 30 M9K (270 Kbit), 15 18x18 multipliers, 2 PLLs, 91 user I/O",
+      "tag": "VERIFIED",
+      "sources": [
+        "Cyclone IV Device Handbook",
+        "schematic bank symbols U5A-U5I"
+      ]
+    },
+    {
+      "id": "F03",
+      "statement": "EP4CE10E22C8N is the drop-in variant: 10320 LE, 46 M9K (414 Kbit), 23 multipliers, 2 PLLs, 91 I/O",
+      "tag": "VERIFIED",
+      "sources": [
+        "Cyclone IV Device Handbook"
+      ]
+    },
+    {
+      "id": "F04",
+      "statement": "There are 91 user I/O pins, not 92; the old 92 was a miscount (CONF_DONE is literally package pin 92 but is a dedicated config pin)",
+      "tag": "VERIFIED",
+      "sources": [
+        "Cyclone IV Device Handbook",
+        "schematic U5A-U5I pin list"
+      ]
+    },
+    {
+      "id": "F05",
+      "statement": "50 MHz active oscillator on FPGA_CLK = PIN_23 (CLK1/DIFFCLK_0n), 3.3 V, 33 ohm series",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH",
+        "CROP-reset_clk",
+        "PIN",
+        "INST"
+      ]
+    },
+    {
+      "id": "F06",
+      "statement": "RESET key shorts RESET net to GND, active-low, on PIN_25 (CLK3/DIFFCLK_1n); R2 10 kohm pull-up + C10 100 nF",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH",
+        "CROP-reset_clk",
+        "PIN",
+        "INST"
+      ]
+    },
+    {
+      "id": "F07",
+      "statement": "Keys KEY1-KEY4 on pins 88-91; pressed = 0, released = 1; series R34-R37 220 ohm; pull-ups R38-R41 10 kohm",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH",
+        "CROP-leds_dip",
+        "PIN",
+        "INST",
+        "QSF"
+      ]
+    },
+    {
+      "id": "F08",
+      "statement": "DIP switch shares the KEY nets 88-91; ON/closed = 0; pull-ups R42-R45 10 kohm",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH",
+        "CROP-leds_dip",
+        "PIN comment",
+        "QSF"
+      ]
+    },
+    {
+      "id": "F09",
+      "statement": "LEDs LED1-LED4 on pins 87/86/85/84; anodes to 3.3 V, cathodes through 470 ohm R30-R33; lit = 0",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH",
+        "CROP-leds_dip",
+        "PIN",
+        "INST",
+        "QSF"
+      ]
+    },
+    {
+      "id": "F10",
+      "statement": "7-segment: 4-digit common-anode; DIG1-4 = 133/135/136/137 through 10 kohm R46-R49 into 8550 PNP high-side drivers; digit ON = 0",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH",
+        "CROP-sevenseg"
+      ]
+    },
+    {
+      "id": "F11",
+      "statement": "7-segment segments SEG0-7 = 128/121/125/129/132/126/124/127 through 220 ohm R50-R57; segment lit = 0",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH",
+        "CROP-sevenseg",
+        "INST"
+      ]
+    },
+    {
+      "id": "F12",
+      "statement": "SEG bit map: SEG0=a, SEG1=b, SEG2=c, SEG3=d, SEG4=e, SEG5=f, SEG6=g, SEG7=dp (display pins 11=a, 7=b, 4=c, 2=d, 1=e, 10=f, 5=g, 3=dp; SEG0 routes via R52 to display pin 11, SEG1 via R57 to pin 7)",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH Display sheet",
+        "zoom_seg_map.png",
+        "3461BS datasheet pin map"
+      ]
+    },
+    {
+      "id": "F13",
+      "statement": "Buzzer drive: BEEP = PIN_110 -> 2 kohm -> 8550 PNP base, high-side from 3.3 V via 33 ohm; R17 10 kohm pull-up; ON = BEEP 0",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH",
+        "CROP-buzzer_ir",
+        "AMP1"
+      ]
+    },
+    {
+      "id": "F14",
+      "statement": "Fitted buzzer is passive (requires toggling); no on-board oscillator",
+      "tag": "UNVERIFIED",
+      "sources": [
+        "schematic proves topology only; physical test T-BUZZER-1"
+      ]
+    },
+    {
+      "id": "F15",
+      "statement": "RS232: MAX3232E U4; UART_TXD=114 (T1IN), UART_RXD=115 (R1OUT); DB9 pin 7 = board TX, pin 8 = board RX, pin 5 = GND",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH",
+        "CROP-rs232",
+        "AMP1",
+        "INST",
+        "PIN"
+      ]
+    },
+    {
+      "id": "F16",
+      "statement": "DB9 pin 7/8 is non-standard vs DTE 2/3/5; straight-through PC cable fails, crossover needed",
+      "tag": "VERIFIED",
+      "sources": [
+        "schematic vs EIA/TIA-232 pinout"
+      ]
+    },
+    {
+      "id": "F17",
+      "statement": "VGA: VGA_R/G/B = 106/105/104 (1 bit each, 8 colors), HSYNC=101, VSYNC=103; 1 kohm RGB, 33 ohm sync",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH",
+        "AMP1",
+        "INST",
+        "PIN"
+      ]
+    },
+    {
+      "id": "F18",
+      "statement": "PS/2: PS_CLOCK=119, PS_DATA=120; 470 ohm series; 10 kohm pull-ups to 5 V; open-collector idle high",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH",
+        "CROP-ps2_eep",
+        "AMP1",
+        "INST",
+        "PIN"
+      ]
+    },
+    {
+      "id": "F19",
+      "statement": "Fitted PS/2 device is a keyboard",
+      "tag": "UNVERIFIED",
+      "sources": [
+        "physical test T-PS2-1"
+      ]
+    },
+    {
+      "id": "F20",
+      "statement": "EEPROM and LM75 are on TWO SEPARATE I2C buses: EEPROM on I2C_SCL/SDA = 99/98, LM75 on FPGA_SCL/SDA = 112/113",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH",
+        "CROP-ps2_eep",
+        "PIN",
+        "INST"
+      ]
+    },
+    {
+      "id": "F21",
+      "statement": "AT24C08 on the EEPROM bus: 8 Kbit = 1 KiB, 16-byte pages, 5 ms write cycle, address 0x50 (A2/A1/A0 = GND)",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH",
+        "CROP-ps2_eep",
+        "AT24C08 datasheet"
+      ]
+    },
+    {
+      "id": "F22",
+      "statement": "AT24C08 WP (pin 7) tied to VCC, so writes are blocked on real hardware (read-only)",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH zoom_eep",
+        "AT24C08 datasheet"
+      ]
+    },
+    {
+      "id": "F23",
+      "statement": "LM75 on the second bus at address 0x48; temperature register 0x00 is 9-bit 0.5 C LSB; OS pin unused",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH",
+        "CROP-ps2_eep",
+        "LM75 datasheet"
+      ]
+    },
+    {
+      "id": "F24",
+      "statement": "LM75 ambient temperature during a classroom run",
+      "tag": "UNVERIFIED",
+      "sources": [
+        "physical test T-LM75-1"
+      ]
+    },
+    {
+      "id": "F25",
+      "statement": "LCD socket signals: RS=141, RW=138, E=143, D0..D7=142,1,144,3,2,10,7,11; 10 kohm contrast trimmer",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH",
+        "CROP-lcd",
+        "INST",
+        "PIN"
+      ]
+    },
+    {
+      "id": "F26",
+      "statement": "LCD socket pin order matches a standard 1602 module",
+      "tag": "UNVERIFIED",
+      "sources": [
+        "physical test T-LCD-1"
+      ]
+    },
+    {
+      "id": "F27",
+      "statement": "SDRAM HY57V641620, 64 Mbit, 16-bit bus, 4 banks; DQ/A/control pin map as listed",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH U6",
+        "PIN",
+        "INST"
+      ]
+    },
+    {
+      "id": "F28",
+      "statement": "IR receiver output is demodulated, active-low bursts, idle high",
+      "tag": "INFERRED",
+      "sources": [
+        "standard 38 kHz receiver behaviour; part number not marked on schematic"
+      ]
+    },
+    {
+      "id": "F29",
+      "statement": "IR carrier/protocol is 38 kHz NEC",
+      "tag": "UNVERIFIED",
+      "sources": [
+        "physical test T-IR-1"
+      ]
+    },
+    {
+      "id": "F30",
+      "statement": "EPCS16 config flash, AS mode; 16 Mbit = 2 MiB; .sof volatile, .pof/.jic persistent",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH",
+        "CROP-jtag",
+        "EPCS16 datasheet"
+      ]
+    },
+    {
+      "id": "F31",
+      "statement": "Unused pins reserved as weak pull-up, as input tri-stated",
+      "tag": "VERIFIED",
+      "sources": [
+        "all vendor QSF"
+      ]
+    },
+    {
+      "id": "F32",
+      "statement": "Power: 5 V input; 3.3 V (1117-3.3 from 5 V), 2.5 V (1117-2.5 from 5 V), 1.2 V (1117-1.2 from 3.3 V)",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH",
+        "CROP-power",
+        "AMP1"
+      ]
+    },
+    {
+      "id": "F33",
+      "statement": "Pins 6/8/13 go to the EPCS16 config flash and AS header; pins 24 (P1 header pin 34) and 111 (P1 header pin 4) are free GPIO on the P1 header (P1 header pins 1/2 are GND)",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH P1 zoom",
+        "zoom_p1_pins.png",
+        "CROP-leds_dip"
+      ]
+    },
+    {
+      "id": "F34",
+      "statement": "Pins used by two functions: KEY[n] and ckey[n] share 88-91 by design (DIP wired across the keys); no vendor project assigns a pin twice",
+      "tag": "VERIFIED",
+      "sources": [
+        "PIN footer",
+        "QSF",
+        "SCH"
+      ]
+    },
+    {
+      "id": "F35",
+      "statement": "Config flash is EPCS16 on the A2.2; the older A2.1 schematic V2.1 uses M25P16 and OMDAZZ manuals say EPCS16N",
+      "tag": "VERIFIED",
+      "sources": [
+        "SCH",
+        "A2.1 schematic V2.1",
+        "OMDAZZ manuals",
+        "sources.md #16/#12"
+      ]
+    },
+    {
+      "id": "F36",
+      "statement": "HY57V641620 refresh is 4096 cycles / 64 ms (4096 rows)",
+      "tag": "VERIFIED",
+      "sources": [
+        "HY57V641620 datasheet",
+        "sources.md component table"
+      ]
+    },
+    {
+      "id": "F37",
+      "statement": "AT24C08 control byte 1010 A2 A1 A0 R/W: only A2 is a physical pin; A1/A0 select one of four 256-byte blocks at word addresses 0/256/512/768",
+      "tag": "VERIFIED",
+      "sources": [
+        "AT24C08 datasheet doc0180",
+        "sources.md component table"
+      ]
+    },
+    {
+      "id": "F38",
+      "statement": "LM75 power-up defaults: Thyst = 75 C (0x4B00), Tos = 80 C (0x5000), config = 0x00",
+      "tag": "VERIFIED",
+      "sources": [
+        "LM75B datasheet",
+        "sources.md component table"
+      ]
+    },
+    {
+      "id": "F39",
+      "statement": "Independent online pin tables (dualvim 16 qsf, inaciose, leoo-c1, fsmiamoto, kdg-auts, naelolaiz, LiteX, microCore, MUDAL) agree with the vendor baseline on CLK/RST/KEY/LED/SEG/DIG/UART/LCD/VGA/SDRAM/PS2/I2C/IR/buzzer",
+      "tag": "VERIFIED",
+      "sources": [
+        "sources.md pin-table comparison"
+      ]
+    }
+  ],
+  "pinMap": {
+    "CLOCK_50": [
+      "PIN_23"
+    ],
+    "FPGA_CLK": [
+      "PIN_23"
+    ],
+    "CLK": [
+      "PIN_23"
+    ],
+    "FPGA_RST": [
+      "PIN_25"
+    ],
+    "LED[0]": [
+      "PIN_87"
+    ],
+    "LED[1]": [
+      "PIN_86"
+    ],
+    "LED[2]": [
+      "PIN_85"
+    ],
+    "LED[3]": [
+      "PIN_84"
+    ],
+    "KEY[0]": [
+      "PIN_88"
+    ],
+    "KEY[1]": [
+      "PIN_89"
+    ],
+    "KEY[2]": [
+      "PIN_90"
+    ],
+    "KEY[3]": [
+      "PIN_91"
+    ],
+    "SEG[0]": [
+      "PIN_128"
+    ],
+    "SEG[1]": [
+      "PIN_121"
+    ],
+    "SEG[2]": [
+      "PIN_125"
+    ],
+    "SEG[3]": [
+      "PIN_129"
+    ],
+    "SEG[4]": [
+      "PIN_132"
+    ],
+    "SEG[5]": [
+      "PIN_126"
+    ],
+    "SEG[6]": [
+      "PIN_124"
+    ],
+    "SEG[7]": [
+      "PIN_127"
+    ],
+    "DIG[0]": [
+      "PIN_133"
+    ],
+    "DIG[1]": [
+      "PIN_135"
+    ],
+    "DIG[2]": [
+      "PIN_136"
+    ],
+    "DIG[3]": [
+      "PIN_137"
+    ],
+    "FPGA_BUZZER": [
+      "PIN_110"
+    ],
+    "VGA_R": [
+      "PIN_106"
+    ],
+    "VGA_G": [
+      "PIN_105"
+    ],
+    "VGA_B": [
+      "PIN_104"
+    ],
+    "VGA_HSYNC": [
+      "PIN_101"
+    ],
+    "VGA_VSYNC": [
+      "PIN_103"
+    ],
+    "PS_CLOCK": [
+      "PIN_119"
+    ],
+    "PS_DATA": [
+      "PIN_120"
+    ],
+    "UART_TXD": [
+      "PIN_114"
+    ],
+    "UART_RXD": [
+      "PIN_115"
+    ],
+    "IR": [
+      "PIN_100"
+    ],
+    "I2C_SCL": [
+      "PIN_99"
+    ],
+    "I2C_SDA": [
+      "PIN_98"
+    ],
+    "FPGA_SCL": [
+      "PIN_112"
+    ],
+    "FPGA_SDA": [
+      "PIN_113"
+    ],
+    "LCD_RS": [
+      "PIN_141"
+    ],
+    "LCD_RW": [
+      "PIN_138"
+    ],
+    "LCD_E": [
+      "PIN_143"
+    ],
+    "LCD_D[0]": [
+      "PIN_142"
+    ],
+    "LCD_D[1]": [
+      "PIN_1"
+    ],
+    "LCD_D[2]": [
+      "PIN_144"
+    ],
+    "LCD_D[3]": [
+      "PIN_3"
+    ],
+    "LCD_D[4]": [
+      "PIN_2"
+    ],
+    "LCD_D[5]": [
+      "PIN_10"
+    ],
+    "LCD_D[6]": [
+      "PIN_7"
+    ],
+    "LCD_D[7]": [
+      "PIN_11"
+    ],
+    "SDRAM_CKE": [
+      "PIN_58"
+    ],
+    "SDRAM_CLK": [
+      "PIN_43"
+    ],
+    "SDRAM_CS": [
+      "PIN_72"
+    ],
+    "SDRAM_RAS": [
+      "PIN_71"
+    ],
+    "SDRAM_CAS": [
+      "PIN_70"
+    ],
+    "SDRAM_WE": [
+      "PIN_69"
+    ],
+    "SDRAM_BS[0]": [
+      "PIN_73"
+    ],
+    "SDRAM_BS[1]": [
+      "PIN_74"
+    ],
+    "LDQM": [
+      "PIN_42"
+    ],
+    "UDQM": [
+      "PIN_55"
+    ],
+    "SDRAM_DQ[0]": [
+      "PIN_28"
+    ],
+    "SDRAM_DQ[1]": [
+      "PIN_30"
+    ],
+    "SDRAM_DQ[2]": [
+      "PIN_31"
+    ],
+    "SDRAM_DQ[3]": [
+      "PIN_32"
+    ],
+    "SDRAM_DQ[4]": [
+      "PIN_33"
+    ],
+    "SDRAM_DQ[5]": [
+      "PIN_34"
+    ],
+    "SDRAM_DQ[6]": [
+      "PIN_38"
+    ],
+    "SDRAM_DQ[7]": [
+      "PIN_39"
+    ],
+    "SDRAM_DQ[8]": [
+      "PIN_54"
+    ],
+    "SDRAM_DQ[9]": [
+      "PIN_53"
+    ],
+    "SDRAM_DQ[10]": [
+      "PIN_52"
+    ],
+    "SDRAM_DQ[11]": [
+      "PIN_51"
+    ],
+    "SDRAM_DQ[12]": [
+      "PIN_50"
+    ],
+    "SDRAM_DQ[13]": [
+      "PIN_49"
+    ],
+    "SDRAM_DQ[14]": [
+      "PIN_46"
+    ],
+    "SDRAM_DQ[15]": [
+      "PIN_44"
+    ],
+    "SDRAM_A[0]": [
+      "PIN_76"
+    ],
+    "SDRAM_A[1]": [
+      "PIN_77"
+    ],
+    "SDRAM_A[2]": [
+      "PIN_80"
+    ],
+    "SDRAM_A[3]": [
+      "PIN_83"
+    ],
+    "SDRAM_A[4]": [
+      "PIN_68"
+    ],
+    "SDRAM_A[5]": [
+      "PIN_67"
+    ],
+    "SDRAM_A[6]": [
+      "PIN_66"
+    ],
+    "SDRAM_A[7]": [
+      "PIN_65"
+    ],
+    "SDRAM_A[8]": [
+      "PIN_64"
+    ],
+    "SDRAM_A[9]": [
+      "PIN_60"
+    ],
+    "SDRAM_A[10]": [
+      "PIN_75"
+    ],
+    "SDRAM_A[11]": [
+      "PIN_59"
+    ],
+    "CLK2": [
+      "PIN_24"
+    ],
+    "HEADER_IO": [
+      "PIN_111"
+    ]
+  },
+  "id": "rz-easyfpga-a2.2"
+}

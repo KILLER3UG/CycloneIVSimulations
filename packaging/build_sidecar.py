@@ -74,6 +74,8 @@ def build_sidecar() -> Path:
         "uvicorn.lifespan.on",
         "--collect-submodules",
         "websockets",
+        "--collect-all",
+        "winpty",
         "--exclude-module",
         "pytest",
         str(ROOT / "packaging" / "sidecar_entry.py"),
@@ -93,6 +95,11 @@ def build_sidecar() -> Path:
     board_dst = sidecar_dir / "board"
     board_dst.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "board" / "board.json", board_dst / "board.json")
+
+    # Declarative board profiles (default board copy + extra built-in boards).
+    boards_src = ROOT / "boards"
+    if boards_src.is_dir():
+        shutil.copytree(boards_src, sidecar_dir / "boards", ignore=_ignore_junk)
 
     models_src = ROOT / "board" / "models"
     if models_src.is_dir():

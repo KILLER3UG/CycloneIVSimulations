@@ -1,0 +1,370 @@
+{
+  "schema": "cyclone-board/1",
+  "title": "Terasic DE0-Nano board profile",
+  "id": "de0-nano-ep4ce22",
+  "devices": {
+    "ep4ce22": {
+      "key": "ep4ce22",
+      "family": "Cyclone IV E",
+      "part": "EP4CE22F17C6N",
+      "quartusDevice": "EP4CE22F17C6",
+      "package": "FBGA-256",
+      "speedGrade": "6",
+      "logicElements": 22320,
+      "m9kBlocks": 66,
+      "memoryKbit": 594,
+      "multipliers18x18": 66,
+      "plls": 4,
+      "userIo": 153,
+      "coreVoltage": "1.2 V",
+      "ioStandard": "3.3 V LVTTL"
+    }
+  },
+  "board": {
+    "id": "de0-nano-ep4ce22",
+    "name": "Terasic DE0-Nano (EP4CE22)",
+    "vendor": "Terasic",
+    "fpga": "EP4CE22F17C6N",
+    "clockHz": 50000000,
+    "clockPort": "CLOCK_50",
+    "clockPin": "PIN_23",
+    "resetPort": "KEY0",
+    "resetPin": "PIN_25",
+    "resetActiveLow": true,
+    "leds": {
+      "port": "LED",
+      "count": 8,
+      "pins": [
+        "PIN_87",
+        "PIN_86",
+        "PIN_85",
+        "PIN_84",
+        "PIN_83",
+        "PIN_80",
+        "PIN_77",
+        "PIN_76"
+      ],
+      "activeLow": false,
+      "diodes": [
+        "LED0",
+        "LED1",
+        "LED2",
+        "LED3",
+        "LED4",
+        "LED5",
+        "LED6",
+        "LED7"
+      ]
+    },
+    "buttons": {
+      "port": "KEY",
+      "count": 2,
+      "pins": [
+        "PIN_88",
+        "PIN_89"
+      ],
+      "activeLow": true
+    },
+    "switches": {
+      "port": "SW",
+      "count": 4,
+      "pins": [
+        "PIN_90",
+        "PIN_91",
+        "PIN_98",
+        "PIN_99"
+      ],
+      "sharedWithButtons": false,
+      "activeLow": false,
+      "onValue": 1
+    },
+    "displays": {
+      "part": "4-digit common-anode seven-segment display",
+      "ports": [
+        "SEG"
+      ],
+      "digitPort": "DIG",
+      "count": 4,
+      "segmentsPerDigit": 8,
+      "multiplexed": true,
+      "segmentActiveLow": true,
+      "digitActiveLow": true,
+      "segBitMap": {
+        "a": 0,
+        "b": 1,
+        "c": 2,
+        "d": 3,
+        "e": 4,
+        "f": 5,
+        "g": 6,
+        "dp": 7
+      },
+      "pins": {
+        "SEG": [
+          "PIN_128",
+          "PIN_121",
+          "PIN_125",
+          "PIN_129",
+          "PIN_132",
+          "PIN_126",
+          "PIN_124",
+          "PIN_127"
+        ],
+        "DIG": [
+          "PIN_133",
+          "PIN_135",
+          "PIN_136",
+          "PIN_137"
+        ]
+      }
+    },
+    "buzzer": {
+      "port": "FPGA_BUZZER",
+      "pin": "PIN_110",
+      "type": "passive",
+      "activeLow": true
+    },
+    "vga": {
+      "pins": {},
+      "colors": 0
+    },
+    "ps2": {
+      "pins": {},
+      "pullup": "",
+      "openCollector": true
+    },
+    "uart": {
+      "pins": {},
+      "transceiver": ""
+    },
+    "infrared": {
+      "pin": ""
+    },
+    "i2c": {
+      "legacyFlatKeys": {},
+      "buses": []
+    },
+    "lcd": {
+      "pins": {},
+      "contrastTrimmer": ""
+    },
+    "sdram": {},
+    "config": {},
+    "rails": {},
+    "headers": {},
+    "layout3d": {
+      "pcb": {
+        "w": 76,
+        "d": 49,
+        "thickness": 1.6,
+        "cornerRadius": 2
+      },
+      "pcbColor": "#0d3b26",
+      "fpgaPos": [
+        38,
+        24.5
+      ],
+      "fpgaLabel": [
+        "ALTERA",
+        "Cyclone IV",
+        "EP4CE22F17C6N"
+      ],
+      "ledPositions": [
+        [
+          14,
+          41
+        ],
+        [
+          19,
+          41
+        ],
+        [
+          24,
+          41
+        ],
+        [
+          29,
+          41
+        ],
+        [
+          34,
+          41
+        ],
+        [
+          39,
+          41
+        ],
+        [
+          44,
+          41
+        ],
+        [
+          49,
+          41
+        ]
+      ],
+      "buttonPositions": [
+        [
+          58,
+          40
+        ],
+        [
+          66,
+          40
+        ]
+      ],
+      "dipPos": [
+        62,
+        24
+      ],
+      "displayPos": [
+        56,
+        10
+      ],
+      "buzzerPos": [
+        14,
+        14
+      ]
+    }
+  },
+  "facts": [
+    {
+      "id": "D01",
+      "statement": "Terasic DE0-Nano fitted with EP4CE22F17C6N Cyclone IV E, FBGA-256, speed grade 6",
+      "tag": "VERIFIED",
+      "sources": [
+        "Terasic DE0-Nano user manual",
+        "Device datasheet"
+      ]
+    },
+    {
+      "id": "D02",
+      "statement": "50 MHz clock on CLOCK_50; KEY0 reset active-low",
+      "tag": "VERIFIED",
+      "sources": [
+        "Terasic DE0-Nano user manual"
+      ]
+    },
+    {
+      "id": "D03",
+      "statement": "8 active-high user LEDs LED[0..7]",
+      "tag": "VERIFIED",
+      "sources": [
+        "Terasic DE0-Nano user manual"
+      ]
+    },
+    {
+      "id": "D04",
+      "statement": "2 active-low push-buttons KEY[0..1] and 4 active-high DIP switches SW[0..3]",
+      "tag": "VERIFIED",
+      "sources": [
+        "Terasic DE0-Nano user manual"
+      ]
+    },
+    {
+      "id": "D05",
+      "statement": "4-digit common-anode seven-segment display, active-low segments and digits",
+      "tag": "INFERRED",
+      "sources": [
+        "Terasic DE0-Nano user manual (display schematic)"
+      ]
+    },
+    {
+      "id": "D06",
+      "statement": "Passive buzzer driven active-low on FPGA_BUZZER",
+      "tag": "INFERRED",
+      "sources": [
+        "Terasic DE0-Nano user manual"
+      ]
+    }
+  ],
+  "pinMap": {
+    "CLOCK_50": [
+      "PIN_23"
+    ],
+    "KEY0": [
+      "PIN_25"
+    ],
+    "LED[0]": [
+      "PIN_87"
+    ],
+    "LED[1]": [
+      "PIN_86"
+    ],
+    "LED[2]": [
+      "PIN_85"
+    ],
+    "LED[3]": [
+      "PIN_84"
+    ],
+    "LED[4]": [
+      "PIN_83"
+    ],
+    "LED[5]": [
+      "PIN_80"
+    ],
+    "LED[6]": [
+      "PIN_77"
+    ],
+    "LED[7]": [
+      "PIN_76"
+    ],
+    "KEY[0]": [
+      "PIN_88"
+    ],
+    "KEY[1]": [
+      "PIN_89"
+    ],
+    "SW[0]": [
+      "PIN_90"
+    ],
+    "SW[1]": [
+      "PIN_91"
+    ],
+    "SW[2]": [
+      "PIN_98"
+    ],
+    "SW[3]": [
+      "PIN_99"
+    ],
+    "SEG[0]": [
+      "PIN_128"
+    ],
+    "SEG[1]": [
+      "PIN_121"
+    ],
+    "SEG[2]": [
+      "PIN_125"
+    ],
+    "SEG[3]": [
+      "PIN_129"
+    ],
+    "SEG[4]": [
+      "PIN_132"
+    ],
+    "SEG[5]": [
+      "PIN_126"
+    ],
+    "SEG[6]": [
+      "PIN_124"
+    ],
+    "SEG[7]": [
+      "PIN_127"
+    ],
+    "DIG[0]": [
+      "PIN_133"
+    ],
+    "DIG[1]": [
+      "PIN_135"
+    ],
+    "DIG[2]": [
+      "PIN_136"
+    ],
+    "DIG[3]": [
+      "PIN_137"
+    ],
+    "FPGA_BUZZER": [
+      "PIN_110"
+    ]
+  }
+}

@@ -1,0 +1,138 @@
+"""Slice 4.1/4.2: interactive PTY terminal bridge and process cleanup."""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import time
+
+import pytest
+from fastapi.testclient import TestClient
+
+from backend import terminal as terminal_mod
+from backend.paths import bundle_root
+from backend.server import app
+
+
+def _recv_until(ws, kind: str, limit: int = 120) -> dict:
+    """Read messages until one of ``kind`` arrives (output may interleave)."""
+    for _ in range(limit):
+        message = ws.receive_json()
+        if message.get("type") == kind:
+            return message
+    raise AssertionError(f"no {kind!r} message in {limit} reads")
+
+
+def _collect_output(ws, needle: str, limit: int = 120) -> str:
+    chunks: list[str] = []
+    for _ in range(limit):
+        message = ws.receive_json()
+        kind = message.get("type")
+        if kind == "output":
+            chunks.append(str(message.get("data", "")))
+            if needle in "".join(chunks):
+                return "".join(chunks)
+        elif kind == "error":
+            raise AssertionError(f"terminal error: {message}")
+        elif kind == "exit":
+            raise AssertionError(f"terminal exited before {needle!r}: {message}")
+    raise AssertionError(f"{needle!r} not seen; output was: {''.join(chunks)!r}")
+
+
+@pytest.fixture()
+def client():
+    return TestClient(app)
+
+
+def _pid_alive(pid: int) -> bool:
+    if not pid:
+        return False
+    if os.name == "nt":
+        result = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}"],
+            capture_output=True, text=True, check=False,
+        )
+        return str(pid) in (result.stdout or "")
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def test_terminal_websocket_runs_ghdl_and_echo_then_kills_shell_tree():
+    if not terminal_mod.ghdl_on_path():
+        pytest.skip("GHDL not available for terminal PATH test")
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/terminal") as ws:
+            ready = _recv_until(ws, "ready")
+            assert ready["type"] == "ready", ready
+            assert ready["ghdlOnPath"] is True
+            assert ready["cwd"] == str(bundle_root())
+            pid = int(ready["pid"])
+
+            ws.send_text(json.dumps({"type": "input", "data": "ghdl --version\r\n"}))
+            ghdl_output = _collect_output(ws, "GHDL")
+            assert "GHDL" in ghdl_output
+
+            ws.send_text(json.dumps({"type": "input", "data": "echo SIM_TERMINAL_OK\r\n"}))
+            echo_output = _collect_output(ws, "SIM_TERMINAL_OK")
+            assert "SIM_TERMINAL_OK" in echo_output
+
+            ws.send_text(json.dumps({"type": "resize", "cols": 100, "rows": 30}))
+
+    # WebSocket disconnect must terminate the shell; poll briefly for the
+    # endpoint's finally block to run in the server thread.
+    for _ in range(60):
+        if not terminal_mod.active_terminals():
+            break
+        time.sleep(0.05)
+    assert terminal_mod.active_terminals() == []
+    assert not _pid_alive(pid), f"orphan shell process {pid} still running"
+
+
+def test_terminal_ws_restart_returns_a_new_ready_shell():
+    if not terminal_mod.ghdl_on_path():
+        pytest.skip("GHDL not available for terminal PATH test")
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/terminal") as ws:
+            first = _recv_until(ws, "ready")
+            assert first["type"] == "ready"
+            first_pid = int(first["pid"])
+
+            ws.send_text(json.dumps({"type": "restart"}))
+            second = _recv_until(ws, "ready")
+            assert second["type"] == "ready", f"restart produced {second}"
+            second_pid = int(second["pid"])
+            assert second_pid != first_pid
+
+            ws.send_text(json.dumps({"type": "input", "data": "echo RESTART_OK\r\n"}))
+            assert "RESTART_OK" in _collect_output(ws, "RESTART_OK")
+
+    for _ in range(60):
+        if not terminal_mod.active_terminals():
+            break
+        time.sleep(0.05)
+    assert terminal_mod.active_terminals() == []
+    assert not _pid_alive(second_pid)
+
+
+def test_terminal_exec_runs_ghdl_on_path(client):
+    response = client.post("/api/terminal/exec", json={"command": "ghdl --version"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert "GHDL" in body["output"]
+
+    echo = client.post("/api/terminal/exec", json={"command": "echo EXEC_TERMINAL_OK"})
+    assert echo.status_code == 200
+    assert echo.json()["ok"] is True
+    assert "EXEC_TERMINAL_OK" in echo.json()["output"]
+
+
+def test_terminal_exec_empty_command_is_rejected(client):
+    response = client.post("/api/terminal/exec", json={"command": "   "})
+    assert response.status_code == 200
+    assert response.json()["ok"] is False

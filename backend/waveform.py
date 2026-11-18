@@ -630,14 +630,17 @@ def board_image_from_model(model: "WaveformModel", board_map: "BoardMap") -> dic
             level = (_as_int(final_vals.get(port)) >> src_bit) & 1
             leds[led_idx] = 1 if ((level == 0) == led_active_low) else 0
 
+    buz_active_low = bool((BOARD.get("buzzer") or {}).get("activeLow", True))
     buzzer = 0
     if buz_route is not None:
         bport, bbit = buz_route
-        buzzer = 1 if ((_as_int(final_vals.get(bport)) >> bbit) & 1) == 0 else 0
+        level = (_as_int(final_vals.get(bport)) >> bbit) & 1
+        buzzer = 1 if ((level == 0) == buz_active_low) else 0
     elif not has_pin_routes:
         buzzer_port = (BOARD.get("buzzer") or {}).get("port")
         if buzzer_port and buzzer_port in final_vals:
-            buzzer = 1 if _as_int(final_vals.get(buzzer_port)) == 0 else 0
+            level = _as_int(final_vals.get(buzzer_port))
+            buzzer = 1 if ((level == 0) == buz_active_low) else 0
 
     return {
         "pov": pov,

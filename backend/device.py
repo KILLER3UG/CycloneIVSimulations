@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+from . import board_registry
 from .paths import bundle_root
 
 BOARD_JSON = bundle_root() / "board" / "board.json"
@@ -53,11 +54,17 @@ def load_board_json() -> dict:
     return data
 
 
-_DATA = load_board_json()
+# Keep ``load_board_json()`` reading the authoritative canonical file (audit
+# invariant).  The *active* data starts as the normalized default profile so
+# that ``layout3d``/``id`` are present from the very first request; selecting a
+# different board swaps this reference (and every derived global) in place.
+_CANONICAL_DATA = load_board_json()
+_DATA = board_registry.get_board(board_registry.DEFAULT_BOARD_ID) or _CANONICAL_DATA
 
 DEVICES: dict = _DATA["devices"]
 DEFAULT_DEVICE = "ep4ce6"
 _selected: str = DEFAULT_DEVICE
+_ACTIVE_BOARD_ID: str = _DATA.get("id", board_registry.DEFAULT_BOARD_ID)
 
 
 def set_device(key: str) -> dict:
@@ -167,7 +174,93 @@ SEG_BIT_MAP = dict(BOARD["displays"]["segBitMap"])
 
 _CLOCK_ALIASES = [BOARD["clockPort"]] + list(BOARD.get("clockAliases", [])) + ["CLK"]
 
-# Textbook port-name aliases for this board family.  Student designs often
+
+# ---------------------------------------------------------------------------
+# Dynamic board selection.  Every downstream module imported BOARD/DEVICES by
+# reference at import time, so all mutations below are IN-PLACE: the objects
+# those modules hold stay valid and immediately reflect the active board.
+# ---------------------------------------------------------------------------
+
+
+def _default_device_key(raw: dict) -> str:
+    devices = raw.get("devices") or {}
+    preferred = str((raw.get("board") or {}).get("defaultDevice") or "")
+    if preferred in devices:
+        return preferred
+    if DEFAULT_DEVICE in devices:
+        return DEFAULT_DEVICE
+    return str(next(iter(devices), "") or "")
+
+
+def get_active_board_id() -> str:
+    """Return the id of the currently selected board profile."""
+    return _ACTIVE_BOARD_ID
+
+
+def get_active_board_raw() -> dict:
+    """Return the normalized raw manifest backing the active board."""
+    return _DATA
+
+
+def list_available_boards() -> list:
+    """Summaries of every discoverable/imported board (default first)."""
+    return board_registry.list_boards()
+
+
+def select_board(board_id: str) -> dict:
+    """Switch the active board in place and return its normalized manifest.
+
+    Unknown ids raise ``ValueError`` so the HTTP layer can answer with 400.
+    """
+    global _DATA, DEVICES, BOARD, SEG_BIT_MAP, _CLOCK_ALIASES, MODEL_NOTES
+    global _ACTIVE_BOARD_ID, _selected
+
+    raw = board_registry.get_board(board_id)
+    if raw is None:
+        known = [item["id"] for item in board_registry.list_boards()]
+        raise ValueError(f"unknown board '{board_id}'; expected one of {known}")
+    try:
+        built = _build_board(raw)
+    except KeyError as exc:
+        raise ValueError(f"board '{board_id}' is missing required key {exc}") from exc
+
+    # _DATA is a dict held by ``board_pin_map`` etc.; mutate it in place too
+    # so any module that captured it sees the new pin map.
+    # (_selected/_ACTIVE_BOARD_ID/MODEL_NOTES are scalars/lists re-bound here;
+    # every consumer resolves them through the module at call time.)
+    new_data = dict(raw)
+    _DATA.clear()
+    _DATA.update(new_data)
+
+    new_devices = dict(raw["devices"])
+    DEVICES.clear()
+    DEVICES.update(new_devices)
+
+    BOARD.clear()
+    BOARD.update(built)
+
+    new_seg_map = dict(BOARD["displays"]["segBitMap"])
+    SEG_BIT_MAP.clear()
+    SEG_BIT_MAP.update(new_seg_map)
+
+    _CLOCK_ALIASES[:] = (
+        [BOARD["clockPort"]] + list(BOARD.get("clockAliases", [])) + ["CLK"]
+    )
+    MODEL_NOTES = BOARD.get("modelNotes", [])
+    _ACTIVE_BOARD_ID = raw["id"]
+    _selected = _default_device_key(raw)
+    return raw
+
+
+def import_board_manifest(raw: dict, select: bool = True) -> dict:
+    """Validate, register and optionally activate a declarative board manifest."""
+    normalized = board_registry.register_board(raw)
+    if select:
+        select_board(normalized["id"])
+    return normalized
+
+
+# Textbook port-name aliases for this board family.
 # name the display buses "seven_seg"/"dtube" and drive the keys with scalar
 # "s1".."s4" instead of the vendor's SEG/DIG/KEY vectors; resolve those to
 # the same profile pins so such designs run unmodified.
@@ -296,6 +389,11 @@ __all__ = [
     "set_device",
     "get_device",
     "load_board_json",
+    "select_board",
+    "get_active_board_id",
+    "get_active_board_raw",
+    "list_available_boards",
+    "import_board_manifest",
     "BOARD",
     "board_pin_map",
     "resolve_port_pins",
