@@ -17,17 +17,32 @@ const SEG_OFFSETS = {
 // real 0.36" digits lean the segment ring like an italic numeral (top to the
 // right): shear x by −k·z, tilt the vertical bars by the same angle
 const DIGIT_SLEW = 0.14;
-export const LIT_COLOR = new THREE.Color(3.2, 0.03, 0.02);    // HDR red → feeds bloom
+export const LIT_COLOR = new THREE.Color(0xff2e38).multiplyScalar(4.8); // HDR studio-red → feeds bloom
 // unlit segments read as pale grey diffuser plastic on the vendor photo
 export const DARK_COLOR = new THREE.Color(0.30, 0.325, 0.36);
 
-export function buildIO(mats, { pinIndex, segBitMap = SEG_BIT_MAP_FALLBACK, ledMeta = null, seed = 42 } = {}) {
+export function buildIO(mats, {
+    pinIndex, segBitMap = SEG_BIT_MAP_FALLBACK, ledMeta = null, seed = 42,
+    profile = null, model = null,
+} = {}) {
     const group = new THREE.Group();
     group.name = "io";
     const pickables = [];
     const anchors = [];
     const probePoints = [];
     const pinOf = (pinId) => (pinIndex ? pinIndex.get(pinId) : null);
+    // Imported boards describe their own footprints; the canonical board keeps
+    // the hand-measured 58-part LAYOUT unchanged.
+    const dyn = model && !model.isDefault ? model : null;
+    const countOf = (node, fallback) => {
+        const v = Number(node?.count ?? (Array.isArray(node?.pins) ? node.pins.length : undefined) ?? fallback);
+        return Number.isFinite(v) ? Math.max(0, Math.floor(v)) : fallback;
+    };
+    const board = (profile && (profile.board || profile)) || {};
+    const keyCount = dyn ? dyn.keys.length : 4;
+    const dipCount = dyn ? (dyn.dip[0]?.positions ?? 0) : 4;
+    const ledCount = dyn ? dyn.leds.length : countOf(board.leds, 4);
+    const defOf = (canonicalId, dynamicDef) => (dyn ? dynamicDef : LAYOUT.find((r) => r.id === canonicalId));
 
     // ------------------------------------------------------------- power switch
     const powerSwitch = (() => {
@@ -68,8 +83,9 @@ export function buildIO(mats, { pinIndex, segBitMap = SEG_BIT_MAP_FALLBACK, ledM
     };
 
     const keys = [];
-    for (let i = 0; i < 4; i += 1) {
-        const def = LAYOUT.find((r) => r.id === `S${i + 1}`);
+    for (let i = 0; i < keyCount; i += 1) {
+        const def = defOf(`S${i + 1}`, dyn.keys[i]);
+        if (!def || !Array.isArray(def.pos)) continue;
         const entry = pinOf(`KEY[${i}]`);
         const el = mkKey(def, {
             componentId: `S${i + 1}`, kind: "button", pinId: entry ? entry.pinId : `KEY[${i}]`,
@@ -99,7 +115,9 @@ export function buildIO(mats, { pinIndex, segBitMap = SEG_BIT_MAP_FALLBACK, ledM
 
     // --------------------------------------------------------------- DIP switch
     const dip = (() => {
-        const def = LAYOUT.find((r) => r.id === "SW2");
+        if (dipCount <= 0) return [];
+        const def = defOf("SW2", dyn?.dip?.[0]) || LAYOUT.find((r) => r.id === "SW2");
+        if (!def || !Array.isArray(def.pos)) return [];
         const [cx, cy] = def.pos;
         const x = worldX(cx), z = worldZ(cy);
         const body = new THREE.Mesh(new RoundedBoxGeometry(def.size[0], 6.8, def.size[1], 1, 0.5), mats.red);
@@ -117,7 +135,8 @@ export function buildIO(mats, { pinIndex, segBitMap = SEG_BIT_MAP_FALLBACK, ledM
         mctx.fillText("ON", 78, 38);
         mctx.fillText("DIP", 178, 38);
         mctx.font = '600 34px "Segoe UI", Arial, sans-serif';
-        for (let i = 0; i < 4; i += 1) mctx.fillText(String(i + 1), 42 + i * 57, 196);
+        const spacing = Math.min(57, 228 / Math.max(1, dipCount));
+        for (let i = 0; i < dipCount; i += 1) mctx.fillText(String(i + 1), 42 + i * spacing, 196);
         const mark = new THREE.Mesh(
             new THREE.PlaneGeometry(def.size[0] - 1.4, def.size[1] - 1.4),
             new THREE.MeshBasicMaterial({ map: canvasTexture(markCanvas), transparent: true, toneMapped: false }),
@@ -126,10 +145,11 @@ export function buildIO(mats, { pinIndex, segBitMap = SEG_BIT_MAP_FALLBACK, ledM
         mark.position.set(x, BOARD_TOP + 6.82, z);
         group.add(mark);
         const levers = [];
-        for (let i = 0; i < 4; i += 1) {
+        const leverStep = def.size[0] > 0 ? (def.size[0] - 4.2) / Math.max(1, dipCount - 1) : 2.8;
+        for (let i = 0; i < dipCount; i += 1) {
             const entry = pinOf(`KEY[${i}]`);
             const lever = new THREE.Mesh(new THREE.BoxGeometry(1.9, 1.7, 3.2), mats.plasticWhite);
-            lever.position.set(x - 4.2 + i * 2.8, BOARD_TOP + 7.4, z);
+            lever.position.set(x - (def.size[0] / 2 - 2.1) + i * leverStep, BOARD_TOP + 7.4, z);
             lever.castShadow = true;
             lever.userData = {
                 componentId: "SW2", kind: "switch", elementIndex: i,
@@ -153,10 +173,11 @@ export function buildIO(mats, { pinIndex, segBitMap = SEG_BIT_MAP_FALLBACK, ledM
     // Lenses are individual meshes; the four glow halos share ONE Points object
     // (per-vertex HDR colour carries each LED's level — 1 draw call total).
     const leds = [];
-    const glowPos = new Float32Array(4 * 3);
-    const glowCol = new Float32Array(4 * 3);
-    for (let i = 0; i < 4; i += 1) {
-        const def = LAYOUT.find((r) => r.id === `LED${i + 1}`);
+    const glowPos = new Float32Array(ledCount * 3);
+    const glowCol = new Float32Array(ledCount * 3);
+    for (let i = 0; i < ledCount; i += 1) {
+        const def = defOf(`LED${i + 1}`, dyn?.leds?.[i]);
+        if (!def || !Array.isArray(def.pos)) continue;
         const [cx, cy] = def.pos;
         const x = worldX(cx), z = worldZ(cy);
         const entry = pinOf(`LED[${i}]`);
@@ -199,8 +220,9 @@ export function buildIO(mats, { pinIndex, segBitMap = SEG_BIT_MAP_FALLBACK, ledM
 
     // --------------------------------------------------------- 7-seg display
     const display = (() => {
-        const def = LAYOUT.find((r) => r.id === "DISP1");
-        const [cx, cy] = def.pos;
+        const canonical = LAYOUT.find((r) => r.id === "DISP1");
+        const def = dyn?.display || canonical;
+        const [cx, cy] = Array.isArray(def?.pos) ? def.pos : canonical.pos;
         const x = worldX(cx), z = worldZ(cy);
         const body = new THREE.Mesh(new RoundedBoxGeometry(30, 8, 16, 1, 0.6), mats.darkEpoxy);
         body.position.set(x, BOARD_TOP + 4, z);
@@ -302,8 +324,9 @@ export function buildIO(mats, { pinIndex, segBitMap = SEG_BIT_MAP_FALLBACK, ledM
 
     // ----------------------------------------------------------------- buzzer
     const buzzer = (() => {
-        const def = LAYOUT.find((r) => r.id === "SP1");
-        const [cx, cy] = def.pos;
+        const canonical = LAYOUT.find((r) => r.id === "SP1");
+        const def = dyn?.buzzer || canonical;
+        const [cx, cy] = Array.isArray(def?.pos) ? def.pos : canonical.pos;
         const x = worldX(cx), z = worldZ(cy);
         const entry = pinOf("FPGA_BUZZER");
         const body = new THREE.Mesh(new THREE.CylinderGeometry(7.5, 7.5, 9, 28), mats.plasticBlack);

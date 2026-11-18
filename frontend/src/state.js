@@ -32,10 +32,14 @@ begin
 end architecture rtl;
 `;
 
+// The most recently created store. Lets resizeBoardInputs(profile) update the
+// live application state without every caller having to pass it explicitly.
+let activeState = null;
+
 export function createStore() {
     const state = {
         // ui
-        theme: "light",
+        theme: "dark",
         power: true,
         status: "idle", // idle | compiling | programming | running | paused | error
         statusDetail: "",
@@ -51,6 +55,16 @@ export function createStore() {
         deviceKey: "ep4ce6",
         device: null,
         examples: [],
+
+        // multi-board SDK / zero-delay stimulus play
+        stimulusMap: null, // verbatim sim_ready.stimulusMap (never stripped)
+        activeBoardId: "rz-easyfpga-a2.2",
+        boardsList: [],
+        keyState: [false, false, false, false],
+        dipState: [false, false, false, false],
+        releaseTimer: null,
+        releaseDeadlineMs: 0,
+        clockPeriodNs: 20,
 
         // project files
         files: [{ name: "counter.vhd", content: DEFAULT_SOURCE }],
@@ -90,6 +104,7 @@ export function createStore() {
         probes: [], // [{pinId, label}]
     };
 
+    activeState = state;
     const listeners = new Map();
     return {
         state,
@@ -104,4 +119,25 @@ export function createStore() {
         },
         set(patch) { Object.assign(state, patch); },
     };
+}
+
+/** The store created most recently (the application store in normal use). */
+export function getActiveState() { return activeState; }
+
+/**
+ * Resize the live input mirrors for a newly selected board. Counts come from
+ * the profile (never hard-coded pins); every slot is reset to a clean boolean
+ * false so switching boards cannot leak a previously held key.
+ */
+export function resizeBoardInputs(profile, targetState = activeState) {
+    const board = (profile && (profile.board || profile)) || {};
+    const keyCount = Math.max(0, Number(board.buttons?.count || board.buttons?.pins?.length || 4) || 4);
+    const dipCount = Math.max(0, Number(board.switches?.count || board.switches?.pins?.length || 4) || 4);
+    const keyState = Array.from({ length: keyCount }, () => false);
+    const dipState = Array.from({ length: dipCount }, () => false);
+    if (targetState && typeof targetState === "object") {
+        targetState.keyState = keyState;
+        targetState.dipState = dipState;
+    }
+    return { keyState, dipState };
 }

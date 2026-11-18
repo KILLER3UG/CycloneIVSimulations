@@ -20,9 +20,9 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 
-import { PCB_OUTLINE, LAYOUT, buildPinIndex, SEG_GLYPHS } from "./layout.js";
+import { PCB_OUTLINE, LAYOUT, buildPinIndex, SEG_GLYPHS, buildDynamicBoardModel } from "./layout.js";
 import { brightness, ghostOverlay, isInstantaneousScan, normalizePov } from "./displayModel.js";
-import { createMaterials, setupEnvironment, setupLights, applyTheme } from "./materials.js";
+import { createMaterials, setupEnvironment, setupLights, applyTheme, applyPcbColor } from "./materials.js";
 import { buildPCB } from "./pcb.js";
 import { buildFPGA } from "./fpga.js";
 import { buildICs } from "./ics.js";
@@ -155,6 +155,9 @@ export class Board3D {
         this.lights = setupLights(this.scene, this.quality);
         setupEnvironment(this.renderer, this.scene);
         applyTheme(this.scene, this.lights, this.theme);
+        // Studio Monochrome: zero fog, always. Any fog puts a haze between the
+        // camera and the board and washes out the razor-sharp silkscreen.
+        this.scene.fog = null;
 
         // subtle floating dust for depth (frozen by setDeterministic)
         const N = 220;
@@ -183,6 +186,28 @@ export class Board3D {
         this.controls.autoRotateSpeed = 0.6;
     }
 
+    /** A minimal FPGA package for profiles that do not use the canonical board. */
+    _buildDynamicFpga(model) {
+        const group = new THREE.Group();
+        group.name = "fpga";
+        const [px, pz] = model.fpga.pos;
+        const x = px - model.pcb.w / 2;
+        const z = pz - model.pcb.d / 2;
+        const body = new THREE.Mesh(
+            new THREE.BoxGeometry(model.fpga.size[0], 1.8, model.fpga.size[1]),
+            this.mats.chipBlack,
+        );
+        body.position.set(x, BOARD_TOP + 0.9, z);
+        body.castShadow = true;
+        body.userData = { componentId: "U5", kind: "fpga", pinId: null, polarity: null, label: model.name };
+        group.add(body);
+        return {
+            group,
+            probePoints: [],
+            anchor: { id: "U5", object: body, radius: 14 },
+        };
+    }
+
     _buildBoard() {
         if (this.boardGroup) {
             this.scene.remove(this.boardGroup);
@@ -190,33 +215,57 @@ export class Board3D {
         }
         this.pinIndex = this.pinIndex || buildPinIndex(null);
         const segBitMap = this.profile?.board?.displays?.segBitMap;
+        const model = buildDynamicBoardModel(this.profile);
+        this._boardModel = model;
+        const dynamic = !model.isDefault;
+        applyPcbColor(this.mats, this.profile);
         this.boardGroup = new THREE.Group();
         this.pickables = [];
         this.anchors = [];
         this._probePoints = [];
+        this._buzzerRing = null;
 
-        const pcb = buildPCB(this.mats);
-        const fpga = buildFPGA(this.mats);
-        const ics = buildICs(this.mats);
-        const passives = buildPassives(this.mats);
-        const connectors = buildConnectors(this.mats);
-        const headers = buildHeaders(this.mats, this.pinIndex.headerLayouts);
+        const pcb = buildPCB(this.mats, {
+            profile: this.profile,
+            model: dynamic ? model : null,
+        });
+        const fpga = dynamic
+            ? this._buildDynamicFpga(model)
+            : buildFPGA(this.mats);
+        // The canonical 58-part geometry only exists on the RZ-EasyFPGA board.
+        const parts = dynamic
+            ? []
+            : [buildICs(this.mats), buildPassives(this.mats), buildConnectors(this.mats)];
+        const headers = dynamic
+            ? { group: new THREE.Group(), pickables: [], anchors: [], probePoints: [] }
+            : buildHeaders(this.mats, this.pinIndex.headerLayouts);
         this.io = buildIO(this.mats, {
             pinIndex: this.pinIndex.index,
             segBitMap: segBitMap && Object.keys(segBitMap).length ? segBitMap : undefined,
             ledMeta: this.profile?.board?.leds || null,
+            profile: this.profile,
+            model: dynamic ? model : null,
         });
 
-        for (const part of [pcb.group, fpga.group, ics.group, passives.group, connectors.group, headers.group, this.io.group]) {
+        for (const part of [pcb.group, fpga.group, ...parts.map((p) => p.group), headers.group, this.io.group]) {
             this.boardGroup.add(part);
         }
         this.pickables.push(
-            fpga.anchor.object, ...ics.pickables, ...connectors.pickables,
+            fpga.anchor.object,
+            ...parts.flatMap((p) => p.pickables || []),
             ...headers.pickables, ...this.io.pickables,
         );
-        this.anchors.push(fpga.anchor, ...ics.anchors, ...connectors.anchors, ...headers.anchors, ...this.io.anchors);
-        this._probePoints.push(...fpga.probePoints, ...ics.probePoints, ...headers.probePoints, ...this.io.probePoints);
-        this.powerLed = passives.powerLed;
+        this.anchors.push(
+            fpga.anchor,
+            ...parts.flatMap((p) => p.anchors || []),
+            ...headers.anchors, ...this.io.anchors,
+        );
+        this._probePoints.push(
+            ...fpga.probePoints,
+            ...parts.flatMap((p) => p.probePoints || []),
+            ...headers.probePoints, ...this.io.probePoints,
+        );
+        this.powerLed = dynamic ? null : (parts.find((p) => p.powerLed)?.powerLed || null);
         this._probeMap = new Map();
         for (const p of this._probePoints) {
             if (p.pinId && !this._probeMap.has(p.pinId)) this._probeMap.set(p.pinId, p);
@@ -287,9 +336,27 @@ export class Board3D {
 
     // ------------------------------------------------------------- profile ----
     setProfile(profile) {
+        this.rebuildBoard(profile);
+    }
+
+    /**
+     * Atomically replace the board scene for a newly selected/imported board:
+     * disposes the old group, rebuilds PCB + I/O from the new profile, resets
+     * volatile state and re-fits the camera. Safe before mount() as well.
+     */
+    rebuildBoard(profile) {
         this.profile = profile || null;
-        this.pinIndex = buildPinIndex(profile);
-        if (this._mounted) this._buildBoard();
+        this.pinIndex = buildPinIndex(this.profile);
+        this.programmed = false;
+        this._buzzerRing = null;
+        this._resetDuty();
+        if (this._mounted && !this._disposed) {
+            this._buildBoard();
+            this.resetVisual();
+            this.fit();
+            this.renderer.shadowMap.needsUpdate = true;
+        }
+        return this;
     }
 
     setDesign(boardMap) {
@@ -299,9 +366,74 @@ export class Board3D {
     }
 
     // ---------------------------------------------------------- live values ----
+    // Synchronous LED paint: called from applyBoardImage / setLedTarget so the
+    // mesh matches state on the SAME JS turn (no wait for the 10 Hz IO timer).
+    _paintLed(i, level) {
+        const led = this.io?.leds?.[i];
+        if (!led) return;
+        const v = Math.min(1, Math.max(0, Number(level) || 0));
+        led.level = v;
+        if (led.material) {
+            if (led.material.emissive?.setHex) led.material.emissive.setHex(0xff2818);
+            led.material.emissiveIntensity = v * 2.6;
+            if (led.material.color?.setRGB) led.material.color.setRGB(1, 1 - v * 0.28, 1 - v * 0.28);
+        }
+        const glowCol = this.io?.glowPoints?.geometry?.getAttribute?.("color");
+        if (glowCol && i < glowCol.count) {
+            glowCol.setXYZ(i, 2.4 * v, 0.32 * v, 0.1 * v);
+            glowCol.needsUpdate = true;
+        }
+    }
+
+    /** Repaint the whole 7-seg instance buffer from segCurrent (POV included). */
+    _paintDisplay() {
+        const d = this.io?.display;
+        const inst = d?.segInst;
+        if (!d || !inst) return;
+        const live = this.power && this.programmed;
+        const scratch = this._segColor || (this._segColor = new THREE.Color());
+        for (let i = 0; i < d.segCurrent.length; i += 1) {
+            const duty = d.segCurrent[i];
+            let c = brightness(duty, this._ghost[i], live);
+            // A 1-of-4 mux gives 0.25 duty. Without a gamma boost those POV
+            // digits look almost black against the charcoal housing; lift
+            // them to studio-red luminance while keeping 0 exactly dark.
+            if (duty > 0 && duty <= 0.35) {
+                c = Math.max(c, Math.pow(Math.min(1, duty / 0.35), 0.42) * 1.7);
+            }
+            scratch.setRGB(
+                DARK_COLOR.r + (LIT_COLOR.r - DARK_COLOR.r) * c,
+                DARK_COLOR.g + (LIT_COLOR.g - DARK_COLOR.g) * c,
+                DARK_COLOR.b + (LIT_COLOR.b - DARK_COLOR.b) * c,
+            );
+            inst.setColorAt(i, scratch);
+        }
+        if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
+    }
+
+    /** Buzzer visual state; immediate=true paints the pulse ring this turn. */
+    _setBuzzerVisual(on, immediate = false) {
+        const bz = this.io?.buzzer;
+        if (!bz) return;
+        bz.on = Boolean(on);
+        if (bz.on && this.power) this._ensureBuzzerRing();
+        const ring = this._buzzerRing;
+        if (!ring) return;
+        const active = bz.on && this.power;
+        if (immediate) {
+            ring.material.opacity = active ? 0.65 : 0;
+            ring.scale.setScalar(active ? 1.1 : 1);
+            ring.visible = active;
+        }
+    }
+
     setLedTarget(i, on) {
-        const led = this.io?.leds[i];
-        if (led) led.target = on ? 1 : 0;
+        const val = on ? 1 : 0;
+        const led = this.io?.leds?.[i];
+        if (led) {
+            led.target = val;
+            this._paintLed(i, val);
+        }
     }
 
     _recomputeDisplayTargets() {
@@ -452,8 +584,15 @@ export class Board3D {
             for (let i = 0; i < 4; i += 1) d.digitOn[i] = image.digits[i] ? 1 : 0;
         }
         const leds = image.leds || [];
-        leds.forEach((on, i) => this.setLedTarget(i, !!on));
-        if (typeof image.buzzer === "number") this.io.buzzer.on = !!image.buzzer;
+        for (let i = 0; i < (this.io.leds?.length || 0); i += 1) {
+            this.setLedTarget(i, Boolean(leds[i]));
+        }
+        if (typeof image.buzzer === "number" || typeof image.buzzer === "boolean") {
+            this._setBuzzerVisual(!!image.buzzer, true);
+        }
+        // Paint the display segments on this turn too — a live input flip must
+        // be visible immediately, not one 10 Hz IO tick later.
+        this._paintDisplay();
     }
 
     // ------------------------------------------------------------ state ----
@@ -464,11 +603,19 @@ export class Board3D {
             // Volatile JTAG configuration is lost on power-off (board_spec
             // §2: .sof is volatile) — the board comes back unprogrammed.
             this.programmed = false;
-            this.io?.leds.forEach((l) => { l.target = 0; });
+            (this.io?.leds || []).forEach((l, i) => {
+                l.target = 0;
+                this._paintLed(i, 0);
+            });
             const d = this.io?.display;
-            if (d) { d.segTarget.fill(0); d.segHold.fill(0); }
+            if (d) {
+                d.segTarget.fill(0);
+                d.segHold.fill(0);
+                d.segCurrent.fill(0);
+            }
             this._resetDuty();
-            if (this.io) this.io.buzzer.on = false;
+            this._setBuzzerVisual(false, true);
+            this._paintDisplay();
         }
     }
 
@@ -482,13 +629,15 @@ export class Board3D {
         this.io.keys.forEach((k) => { k.pressed = false; });
         this.io.dip.forEach((l) => { l.on = false; });
         this.io.reset.pressed = false;
-        this.io.leds.forEach((l) => { l.target = 0; });
+        this.io.leds.forEach((l, i) => { l.target = 0; this._paintLed(i, 0); });
         this.io.display.segActive.fill(0);
         this.io.display.digitOn = [1, 1, 1, 1];
         this.io.display.segTarget.fill(0);
         this.io.display.segHold.fill(0);
+        this.io.display.segCurrent.fill(0);
         this._resetDuty();
-        this.io.buzzer.on = false;
+        this._setBuzzerVisual(false, true);
+        this._paintDisplay();
         this._hideHighlight();
     }
 
@@ -834,14 +983,11 @@ export class Board3D {
         const live = this.power && this.programmed;
 
         // LED persistence + glow (halos share one Points cloud; per-vertex HDR colour)
-        const glowCol = io.glowPoints.geometry.getAttribute("color");
         io.leds.forEach((led, i) => {
             const target = live ? led.target : 0;
             led.level += (target - led.level) * (1 - Math.exp(-dt / 0.06));
-            led.material.emissiveIntensity = led.level * 2.6;
-            glowCol.setXYZ(i, 2.4 * led.level, 0.32 * led.level, 0.1 * led.level);
+            this._paintLed(i, led.level);
         });
-        glowCol.needsUpdate = true;
         if (this.powerLed) {
             const target = this.power ? 1 : 0;
             this.powerLed.level += (target - this.powerLed.level) * k;
@@ -858,7 +1004,6 @@ export class Board3D {
         //     state so the display visibly steps/flickers tube by tube.
         const d = io.display;
         const instantaneous = isInstantaneousScan(this._scanHz);
-        const scratch = this._segColor || (this._segColor = new THREE.Color());
         for (let i = 0; i < 32; i += 1) {
             if (instantaneous) {
                 const target = live ? d.segTarget[i] : 0;
@@ -871,16 +1016,9 @@ export class Board3D {
                 const target = live ? duty : 0;
                 d.segCurrent[i] += (target - d.segCurrent[i]) * k;
             }
-            const c = brightness(d.segCurrent[i], this._ghost[i], live);
-            const inst = d.segInst;
-            scratch.setRGB(
-                DARK_COLOR.r + (LIT_COLOR.r - DARK_COLOR.r) * c,
-                DARK_COLOR.g + (LIT_COLOR.g - DARK_COLOR.g) * c,
-                DARK_COLOR.b + (LIT_COLOR.b - DARK_COLOR.b) * c,
-            );
-            inst.setColorAt(i, scratch);
         }
-        if (d.segInst.instanceColor) d.segInst.instanceColor.needsUpdate = true;
+        // Single paint pass with the studio-red POV gamma boost.
+        this._paintDisplay();
 
         // key caps
         for (const key of io.keys) {

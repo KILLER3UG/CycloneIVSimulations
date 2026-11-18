@@ -5,6 +5,7 @@
 import * as THREE from "three";
 import { PCB_OUTLINE, LAYOUT, BOARD_TOP } from "./layout.js";
 import { createCanvas, canvasTexture, mulberry32 } from "./util.js";
+import { pcbColorCss, applyPcbColor } from "./materials.js";
 
 const S = 14; // canvas pixels per mm
 const CW = Math.round(PCB_OUTLINE.w * S);
@@ -21,14 +22,14 @@ const SILK_DIM = "rgba(210,220,228,0.8)";
 // the vendor photo prints the branding in warm gold, not white
 const SILK_GOLD = "rgba(206,172,96,0.95)";
 
-export function paintSilkscreen() {
+export function paintSilkscreen(baseColor = "#141619") {
     const canvas = createCanvas(CW, CH);
     const ctx = canvas.getContext("2d");
     const px = (mm) => mm * S;
     const rng = mulberry32(0xa22c8e);
 
-    // ---- base: black solder mask -----------------------------------------
-    ctx.fillStyle = "#0d0f12";
+    // ---- base: solder mask colour comes from the active board profile ------
+    ctx.fillStyle = baseColor;
     ctx.fillRect(0, 0, CW, CH);
     const shade = ctx.createRadialGradient(CW * 0.42, CH * 0.4, CH * 0.2, CW * 0.5, CH * 0.5, CW * 0.75);
     shade.addColorStop(0, "rgba(34,41,48,0.20)");
@@ -291,6 +292,69 @@ export function paintSilkscreen() {
     return canvas;
 }
 
+/** Lightweight silkscreen for imported boards (no canonical 58-part atlas). */
+export function paintDynamicSilkscreen(model, baseColor = "#141619") {
+    const w = model.pcb.w;
+    const d = model.pcb.d;
+    const cw = Math.round(w * S);
+    const ch = Math.round(d * S);
+    const canvas = createCanvas(cw, ch);
+    const ctx = canvas.getContext("2d");
+    const px = (mm) => mm * S;
+    const rng = mulberry32(0x51de0);
+
+    ctx.fillStyle = baseColor;
+    ctx.fillRect(0, 0, cw, ch);
+    const shade = ctx.createRadialGradient(cw / 2, ch / 2, ch * 0.1, cw / 2, ch / 2, cw * 0.75);
+    shade.addColorStop(0, "rgba(40,48,56,0.16)");
+    shade.addColorStop(1, "rgba(0,0,0,0.30)");
+    ctx.fillStyle = shade;
+    ctx.fillRect(0, 0, cw, ch);
+
+    // deterministic copper fan-out around the FPGA
+    ctx.strokeStyle = "rgba(44,78,60,0.5)";
+    ctx.lineWidth = 1.6;
+    const [fx, fy] = model.fpga.pos;
+    for (let i = 0; i < 64; i += 1) {
+        const a = rng() * Math.PI * 2;
+        const r = 12 + rng() * Math.min(w, d) * 0.35;
+        ctx.beginPath();
+        ctx.moveTo(px(fx), px(fy));
+        ctx.lineTo(px(fx + Math.cos(a) * r), px(fy + Math.sin(a) * r));
+        ctx.stroke();
+    }
+
+    const label = (text, x, y, size = 18, color = SILK) => {
+        ctx.fillStyle = color;
+        ctx.font = `600 ${size * (S / 12)}px "Segoe UI", Arial, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(text, px(x), px(y));
+    };
+
+    // component designators from the dynamic model
+    for (const led of model.leds) label(`LED${led.index + 1}`, led.pos[0], led.pos[1] + 2.8, 11, SILK_DIM);
+    for (const key of model.keys) label(`KEY${key.index + 1}`, key.pos[0], key.pos[1] - 5.8, 12, SILK_DIM);
+    if (model.dip.length) label("SW DIP", model.dip[0].pos[0], model.dip[0].pos[1] - 7.5, 13, SILK_DIM);
+    if (model.display.count > 0) label("DISP", model.display.pos[0], model.display.pos[1] - 10, 13, SILK_DIM);
+    if (model.buzzer.present) label("BUZZER", model.buzzer.pos[0], model.buzzer.pos[1] - 10, 13, SILK_DIM);
+    label(model.name, w / 2, 3.5, 17, SILK_GOLD);
+
+    // gold mounting-hole rings
+    for (const [hx, hy] of model.mountHoles) {
+        ctx.strokeStyle = GOLD;
+        ctx.lineWidth = 2.1;
+        ctx.beginPath();
+        ctx.arc(px(hx), px(hy), 3.2 * S, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = "rgba(0,0,0,0.85)";
+        ctx.beginPath();
+        ctx.arc(px(hx), px(hy), 1.6 * S, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    return canvas;
+}
+
 function roundedRectShape(w, d, r) {
     const shape = new THREE.Shape();
     const x = -w / 2, y = -d / 2;
@@ -306,28 +370,39 @@ function roundedRectShape(w, d, r) {
     return shape;
 }
 
-export function buildPCB(mats) {
+export function buildPCB(mats, { profile = null, model = null } = {}) {
     const group = new THREE.Group();
     group.name = "pcb";
 
-    const silkCanvas = paintSilkscreen();
+    applyPcbColor(mats, profile);
+    const baseColor = model?.pcbColor || pcbColorCss(profile);
+    const outline = model?.pcb || PCB_OUTLINE;
+    const boardW = Number(outline.w) || PCB_OUTLINE.w;
+    const boardD = Number(outline.d) || PCB_OUTLINE.d;
+    const thickness = Number(outline.thickness) || PCB_OUTLINE.thickness;
+    const cornerRadius = Number(outline.cornerRadius) || PCB_OUTLINE.cornerRadius;
+
+    const silkCanvas = model && !model.isDefault
+        ? paintDynamicSilkscreen(model, baseColor)
+        : paintSilkscreen(baseColor);
     const silk = canvasTexture(silkCanvas, { anisotropy: 16 });
     silk.offset.set(0.5, 0.5);
-    silk.repeat.set(1 / PCB_OUTLINE.w, 1 / PCB_OUTLINE.d);
+    silk.repeat.set(1 / boardW, 1 / boardD);
     silk.wrapS = silk.wrapT = THREE.ClampToEdgeWrapping;
 
     const topMat = mats.pcbTop.clone();
     topMat.map = silk;
     topMat.color.setHex(0xffffff);
 
-    const shape = roundedRectShape(PCB_OUTLINE.w, PCB_OUTLINE.d, PCB_OUTLINE.cornerRadius);
-    for (const [hx, hy] of MOUNT_HOLES) {
+    const shape = roundedRectShape(boardW, boardD, cornerRadius);
+    const holes = model?.mountHoles || MOUNT_HOLES;
+    for (const [hx, hy] of holes) {
         const hole = new THREE.Path();
-        hole.absarc(hx - PCB_OUTLINE.w / 2, PCB_OUTLINE.d / 2 - hy, 1.7, 0, Math.PI * 2, true);
+        hole.absarc(hx - boardW / 2, boardD / 2 - hy, 1.7, 0, Math.PI * 2, true);
         shape.holes.push(hole);
     }
     const geo = new THREE.ExtrudeGeometry(shape, {
-        depth: PCB_OUTLINE.thickness,
+        depth: thickness,
         bevelEnabled: false,
         curveSegments: 24,
     });
@@ -340,11 +415,11 @@ export function buildPCB(mats) {
     group.add(pcb);
 
     // gold annular rings + brass M3 standoffs at the corners (instanced)
-    const mp = LAYOUT.find((r) => r.id === "MP");
+    const mpPos = model?.mountHoles || (LAYOUT.find((r) => r.id === "MP")?.pos || MOUNT_HOLES);
     const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-    const corners = mp.pos.map(([mx, my]) => {
-        const x = clamp(mx, 5.5, PCB_OUTLINE.w - 5.5) - PCB_OUTLINE.w / 2;
-        const y = clamp(my, 4.5, PCB_OUTLINE.d - 4.5) - PCB_OUTLINE.d / 2;
+    const corners = mpPos.map(([mx, my]) => {
+        const x = clamp(mx, 5.5, boardW - 5.5) - boardW / 2;
+        const y = clamp(my, 4.5, boardD - 4.5) - boardD / 2;
         return [x, y];
     });
 

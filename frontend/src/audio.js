@@ -1,4 +1,4 @@
-// audio.js — BEEP synthesis for the RZ-EasyFPGA A2.2 buzzer (PIN_110).
+// audio.js — BEEP synthesis for the RZ-EasyFPGA A2.2 buzzer.
 //
 // The drive is active-low: BEEP = 0 turns the 8550 PNP on. The schematic has
 // no on-board oscillator and the fitted part is treated as passive, so the
@@ -11,8 +11,10 @@
 //   f = 50_000_000 / cycles_per_period
 //   duty = active_cycles / cycles_per_period
 //
-// A steady HIGH (transistor off) is silent. A steady LOW (DC) is also silent
-// for this passive speaker. Oscillating 20 Hz–20 kHz -> square tone.
+// Zero-latency contract: tone()/silence() claim and publish their complete
+// state synchronously on the calling JS turn. A first click can happen before
+// AudioContext.resume() has resolved; _ensureSync() builds the nodes and
+// starts resume() in the background so audio.state() is correct in < 1 ms.
 
 const STORAGE_KEY = "c4_audio_v1";
 const MIN_HZ = 20;
@@ -48,25 +50,60 @@ export class BuzzerAudio {
         this.master = null;
         this.osc = null;
         this.gain = null;
+        this._started = false;
         this.frequency = 0;
         this.duty = 0;
         this.active = false;
     }
 
-    /** Create/resume the AudioContext. Must be called from a user gesture. */
-    async ensure() {
-        if (!this.ctx) {
-            const Ctor = window.AudioContext || window.webkitAudioContext;
-            if (!Ctor) return false;
-            this.ctx = new Ctor();
-            this.master = this.ctx.createGain();
-            this.master.gain.value = this.muted ? 0 : this.volume;
-            this.master.connect(this.ctx.destination);
+    /**
+     * Synchronous node setup. Creates AudioContext + oscillator + gain on the
+     * CURRENT turn (no await), then kicks off resume() without blocking.
+     * Safe on the very first user gesture, while resume() is still pending.
+     */
+    _ensureSync() {
+        if (this.ctx && this.osc && this.gain) return true;
+        const Ctor = typeof window !== "undefined" && (window.AudioContext || window.webkitAudioContext);
+        if (!Ctor) return false;
+        try {
+            if (!this.ctx) {
+                this.ctx = new Ctor();
+                this.master = this.ctx.createGain();
+                this.master.gain.value = this.muted ? 0 : this.volume;
+                this.master.connect(this.ctx.destination);
+            }
+            if (!this.osc) {
+                this.osc = this.ctx.createOscillator();
+                this.osc.type = "square";
+            }
+            if (!this.gain) {
+                this.gain = this.ctx.createGain();
+                this.gain.gain.value = 0;
+                this.osc.connect(this.gain);
+                this.gain.connect(this.master);
+            }
+            if (!this._started) {
+                this.osc.start(0);
+                this._started = true;
+            }
+            if (this.ctx.state === "suspended" && typeof this.ctx.resume === "function") {
+                // Non-blocking: never await inside a state-changing call.
+                const pending = this.ctx.resume();
+                if (pending && typeof pending.catch === "function") pending.catch(() => {});
+            }
+            return true;
+        } catch {
+            return false;
         }
-        if (this.ctx.state === "suspended") {
+    }
+
+    /** Create/resume the AudioContext (must be called from a user gesture). */
+    async ensure() {
+        this._ensureSync();
+        if (this.ctx && this.ctx.state === "suspended") {
             try { await this.ctx.resume(); } catch { /* ignore */ }
         }
-        return this.ctx.state === "running";
+        return Boolean(this.ctx && this.ctx.state === "running");
     }
 
     setMuted(muted) {
@@ -75,6 +112,11 @@ export class BuzzerAudio {
             const t = this.ctx.currentTime;
             this.master.gain.cancelScheduledValues(t);
             this.master.gain.setTargetAtTime(this.muted ? 0 : this.volume, t, RAMP_S);
+        }
+        // Active tone: publish the new gain on this turn (no ramp delay).
+        if (this.active && this.gain) {
+            try { this.gain.gain.cancelScheduledValues(this.ctx.currentTime); } catch { /* ignore */ }
+            this.gain.gain.value = this.muted ? 0 : this.volume;
         }
         savePrefs({ muted: this.muted, volume: this.volume });
     }
@@ -87,12 +129,17 @@ export class BuzzerAudio {
             this.master.gain.cancelScheduledValues(t);
             this.master.gain.setTargetAtTime(this.muted ? 0 : v, t, RAMP_S);
         }
+        if (this.active && this.gain) {
+            try { this.gain.gain.cancelScheduledValues(this.ctx.currentTime); } catch { /* ignore */ }
+            this.gain.gain.value = this.muted ? 0 : this.volume;
+        }
         savePrefs({ muted: this.muted, volume: this.volume });
     }
 
     /**
-     * Play a square tone at `freqHz`. `duty` is measured for the badge; the
-     * oscillator is band-limited by Web Audio's square wave.
+     * Play a square tone at `freqHz`. All state visible through state() is
+     * committed synchronously before the first await, including on the very
+     * first call when the AudioContext is still resuming.
      */
     async tone(freqHz, duty = 0.5) {
         const f = Number(freqHz);
@@ -100,53 +147,48 @@ export class BuzzerAudio {
             this.silence();
             return false;
         }
-        // Claim the state synchronously: sim_done (which schedules the 1 s
-        // stop) can fire before the AudioContext resume promise resolves.
-        if (this.active && this.osc && Math.abs(this.frequency - f) < 0.5) {
-            this.duty = duty;
-            return true;
-        }
+        const d = Number.isFinite(Number(duty)) ? Number(duty) : 0.5;
+        const ok = this._ensureSync();
+
+        // Synchronous state claim — before any await, before resume resolves.
         this.frequency = f;
-        this.duty = duty;
+        this.duty = d;
         this.active = true;
-        const ok = await this.ensure();
-        if (!ok) {
-            this.active = false;
-            this.frequency = 0;
-            this.duty = 0;
-            return false;
+        if (ok && this.osc && this.gain) {
+            const targetGain = this.muted ? 0 : this.volume;
+            const t = this.ctx.currentTime;
+            try {
+                this.osc.frequency.value = f;
+                if (typeof this.osc.frequency.setValueAtTime === "function") {
+                    this.osc.frequency.setValueAtTime(f, t);
+                }
+                this.gain.gain.cancelScheduledValues(t);
+                this.gain.gain.value = targetGain;
+            } catch {
+                this.gain.gain.value = targetGain;
+            }
         }
-        const now = this.ctx.currentTime;
-        this._stop(now);
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = "square";
-        osc.frequency.setValueAtTime(f, now);
-        gain.gain.setValueAtTime(0.0001, now);
-        osc.connect(gain);
-        gain.connect(this.master);
-        osc.start(now);
-        gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, this.volume), now + RAMP_S);
-        this.osc = osc;
-        this.gain = gain;
-        this.frequency = f;
-        this.duty = duty;
-        this.active = true;
+
+        if (!ok) return false;
+        // Resume in the background; the visible state above is already final.
+        try { await this.ensure(); } catch { /* ignore */ }
         return true;
     }
 
     silence() {
-        if (!this.ctx) {
-            this.active = false;
-            this.frequency = 0;
-            return;
-        }
-        this._stop(this.ctx.currentTime);
         this.active = false;
         this.frequency = 0;
         this.duty = 0;
+        if (this.gain) {
+            try {
+                const t = this.ctx ? this.ctx.currentTime : 0;
+                this.gain.gain.cancelScheduledValues(t);
+            } catch { /* ignore */ }
+            this.gain.gain.value = 0;
+        }
     }
 
+    /** Legacy ramp-out helper, kept for callers that use it directly. */
     _stop(now) {
         if (this.gain && this.ctx) {
             const g = this.gain.gain;
@@ -154,11 +196,6 @@ export class BuzzerAudio {
             g.setValueAtTime(Math.max(0.0002, g.value || 0.0001), now);
             g.exponentialRampToValueAtTime(0.0001, now + RAMP_S);
         }
-        if (this.osc) {
-            try { this.osc.stop(now + RAMP_S + 0.01); } catch { /* already stopped */ }
-        }
-        this.osc = null;
-        this.gain = null;
     }
 
     /** "Silent" | "800 Hz" | "Mute" — for the toolbar badge. */
@@ -170,12 +207,14 @@ export class BuzzerAudio {
 
     state() {
         return {
+            ready: Boolean(this.ctx && this.ctx.state === "running"),
             active: this.active,
             frequency: this.frequency,
             duty: this.duty,
             muted: this.muted,
             volume: this.volume,
             gain: this.master && this.ctx ? this.master.gain.value : 0,
+            oscFreq: this.osc && this.ctx ? this.osc.frequency.value : 0,
             oscGain: this.gain && this.ctx ? this.gain.gain.value : 0,
             badge: this.badge(),
         };
