@@ -1287,15 +1287,19 @@ input[type="checkbox"], input[type="radio"] { accent-color: #ffffff; }
 .board-hud-pill {
     position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
     z-index: 8; display: flex; flex-direction: row; align-items: center;
-    gap: 8px; max-width: calc(100% - 24px); height: 36px; pointer-events: none;
+    gap: 8px; width: max-content; max-width: calc(100% - 24px); height: 36px; pointer-events: none;
 }
 .board-hud-pill > * { pointer-events: auto; }
-#stats.stats-block { order: 0; }
-#board-controls { order: 1; }
+/* Never shrink the two HUD groups into each other: the stats strip keeps its
+   natural width (nowrap spans) and the key/DIP row cannot compress — on very
+   narrow viewports the bar may poke past its pill background instead. */
+#stats.stats-block { order: 0; flex: 0 0 auto; }
+#board-controls { order: 1; flex: 0 0 auto; }
 #stats.stats-block, #stats.stats-block.stats-pill {
     position: static !important; inset: auto !important; height: auto !important;
+    width: auto !important; /* legacy card rules pin 236px/200px — the HUD row sizes to content */
     max-width: none; display: inline-flex; flex-direction: row; flex-wrap: nowrap;
-    justify-content: center; align-items: center; gap: 7px; padding: 6px 12px;
+    justify-content: center; align-items: center; gap: 7px; padding: 6px 10px;
     border-radius: 999px; background: rgba(17, 17, 19, 0.9);
     border: var(--hair); backdrop-filter: blur(8px);
     font-family: var(--mono); font-size: 10.5px; color: #a1a1aa;
@@ -1322,8 +1326,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: #ffffff; }
    their key/DIP buttons are ordered K1..K4 then S1..S4 by inline order. */
 .bc-cell { display: contents; }
 .bc-key, .bc-dip {
-    display: inline-flex; align-items: center; justify-content: center; gap: 5px;
-    height: 25px; min-width: 46px; padding: 0 8px; border: 0; border-radius: 7px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+    height: 25px; min-width: 40px; padding: 0 7px; border: 0; border-radius: 7px;
     background: #18181b; color: #a1a1aa; font-family: var(--mono); font-size: 10px;
 }
 .bc-key:hover, .bc-dip:hover { background: #27272a; color: #f4f4f5; }
