@@ -4,6 +4,10 @@
 
 export const IO_STANDARDS = ["3.3-V LVTTL", "3.3-V LVCMOS", "2.5 V", "1.8 V"];
 const STORAGE_KEY = "c4_pin_planner_v1";
+// Canonical EQFP-144 package of the default EP4CE6E22C8N target. Every actual
+// board pin still comes from the active profile (board.json); this is only the
+// package-wide fallback catalog boundary, never a board-specific pin map.
+const PACKAGE_PIN_MAX = 144;
 
 export function normalizePin(raw) {
     const t = String(raw || "").trim().toUpperCase();
@@ -20,7 +24,7 @@ export function isValidEqfpPin(pin) {
     const m = /^PIN_(\d+)$/.exec(String(pin || "").trim().toUpperCase());
     if (!m) return false;
     const n = Number(m[1]);
-    return n >= 1 && n <= 144;
+    return n >= 1 && n <= PACKAGE_PIN_MAX;
 }
 
 // Build labeled pin catalog strictly from profile (/api/board -> board/board.json).
