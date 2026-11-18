@@ -84,7 +84,7 @@ def test_registry_discovers_both_builtin_boards():
     rz = board_registry.get_board(DEFAULT)
     assert rz is not None
     assert rz["board"]["name"] == "RZ-EasyFPGA A2.2"
-    assert rz["board"]["layout3d"]["pcbColor"] == "#141619"
+    assert rz["board"]["layout3d"]["pcbColor"] == "#111315"
 
     de0 = board_registry.get_board(SECOND)
     assert de0 is not None
