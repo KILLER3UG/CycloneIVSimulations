@@ -39,6 +39,7 @@ export function buildPinCatalog(profile) {
             label,
             dir, // "in" | "out" | "inout"
             peripheral: extra.peripheral || "",
+            role: extra.role || extra.peripheral || "io",
             index: extra.index ?? null,
             priority: extra.priority || 1,
         });
@@ -61,8 +62,20 @@ export function buildPinCatalog(profile) {
         reg(pin, `LED${i + 1}${dual} (${b.leds?.activeLow ? "active-low " : ""}red)`, "out", { peripheral: "led", index: i, priority: 10 });
     });
     (b.buttons?.pins || []).forEach((pin, i) => {
-        reg(pin, `KEY${i + 1} / SW${i + 1} (${b.buttons?.activeLow ? "active-low " : ""}input)`, "in", { peripheral: "button", index: i, priority: 10 });
+        reg(pin, `KEY${i + 1} / SW${i + 1} (${b.buttons?.activeLow ? "active-low " : ""}input)`, "in", {
+            peripheral: "button", role: "button", index: i, priority: 10,
+        });
     });
+    // Independent switches (DE0-Nano SW[0..3]): sharedWithButtons === false
+    // means these are separate input-only nets and must appear in the catalog
+    // as role "switch" instead of being merged into the KEY/button entries.
+    if (b.switches && b.switches.sharedWithButtons === false) {
+        (b.switches.pins || []).forEach((pin, i) => {
+            reg(pin, `SW${i + 1} (${b.switches?.activeLow ? "active-low" : "active-high"} DIP switch)`, "in", {
+                peripheral: "switch", role: "switch", index: i, priority: 10,
+            });
+        });
+    }
     const segNames = ["a", "b", "c", "d", "e", "f", "g", "dp"];
     (b.displays?.pins?.SEG || []).forEach((pin, i) => {
         reg(pin, `SEG${i} (segment ${segNames[i] || i}, active-low)`, "out", { peripheral: "segment", index: i, priority: 10 });
@@ -102,6 +115,22 @@ export function buildPinCatalog(profile) {
         reg(h.pin, `Header I/O (${h.header || "header"} pin ${h.headerPin ?? "?"}${h.fpga ? ", " + h.fpga : ""})`, "inout", { peripheral: "io", priority: 8 });
     });
 
+    // Declarative SDK manifests may carry an explicit pin list (number/name/
+    // role/input_only). Register those before the generic pinMap fallback so
+    // switching boards shows the active board's full catalog.
+    for (const entry of (Array.isArray(b.pins) ? b.pins : [])) {
+        const rawPin = entry.number ?? entry.pin ?? entry.name;
+        if (!rawPin) continue;
+        const role = String(entry.role || "io").toLowerCase();
+        const dir = entry.dir || entry.direction
+            || (entry.input_only === true ? "in"
+                : /^(clock|reset|key|button|switch|uart_rxd|ir)/i.test(role) ? "in"
+                    : /^(led|seg|dig|buzzer|vga|uart_txd)/i.test(role) ? "out" : "inout");
+        reg(rawPin, `${entry.name || role} (${role})`, dir, {
+            peripheral: role, role, priority: entry.priority ?? 8,
+        });
+    }
+
     for (const [sig, val] of Object.entries(pm)) {
         const list = Array.isArray(val) ? val : [val];
         const outDir = /^(LED|SEG|DIG|VGA|UART_TXD|LCD_E|LCD_RS|LCD_RW|FPGA_BUZZER|SDRAM_)/i.test(sig)
@@ -119,7 +148,7 @@ export function buildPinCatalog(profile) {
     for (let n = 1; n <= 144; n += 1) {
         const pin = `PIN_${n}`;
         if (!byPin.has(pin)) {
-            byPin.set(pin, { pin, label: "User I/O / Header", dir: "inout", peripheral: "io", index: null, priority: 0 });
+            byPin.set(pin, { pin, label: "User I/O / Header", dir: "inout", peripheral: "io", role: "io", index: null, priority: 0 });
         }
     }
 

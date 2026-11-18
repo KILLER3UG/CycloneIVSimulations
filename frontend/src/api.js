@@ -3,6 +3,38 @@
 const FALLBACK_ORIGINS = ["http://127.0.0.1:8080", "http://127.0.0.1:8000", "http://127.0.0.1:8765"];
 let detectedBackendOrigin = "";
 
+// Same-origin by default. A host page may override the API base before app
+// start (window.CYCLONE_API_BASE); WebSocket URLs are derived from the same
+// value so the simulation and the terminal always reach one backend.
+export const API_BASE = "";
+
+function configuredApiBase() {
+    if (typeof window === "undefined") return API_BASE;
+    return window.CYCLONE_API_BASE || window.API_BASE || API_BASE || "";
+}
+
+function configuredOrigin() {
+    const base = configuredApiBase();
+    if (!base) return "";
+    try {
+        return new URL(base, typeof location === "undefined" ? "http://localhost/" : location.href).origin.replace(/\/+$/, "");
+    } catch {
+        return String(base).replace(/\/+$/, "");
+    }
+}
+
+function wsOrigin() {
+    const origin = configuredOrigin() || detectedBackendOrigin;
+    if (origin) return origin.replace(/^http/, "ws").replace(/\/+$/, "");
+    if (typeof location === "undefined") return "ws://127.0.0.1:8080";
+    return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
+}
+
+/** URL of the interactive PTY terminal (same backend as the simulation). */
+export function terminalWsUrl() {
+    return `${wsOrigin()}/ws/terminal`;
+}
+
 async function probeBackendOrigin() {
     for (const origin of FALLBACK_ORIGINS) {
         try {
@@ -35,6 +67,8 @@ export class ApiClient {
             data = await res.json().catch(() => ({}));
         } catch (err) {
             networkErr = err;
+            // An aborted request must never trigger origin probing/retry.
+            if (options?.signal?.aborted) throw err;
         }
         const badProxy = res && (res.status === 502 || res.status === 503 || res.status === 504);
         const foreign404 = res && res.status === 404 && data?.ok === undefined;
@@ -82,12 +116,23 @@ export class ApiClient {
         });
     }
 
-    simulate(payload) {
-        return this._fetch("/api/simulate", {
+    /**
+     * REST simulation. The pre-computed stimulus map is requested by default;
+     * pass includeStimulusMap:false (in payload or opts) to opt out.
+     * opts.signal is forwarded to fetch as an AbortSignal.
+     */
+    simulate(payload, opts = {}) {
+        const body = { ...(payload || {}) };
+        if (body.includeStimulusMap === undefined && body.include_stimulus_map === undefined) {
+            body.includeStimulusMap = opts.includeStimulusMap !== false;
+        }
+        const options = {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-        });
+            body: JSON.stringify(body),
+        };
+        if (opts && opts.signal !== undefined) options.signal = opts.signal;
+        return this._fetch("/api/simulate", options);
     }
 
     selectDevice(key) {
@@ -101,7 +146,55 @@ export class ApiClient {
     devices() {
         return this._fetch("/api/device");
     }
+
+    // --------------------------------------------------------- multi-board --
+    /** GET /api/boards → { ok, activeBoard, boards }. */
+    getBoards() {
+        return this._fetch("/api/boards");
+    }
+
+    /** Alias retained for callers that prefer the shorter name. */
+    boards() {
+        return this.getBoards();
+    }
+
+    /** POST /api/boards/select → activates a registered board by id. */
+    selectBoard(boardId) {
+        return this._fetch("/api/boards/select", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ board: boardId }),
+        });
+    }
+
+    /** POST /api/boards/import → registers (and optionally selects) a manifest. */
+    importBoard(manifest, select = true) {
+        return this._fetch("/api/boards/import", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ manifest, select: select !== false }),
+        });
+    }
+
+    /** POST /api/terminal/exec → one-shot command (GHDL is on PATH). */
+    terminalExec(command, cwd = null) {
+        return this._fetch("/api/terminal/exec", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ command, cwd }),
+        });
+    }
 }
+
+// Standalone helpers use a shared client; callers may still instantiate their
+// own ApiClient (with a custom onError) and call the same methods on it.
+const defaultApiClient = new ApiClient();
+
+export function getBoards() { return defaultApiClient.getBoards(); }
+export const boards = getBoards;
+export function selectBoard(boardId) { return defaultApiClient.selectBoard(boardId); }
+export function importBoard(manifest, select = true) { return defaultApiClient.importBoard(manifest, select); }
+export function terminalExec(command, cwd = null) { return defaultApiClient.terminalExec(command, cwd); }
 
 // ---------------------------------------------------------------------------
 // Streaming simulation session over /ws.
@@ -117,16 +210,15 @@ export class SimSession {
         this.onOpen = onOpen || (() => {});
         this.ws = null;
         this.closedByUser = false;
+        this.url = null; // optional explicit URL override
     }
 
-    connect() {
-        const wsBase = detectedBackendOrigin
-            ? detectedBackendOrigin.replace(/^http/, "ws")
-            : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
-        const url = `${wsBase}/ws`;
+    connect(url = null) {
+        if (url) this.url = url;
+        const target = this.url || `${wsOrigin()}/ws`;
         return new Promise((resolve, reject) => {
             let settled = false;
-            const ws = new WebSocket(url);
+            const ws = new WebSocket(target);
             this.ws = ws;
             ws.onopen = () => {
                 if (!settled) { settled = true; resolve(); }
@@ -135,6 +227,8 @@ export class SimSession {
             ws.onmessage = (ev) => {
                 let msg = null;
                 try { msg = JSON.parse(ev.data); } catch { return; }
+                // Forward the COMPLETE frame — sim_ready.stimulusMap is a large
+                // nested object and must never be stripped here.
                 if (msg) this.onMessage(msg);
             };
             ws.onerror = () => {
@@ -155,7 +249,17 @@ export class SimSession {
         if (this.open) this.ws.send(JSON.stringify(obj));
     }
 
-    start(params) { this.send({ type: "sim_start", ...params }); }
+    /** sim_start payload — requests the stimulus map unless explicitly false. */
+    start(params = {}) {
+        const payload = { ...(params || {}) };
+        if (payload.includeStimulusMap === undefined && payload.include_stimulus_map === undefined) {
+            payload.includeStimulusMap = true;
+        }
+        this.send({ type: "sim_start", ...payload });
+    }
+
+    /** Explicit alias for the run-SIM payload contract. */
+    runSim(params = {}) { this.start(params); }
     pause() { this.send({ type: "sim_pause" }); }
     resume() { this.send({ type: "sim_resume" }); }
     stop() { this.send({ type: "sim_stop" }); }
@@ -170,3 +274,19 @@ export class SimSession {
         }
     }
 }
+
+/**
+ * Convenience connector. The onMessage callback receives the original frame
+ * unchanged — including sim_ready.stimulusMap — so callers can store it
+ * verbatim for zero-delay stimulus playback.
+ */
+export function connectSession({ onMessage, onOpen, onClose, url = null } = {}) {
+    const session = new SimSession({
+        onMessage: (msg) => { if (typeof onMessage === "function") onMessage(msg, session); },
+        onOpen: () => { if (typeof onOpen === "function") onOpen(session); },
+        onClose: (byUser) => { if (typeof onClose === "function") onClose(byUser, session); },
+    });
+    return session.connect(url).then(() => session);
+}
+
+export default new ApiClient();

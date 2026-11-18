@@ -4,18 +4,50 @@
 import * as THREE from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
-export function createMaterials() {
+/** Default solder-mask colour: RZ-EasyFPGA A2.2 deep matte charcoal. */
+export const DEFAULT_PCB_COLOR = "#141619";
+
+function shadeHex(hex, factor) {
+    const r = Math.max(0, Math.min(255, Math.round(((hex >> 16) & 0xff) * factor)));
+    const g = Math.max(0, Math.min(255, Math.round(((hex >> 8) & 0xff) * factor)));
+    const b = Math.max(0, Math.min(255, Math.round((hex & 0xff) * factor)));
+    return (r << 16) | (g << 8) | b;
+}
+
+/** Read layout3d.pcbColor from either the wrapped or the flattened profile. */
+export function pcbColorHex(profile = null) {
+    const board = (profile && (profile.board || profile)) || {};
+    const raw = board.layout3d?.pcbColor || profile?.layout3d?.pcbColor || DEFAULT_PCB_COLOR;
+    if (typeof raw === "number") return raw;
+    const parsed = parseInt(String(raw).trim().replace(/^#/, ""), 16);
+    return Number.isFinite(parsed) ? parsed : parseInt(DEFAULT_PCB_COLOR.slice(1), 16);
+}
+
+export function pcbColorCss(profile = null) {
+    return `#${pcbColorHex(profile).toString(16).padStart(6, "0")}`;
+}
+
+/** Re-apply the active board colour after a live board switch. */
+export function applyPcbColor(mats, profile = null) {
+    const hex = pcbColorHex(profile);
+    if (mats?.pcbTop) mats.pcbTop.color.setHex(hex);
+    if (mats?.pcbSide) mats.pcbSide.color.setHex(shadeHex(hex, 0.55));
+    return hex;
+}
+
+export function createMaterials(profile = null) {
     const physical = (opts) => new THREE.MeshPhysicalMaterial(opts);
+    const pcbHex = pcbColorHex(profile);
 
     return {
         // PCB (map is assigned by pcb.js silkscreen atlas). Deep matte charcoal:
         // low metalness/clearcoat and a cool environment so the black stays
         // black and the white silkscreen stays crisp (no grey wash).
         pcbTop: physical({
-            color: 0xffffff, roughness: 0.62, metalness: 0.04,
+            color: pcbHex, roughness: 0.62, metalness: 0.04,
             clearcoat: 0.1, clearcoatRoughness: 0.7, envMapIntensity: 0.18,
         }),
-        pcbSide: new THREE.MeshStandardMaterial({ color: 0x08090b, roughness: 0.78, metalness: 0.04 }),
+        pcbSide: new THREE.MeshStandardMaterial({ color: shadeHex(pcbHex, 0.55), roughness: 0.78, metalness: 0.04 }),
 
         // metals
         gold: physical({ color: 0xd8b04a, metalness: 1.0, roughness: 0.28, envMapIntensity: 1.15 }),
@@ -56,8 +88,8 @@ export function createMaterials() {
 
 const THEME = {
     dark: {
-        background: 0x0d1014,
-        ground: 0x14181d,
+        background: 0x0a0a0b, // Studio Monochrome backdrop
+        ground: 0x101114,
         groundRoughness: 0.95,
         hemi: 0.5,
     },

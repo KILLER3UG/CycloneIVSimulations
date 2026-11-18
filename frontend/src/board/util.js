@@ -22,7 +22,9 @@ export function createCanvas(w, h) {
     return canvas;
 }
 
-export function canvasTexture(canvas, { srgb = true, anisotropy = 8 } = {}) {
+// Silkscreen, laser chip markings and text labels are viewed at grazing angles
+// on a tilted board: 16x anisotropic filtering keeps them razor sharp.
+export function canvasTexture(canvas, { srgb = true, anisotropy = 16 } = {}) {
     const tex = new THREE.CanvasTexture(canvas);
     if (srgb) tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = anisotropy;
@@ -100,7 +102,7 @@ export function labelTexture(text, {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(text, w / 2, h / 2);
-    return { texture: canvasTexture(canvas, { anisotropy: 4 }), aspect: w / h };
+    return { texture: canvasTexture(canvas, { anisotropy: 16 }), aspect: w / h };
 }
 
 /** mergeGeometries wrapper that normalizes indexed/non-indexed inputs. */

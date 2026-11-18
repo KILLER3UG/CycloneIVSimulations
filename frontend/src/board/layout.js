@@ -577,6 +577,89 @@ export function buildPinIndex(profile) {
     return { index, list, headerLayouts };
 }
 
+// ---------------------------------------------------------------------------
+// Dynamic multi-board model. The canonical constants above stay untouched so
+// layout.test.js keeps its 58-row / 132×104 baseline; imported boards (e.g.
+// DE0-Nano with 8 LEDs and 2 buttons) are described entirely by layout3d.
+// ---------------------------------------------------------------------------
+function modelCount(node, fallback) {
+    const n = node?.count ?? (Array.isArray(node?.pins) ? node.pins.length : undefined) ?? fallback;
+    const v = Number(n);
+    return Number.isFinite(v) ? Math.max(0, Math.floor(v)) : fallback;
+}
+
+function modelPositions(layout3d, key, count, origin, step = 3.2) {
+    const raw = Array.isArray(layout3d[key]) ? layout3d[key] : null;
+    return Array.from({ length: count }, (_, i) => {
+        const p = raw?.[i];
+        if (Array.isArray(p) && p.length >= 2 && Number.isFinite(Number(p[0])) && Number.isFinite(Number(p[1]))) {
+            return [Number(p[0]), Number(p[1])];
+        }
+        return [origin[0] + i * step, origin[1]];
+    });
+}
+
+/**
+ * buildDynamicBoardModel(profile) → geometry + component layout for ANY board.
+ * `isDefault` tells the 3D scene whether to keep the canonical hand-authored
+ * 58-part board; every other profile is built from this model.
+ */
+export function buildDynamicBoardModel(profile) {
+    const b = (profile && (profile.board || profile)) || {};
+    const l = (b.layout3d && typeof b.layout3d === "object" ? b.layout3d : null)
+        || (profile?.layout3d && typeof profile.layout3d === "object" ? profile.layout3d : null)
+        || {};
+    const id = String(b.id || profile?.id || "").toLowerCase();
+    const isDefault = !id || id === "rz-easyfpga-a2.2";
+    const pcb = { ...PCB_OUTLINE, ...(l.pcb && typeof l.pcb === "object" ? l.pcb : {}) };
+    const w = Number(pcb.w) || PCB_OUTLINE.w;
+    const d = Number(pcb.d) || PCB_OUTLINE.d;
+
+    const ledCount = modelCount(b.leds, 4);
+    const keyCount = modelCount(b.buttons, 4);
+    const dipCount = modelCount(b.switches, 4);
+    const displayCount = modelCount(b.displays, 4);
+    const buzzerPresent = Boolean(b.buzzer?.pin || l.buzzerPos);
+
+    const mk = (idPrefix, kind, pos, size, extra = {}) => ({
+        id: `${idPrefix}${extra.index !== undefined ? extra.index + 1 : ""}`,
+        kind, pos, size, ...extra,
+    });
+
+    const leds = modelPositions(l, "ledPositions", ledCount, [w * 0.22, d - 8], 3.2)
+        .map((pos, i) => mk("LED", KIND.LED, pos, [2, 1.6], { index: i }));
+    const keys = modelPositions(l, "buttonPositions", keyCount, [w - 18, d - 10], 8)
+        .map((pos, i) => mk("S", KIND.BUTTON, pos, [8, 9], { index: i }));
+    const dip = modelPositions(l, "dipPositions", dipCount > 0 ? 1 : 0, [w * 0.5, d * 0.65], 0)
+        .map((_, i) => mk("SW", KIND.DIP, Array.isArray(l.dipPos) ? l.dipPos : [w * 0.5, d * 0.65], [12.6, 11], { index: i, positions: dipCount }));
+
+    const displayPos = Array.isArray(l.displayPos) ? l.displayPos : [w * 0.72, d * 0.12];
+    const buzzerPos = Array.isArray(l.buzzerPos) ? l.buzzerPos : [w * 0.16, d * 0.2];
+    const fpgaPos = Array.isArray(l.fpgaPos) ? l.fpgaPos : [w * 0.38, d * 0.46];
+
+    return {
+        id,
+        name: String(b.name || id || "custom board"),
+        isDefault,
+        pcb,
+        pcbColor: String(l.pcbColor || "#141619"),
+        fpga: {
+            pos: fpgaPos,
+            size: [22, 22],
+            label: Array.isArray(l.fpgaLabel) ? l.fpgaLabel.slice() : ["ALTERA", "Cyclone IV", String(b.fpga || "")],
+        },
+        leds,
+        keys,
+        dip,
+        display: { pos: displayPos, size: [30, 16], count: displayCount > 0 ? 4 : 0 },
+        buzzer: { pos: buzzerPos, size: [15, 15], present: buzzerPresent },
+        segBitMap: b.displays?.segBitMap || SEG_BIT_MAP_FALLBACK,
+        mountHoles: [
+            [5.5, 4.5], [w - 5.5, 4.5], [5.5, d - 4.5], [w - 5.5, d - 4.5],
+        ],
+    };
+}
+
 // Standard 7-segment glyph patterns (a..g), used by demos/tests — display
 // polarity/segment order still comes from the profile at runtime.
 export const SEG_GLYPHS = Object.freeze({
