@@ -1,4 +1,4 @@
-// buzzerModel.js — pure buzzer maths for the RZ-EasyFPGA A2.2 (BEEP PIN_110).
+// buzzerModel.js — pure buzzer maths for the RZ-EasyFPGA A2.2 (BEEP net).
 //
 // All timing is derived from **simulated** transition timestamps (ns) and the
 // 50 MHz clock period (20 ns). Nothing here reads requestAnimationFrame or

@@ -13,11 +13,14 @@
 
 import puppeteer from "puppeteer-core";
 import { appendFileSync, mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const CDP = process.argv[2] || "http://127.0.0.1:9229";
-const OUT = resolve("docs/evidence/installed-app");
-const LOG = resolve("docs/evidence/installed-app-e2e.log");
+// anchored to THIS script's location — never the shell's cwd
+const HERE = dirname(fileURLToPath(import.meta.url));
+const OUT = resolve(HERE, "../../docs/evidence/installed-app");
+const LOG = resolve(HERE, "../../docs/evidence/installed-app-e2e.log");
 mkdirSync(OUT, { recursive: true });
 
 let failures = 0;
@@ -27,6 +30,25 @@ const step = (name, ok, detail = "") => {
     appendFileSync(LOG, `${ok ? "PASS" : "FAIL"}  ${name}  | ${detail}\n`);
 };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Wait for the CURRENT GHDL capture to finish: every input change triggers a
+// full re-run (~3 s; a first-time display capture ~13 s), and the stimulus
+// map / POV image are only published when the run COMPLETES. Poll for a new
+// "Simulation complete" line — fixed waits sample the previous run.
+async function settle(page, timeoutMs = 90000) {
+    const count = () => page.evaluate(() =>
+        [...document.querySelectorAll("#console-log .log-line")]
+            .filter((l) => l.textContent.includes("Simulation complete")).length);
+    const before = await count();
+    const t0 = Date.now();
+    for (;;) {
+        await wait(400);
+        if ((await count()) > before) break;
+        if (Date.now() - t0 > timeoutMs) return false;
+    }
+    await wait(600);
+    return true;
+}
 
 // ---------------------------------------------------------------- connect --
 let browser = null;
@@ -57,35 +79,36 @@ page.on("pageerror", (e) => pageErrors.push(String(e?.message || e)));
 await page.waitForFunction(() => window.__cyclone && window.__cyclone.board, { timeout: 60000 });
 await wait(1500);
 
+// 00 — the installed app auto-spawned its bundled sidecar and reports it
+await page.waitForFunction(() => [...document.querySelectorAll("#console-log .log-line")]
+    .some((l) => /Backend ready/i.test(l.textContent)), { timeout: 30000 }).catch(() => {});
+{
+    const ready = await page.evaluate(() => [...document.querySelectorAll("#console-log .log-line")]
+        .map((l) => l.textContent.trim()).find((t) => /Backend ready/i.test(t)) || "");
+    step("00 installed app auto-spawned the bundled sidecar (Backend ready — GHDL 6.0.0)",
+        /Backend ready/i.test(ready) && /GHDL 6\.0\.0/i.test(ready), ready);
+}
+
 // ------------------------------------------------------------------ step 1 --
 // Code tab + 3D viewport: background, PCB colour, framing, HUD, no duplicates.
 {
+    await page.click('[data-tab="code"]').catch(() => {});
+    await wait(500);
     const s = await page.evaluate(() => {
         const b = window.__cyclone.board;
         const stats = document.getElementById("stats");
         const pill = document.querySelector(".board-hud-pill");
-        // project the board's 8 bounding corners into NDC with the live camera
-        const P = b.camera.projectionMatrix.elements;
-        const V = b.camera.matrixWorldInverse.elements;
-        const proj = (x, y, z) => {
-            const vx = V[0] * x + V[4] * y + V[8] * z + V[12];
-            const vy = V[1] * x + V[5] * y + V[9] * z + V[13];
-            const vz = V[2] * x + V[6] * y + V[10] * z + V[14];
-            const vw = V[3] * x + V[7] * y + V[11] * z + V[15];
-            const cx = P[0] * vx + P[4] * vy + P[8] * vz + P[12] * vw;
-            const cy = P[1] * vx + P[5] * vy + P[9] * vz + P[13] * vw;
-            const cw = P[3] * vx + P[7] * vy + P[11] * vz + P[15] * vw;
-            return [cx / cw, cy / cw];
-        };
-        const ndc = [];
-        for (const x of [-66, 66]) for (const y of [0, 14]) for (const z of [-52, 52]) ndc.push(...proj(x, y, z));
+        // Framing: the board's bounding sphere (~85 mm for the 132×104 mm
+        // board) must fit inside the camera frustum with breathing room.
+        const cam = b.camera;
+        const dist = cam.position.distanceTo(b.controls.target);
+        const fovV = (cam.fov * Math.PI) / 180;
+        const fovH = 2 * Math.atan(Math.tan(fovV / 2) * cam.aspect);
+        const needed = 85 / Math.sin(Math.min(fovV, fovH) / 2);
         return {
             bg: "#" + b.scene.background.getHexString(),
             pcb: "#" + b.mats.pcbTop.color.getHexString(),
-            ndcMinX: Math.min(...ndc.map((p) => p[0])).toFixed(3),
-            ndcMaxX: Math.max(...ndc.map((p) => p[0])).toFixed(3),
-            ndcMinY: Math.min(...ndc.map((p) => p[1])).toFixed(3),
-            ndcMaxY: Math.max(...ndc.map((p) => p[1])).toFixed(3),
+            dist: Math.round(dist), needed: Math.round(needed),
             statsH: Math.round(stats.getBoundingClientRect().height),
             statsOverflow: stats.scrollWidth - stats.clientWidth,
             pillH: Math.round(pill.getBoundingClientRect().height),
@@ -95,9 +118,8 @@ await wait(1500);
         };
     });
     step("01 board/viewport: #0a0a0b background + #111315 PCB", s.bg === "#0a0a0b" && s.pcb === "#111315", JSON.stringify(s));
-    step("01 board 100% framed (all corners inside NDC ±0.98)",
-        Math.abs(s.ndcMinX) <= 0.98 && Math.abs(s.ndcMaxX) <= 0.98 && Math.abs(s.ndcMinY) <= 0.98 && Math.abs(s.ndcMaxY) <= 0.98,
-        `x=[${s.ndcMinX},${s.ndcMaxX}] y=[${s.ndcMinY},${s.ndcMaxY}]`);
+    step("01 board 100% framed (camera distance ≥ sphere fit, ≤ 1.8×)",
+        s.dist >= s.needed && s.dist <= s.needed * 1.8, `dist=${s.dist} needed=${s.needed}`);
     step("01 HUD single row ≤40px, no FPS text, no overflow",
         s.pillH <= 40 && s.statsH <= 36 && s.statsOverflow <= 0 && s.fps === null,
         `pill=${s.pillH}px stats=${s.statsH}px overflow=${s.statsOverflow} fps=${s.fps}`);
@@ -115,9 +137,16 @@ await wait(1500);
         sel.dispatchEvent(new Event("change", { bubbles: true }));
     });
     await wait(800);
+    // apply the board default pin assignments FIRST (same button a student
+    // clicks) — without them the stimulus sweep has no pin bindings and the
+    // interactive buzzer/POV path stays dead
+    await page.click('[data-tab="pinmap"]');
+    await wait(300);
+    await page.evaluate(() => document.querySelector("#pp-defaults")?.click());
+    await wait(400);
     await page.click("#tb-compile");
     await page.waitForFunction(() => window.__cyclone.state.programmed === true, { timeout: 120000 });
-    await wait(800);
+    await settle(page); // the stimulus map is published when the capture COMPLETES
     // instrument HTTP before the interactive press
     await page.evaluate(() => {
         window.__http = 0;
@@ -165,7 +194,7 @@ await wait(1500);
     await page.click('[data-act="reset"]');
     await wait(400);
     await page.click('[data-act="power"]'); // Power On — auto-restore, no recompile
-    await wait(500);
+    await settle(page); // the power-on refresh() re-runs the capture (~3 s)
     await page.evaluate(() => window.__cyclone.setPhysicalKeyPressed(0, true));
     await wait(500);
     const restored = await page.evaluate(() => ({
@@ -192,9 +221,13 @@ await wait(1500);
         sel.dispatchEvent(new Event("change", { bubbles: true }));
     });
     await wait(800);
+    await page.click('[data-tab="pinmap"]');
+    await wait(300);
+    await page.evaluate(() => document.querySelector("#pp-defaults")?.click());
+    await wait(400);
     await page.click("#tb-compile");
     await page.waitForFunction(() => window.__cyclone.state.programmed === true, { timeout: 120000 });
-    await wait(800);
+    await settle(page, 120000); // first-time display capture ~13 s of GHDL
     const tubes = await page.evaluate(() => {
         const d = window.__cyclone.board.io.display;
         return [0, 1, 2, 3].map((i) => Array.from(d.segHold.slice(i * 8, i * 8 + 7)).map((v) => Math.round(v * 1000) / 1000));
@@ -210,10 +243,53 @@ await wait(1500);
         const t = [0, 1, 2, 3].map((i) => Array.from(d.segHold.slice(i * 8, i * 8 + 7)).map((v) => Math.round(v * 100) / 100));
         return { ms: Math.round((performance.now() - t0) * 100) / 100, t };
     });
-    const one = press.t.every((t) => t[1] > 0.85 && t[2] > 0.85 && t.slice(3).every((v) => v < 0.12) && t[0] < 0.12);
-    step("03 K1 -> 1111 on all tubes in < 25 ms", press.ms < 25 && one, `${press.ms} ms ${JSON.stringify(press.t)}`);
+    const round2 = (t) => JSON.stringify(t.map((seg) => seg.map((v) => Math.round(v * 100) / 100)));
+    const same = round2(press.t) === round2(tubes);
+    // sevseg_4tube has NO key inputs (clk/seven_seg/dtube) — a key press is
+    // still handled synchronously (< 25 ms) and the free-running 1234 POV
+    // image must stay stable. The key-driven display check is step 03b.
+    step("03 K1 press handled synchronously (< 25 ms); free-running 1234 POV unaffected",
+        press.ms < 25 && same, `${press.ms} ms unchanged=${same}`);
     await page.screenshot({ path: join(OUT, "installed-03-sevseg-4tube.png") });
     await page.evaluate(() => window.__cyclone.setPhysicalKeyPressed(0, false));
+    await wait(300);
+
+    // 03b — sevseg_keys: the key-driven design. Keys open -> tubes dark;
+    // pressing K1+K2 (S1+S2 nets low) gates the display on -> the POV image
+    // updates on the SAME turn (< 25 ms, the <1 ms stimulus path).
+    await page.evaluate(() => {
+        const sel = document.querySelector("#tb-examples");
+        const opt = [...sel.options].find((o) => /sevseg_keys/i.test(`${o.value} ${o.textContent}`));
+        sel.value = opt.value;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await wait(800);
+    await page.click('[data-tab="pinmap"]');
+    await wait(300);
+    await page.evaluate(() => document.querySelector("#pp-defaults")?.click());
+    await wait(400);
+    await page.click("#tb-compile");
+    await page.waitForFunction(() => window.__cyclone.state.programmed === true, { timeout: 120000 });
+    await settle(page);
+    const dark = await page.evaluate(() => {
+        const d = window.__cyclone.board.io.display;
+        return Math.max(...Array.from(d.segHold).map((v) => Math.round(v * 1000) / 1000));
+    });
+    step("03b sevseg_keys: all keys open -> tubes dark", dark < 0.12, `max duty=${dark}`);
+    const keys = await page.evaluate(() => {
+        const t0 = performance.now();
+        window.__cyclone.setPhysicalKeyPressed(0, true);
+        window.__cyclone.setPhysicalKeyPressed(1, true);
+        const d = window.__cyclone.board.io.display;
+        const lit = Math.max(...Array.from(d.segHold).map((v) => Math.round(v * 1000) / 1000));
+        return { ms: Math.round((performance.now() - t0) * 100) / 100, lit };
+    });
+    step("03b K1+K2 pressed -> tubes light in < 25 ms", keys.ms < 25 && keys.lit >= 0.18, `${keys.ms} ms, max duty=${keys.lit}`);
+    await page.screenshot({ path: join(OUT, "installed-03b-sevseg-keys.png") });
+    await page.evaluate(() => {
+        window.__cyclone.setPhysicalKeyPressed(0, false);
+        window.__cyclone.setPhysicalKeyPressed(1, false);
+    });
     await wait(300);
 }
 

@@ -54,7 +54,7 @@ export function buildPinCatalog(profile) {
         reg(b.clockPin, `${b.clockPort || "CLOCK_50"} (50 MHz oscillator)`, "in", { peripheral: "clock", priority: 10 });
     }
     if (b.clock2Pin) {
-        // PIN_24 (CLK2 / DIFFCLK_1p) is a dedicated input-only clock pin.
+        // CLK2 / DIFFCLK_1p is a dedicated input-only clock pin.
         reg(b.clock2Pin, "CLK2 / DIFFCLK_1p (dedicated clock input, P1 pin 34)", "in", { peripheral: "clock", priority: 9 });
     }
     if (b.resetPin) {
@@ -151,8 +151,8 @@ export function buildPinCatalog(profile) {
         });
     }
 
-    // Complete remaining package pins (PIN_1..PIN_144) as General I/O
-    for (let n = 1; n <= 144; n += 1) {
+    // Complete the remaining package pins as General I/O
+    for (let n = 1; n <= PACKAGE_PIN_MAX; n += 1) {
         const pin = `PIN_${n}`;
         if (!byPin.has(pin)) {
             byPin.set(pin, { pin, label: "User I/O / Header", dir: "inout", peripheral: "io", role: "io", index: null, priority: 0 });
@@ -494,7 +494,7 @@ export function validateAssignments(nodes, assignments, catalog) {
                 line: 1,
                 column: 1,
                 severity: "error",
-                message: `Nonexistent pin '${raw}' assigned to '${n.nodeName}' (EP4CE6E22C8N supports PIN_1..PIN_144).`,
+                message: `Nonexistent pin '${raw}' assigned to '${n.nodeName}' (EP4CE6E22C8N supports PIN_1..PIN_${PACKAGE_PIN_MAX}).`,
             });
             continue;
         }

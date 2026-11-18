@@ -69,6 +69,22 @@ STOP 1B fixed the last 5 baseline failures (and 4 stale Verilog expectations):
 | ENG-01B | Export VCD button (`frontend/src/vcdExport.js`) |
 | ENG-10 | switch click auto re-run asserted |
 
+## Installed-app verification (final sign-off)
+
+- `installed-app/installed-01..08.png` — the **installed** desktop app
+  (`%LOCALAPPDATA%\Programs\Cyclone IV Studio\cyclone-iv-studio.exe`) launched
+  with WebView2 remote debugging (`:9229`) and driven through CDP by
+  `frontend/scripts/installed-app-e2e.mjs` (24 checks, ALL PASS): sidecar
+  auto-spawn ("Backend ready — GHDL 6.0.0"), `#0a0a0b` viewport + `#111315`
+  PCB + 100 % framing, 36 px single-row HUD (no FPS), no duplicate
+  Compile/Messages, buzzer `800 Hz` + SP1 ring (opacity 0.9) with
+  Power Off/Reset/Power On lifecycle, vivid `sevseg_4tube` POV +
+  `sevseg_keys` key-press display update in ~1–2 ms, Pin Planner rows,
+  Peripherals cards, live DE0-Nano board switch (green PCB, 8 LEDs),
+  Terminal (`ghdl --version`, `echo INSTALLED_EXE_OK`) and Waveform/VCD +
+  collapse/expand. Closing the window leaves zero
+  `cyclone-iv-studio.exe`/`cyclone-backend.exe`/`ghdl.exe` processes.
+
 ## STOP 2 — packaging verification
 
 - `tauri-build.log` — `npx tauri build` (NSIS, 50.61 MiB installer)
