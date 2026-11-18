@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
 /** Default solder-mask colour: RZ-EasyFPGA A2.2 deep matte charcoal. */
-export const DEFAULT_PCB_COLOR = "#141619";
+export const DEFAULT_PCB_COLOR = "#111315";
 
 function shadeHex(hex, factor) {
     const r = Math.max(0, Math.min(255, Math.round(((hex >> 16) & 0xff) * factor)));
@@ -44,8 +44,8 @@ export function createMaterials(profile = null) {
         // low metalness/clearcoat and a cool environment so the black stays
         // black and the white silkscreen stays crisp (no grey wash).
         pcbTop: physical({
-            color: pcbHex, roughness: 0.62, metalness: 0.04,
-            clearcoat: 0.1, clearcoatRoughness: 0.7, envMapIntensity: 0.18,
+            color: pcbHex, roughness: 0.7, metalness: 0.04,
+            clearcoat: 0.1, clearcoatRoughness: 0.7, envMapIntensity: 0.12,
         }),
         pcbSide: new THREE.MeshStandardMaterial({ color: shadeHex(pcbHex, 0.55), roughness: 0.78, metalness: 0.04 }),
 

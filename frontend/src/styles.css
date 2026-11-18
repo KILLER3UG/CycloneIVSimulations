@@ -429,16 +429,11 @@ select:focus, input[type="text"]:focus, input[type="number"]:focus {
 .pin-table tr.pp-row-warn td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
 
 /* ------------------------------------------------------------- board area */
+/* Studio Monochrome: one flat carbon-black stage. No gradients, no haze —
+   the WebGL canvas (scene.background #0a0a0b) paints the same colour. */
 #board-area {
     position: relative; min-width: 0; min-height: 0; overflow: hidden;
-    background:
-        radial-gradient(900px 520px at 50% 30%, rgba(37, 99, 235, 0.08), transparent 62%),
-        linear-gradient(180deg, #eef3fa 0%, #e2eaf5 100%);
-}
-html[data-theme="dark"] #board-area {
-    background:
-        radial-gradient(ellipse at 50% 42%, rgba(31, 111, 208, 0.16), transparent 60%),
-        linear-gradient(180deg, #0a1220 0%, #060a11 100%);
+    background: #0a0a0b;
 }
 #board-host { position: absolute; inset: 0; overflow: hidden; }
 #board-host canvas { display: block; }

@@ -106,6 +106,9 @@ export class Board3D {
         this.renderer = new THREE.WebGLRenderer({ antialias: this.quality !== "performance", alpha: false });
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
         this.renderer.toneMappingExposure = 1.0;
+        // Studio Monochrome: the clear colour matches scene.background so a
+        // resized canvas never flashes a stale grey/blue frame.
+        this.renderer.setClearColor(0x0a0a0b, 1);
         this._detectGpu();
         // A software rasterizer draws every frame on the CPU, spread across
         // cores — shadow maps and a high pixel ratio multiply that cost and
@@ -158,21 +161,6 @@ export class Board3D {
         // Studio Monochrome: zero fog, always. Any fog puts a haze between the
         // camera and the board and washes out the razor-sharp silkscreen.
         this.scene.fog = null;
-
-        // subtle floating dust for depth (frozen by setDeterministic)
-        const N = 220;
-        const pos = new Float32Array(N * 3);
-        for (let i = 0; i < N; i += 1) {
-            pos[i * 3] = (this.rng() - 0.5) * 200;
-            pos[i * 3 + 1] = 4 + this.rng() * 46;
-            pos[i * 3 + 2] = (this.rng() - 0.5) * 160;
-        }
-        const dustGeo = new THREE.BufferGeometry();
-        dustGeo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-        this.dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({
-            color: 0x8fa8c0, size: 0.42, transparent: true, opacity: 0.35, depthWrite: false,
-        }));
-        this.scene.add(this.dust);
     }
 
     _initControls() {
@@ -869,12 +857,6 @@ export class Board3D {
         this.deterministic = true;
         this.rng = mulberry32(seed);
         this.controls.autoRotate = false;
-        // refreeze dust
-        const pos = this.dust.geometry.getAttribute("position");
-        for (let i = 0; i < pos.count; i += 1) {
-            pos.setXYZ(i, (this.rng() - 0.5) * 200, 4 + this.rng() * 46, (this.rng() - 0.5) * 160);
-        }
-        pos.needsUpdate = true;
         if (this._tween) this._tween.duration = 0; // snap instead of animate
     }
 
@@ -960,16 +942,7 @@ export class Board3D {
             }
         }
 
-        // dust drift
-        if (!this.deterministic && this.running) {
-            const pos = this.dust.geometry.getAttribute("position");
-            for (let i = 0; i < pos.count; i += 1) {
-                let y = pos.getY(i) + dt * 1.4;
-                if (y > 52) y = 4;
-                pos.setY(i, y);
-            }
-            pos.needsUpdate = true;
-        }
+        // dust drift removed — Studio Monochrome keeps the void perfectly clean
 
         this.controls.update();
         if (this.composer && this.quality === "high") this.composer.render();
