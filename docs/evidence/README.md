@@ -71,11 +71,11 @@ STOP 1B fixed the last 5 baseline failures (and 4 stale Verilog expectations):
 
 ## STOP 2 — packaging verification
 
-- `tauri-build.log` — `npx tauri build` (NSIS, 49.35 MiB installer)
-- `SHA256SUMS.txt` — installer SHA-256 (`ca97e2d3…9702`)
+- `tauri-build.log` — `npx tauri build` (NSIS, 50.61 MiB installer)
+- `SHA256SUMS.txt` — installer SHA-256 (`1963b2dc…c9e01f`)
 - `sidecar-offline-smoke.log` — frozen backend run from a **path with spaces**:
-  doctor OK (GHDL resolved from the bundle), buzz1 800 Hz, Verilog `blink_v`
-  simulated without Icarus
+  doctor OK (GHDL resolved from the bundle), buzz_4tone stimulus sweep
+  (16 vectors, decoded tones) — reproducible via `packaging/offline_smoke.py`
 - `stop2-app-running.png` — installed app running with the live backend
 - `stop2-clean-vm-checklist.md` — scripted clean-VM sequence + results
   (install → launch → buzz1/buzz_4tone → Verilog → close → upgrade → uninstall;

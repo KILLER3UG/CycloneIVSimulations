@@ -1,2 +1,2 @@
-2f2c3ba22ca5949eff365995eae299bd043d4fc081927ce74a627f83c9c5f09c *Cyclone IV Studio_0.1.0_x64-setup.exe
-d618a6017ef9fbd9031217cf5648c9b1b62ce920879245509e59b66cc886de7d *cyclone-backend.exe
+1963b2dc562770b599c64e62ee07e33f81d643f90c87be7218ae928117c9e01f *Cyclone IV Studio_0.1.0_x64-setup.exe
+781eb8fe7d1dca71ff75ecb768dda587676161b507d3bdf3985739821dede7e4 *cyclone-backend.exe

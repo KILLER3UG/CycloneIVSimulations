@@ -1,0 +1,6 @@
+Offline sidecar smoke from path with spaces: C:\Users\rober\AppData\Local\Temp\Cyclone Test Space\cyclone-backend\cyclone-backend.exe
+doctor ok: True
+health.ok=True ghdl=C:\Users\rober\AppData\Local\Temp\Cyclone Test Space\cyclone-backend\ghdl\bin\ghdl.exe
+boards=rz-easyfpga-a2.2,de0-nano-ep4ce22
+buzz_4tone stimulusMap vectors=16 freqs=[0, 1000, 1600, 2000, 3200]
+SMOKE PASS
