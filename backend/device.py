@@ -267,7 +267,8 @@ def import_board_manifest(raw: dict, select: bool = True) -> dict:
 _SEGMENT_ALIASES = {"seg", "seg7", "sevenseg", "display", "hex"}
 _DIGIT_ALIASES = {"dig", "dtube", "digit", "tube", "sel", "scan", "com", "anode"}
 # unnumbered BUS aliases: a whole port named like the bus maps onto it
-_SWITCHBUS_ALIASES = {"sw", "dip", "switches", "keys", "buttons"}
+# ("key" covers classroom vectors like key : in std_logic_vector(3 downto 0))
+_SWITCHBUS_ALIASES = {"sw", "dip", "switches", "keys", "key", "buttons"}
 # Buzzer aliases: the classroom buzz1.vhd names the output "buzzerb".
 _BUZZER_ALIASES = {"buzzer", "buzzerb", "beep", "spk", "speaker", "buzz"}
 _SCALAR_ALIASES = {

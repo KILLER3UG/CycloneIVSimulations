@@ -494,7 +494,7 @@ export function validateAssignments(nodes, assignments, catalog) {
                 line: 1,
                 column: 1,
                 severity: "error",
-                message: `Nonexistent pin '${raw}' assigned to '${n.nodeName}' (EP4CE6E22C8N supports PIN_1..PIN_${PACKAGE_PIN_MAX}).`,
+                message: `Nonexistent pin '${raw}' assigned to '${n.nodeName}' (EP4CE6E22C8N supports pins 1 through ${PACKAGE_PIN_MAX}).`,
             });
             continue;
         }

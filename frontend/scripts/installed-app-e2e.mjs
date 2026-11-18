@@ -244,13 +244,16 @@ await page.waitForFunction(() => [...document.querySelectorAll("#console-log .lo
         return { ms: Math.round((performance.now() - t0) * 100) / 100, t };
     });
     const round2 = (t) => JSON.stringify(t.map((seg) => seg.map((v) => Math.round(v * 100) / 100)));
-    const same = round2(press.t) === round2(tubes);
-    // sevseg_4tube has NO key inputs (clk/seven_seg/dtube) — a key press is
-    // still handled synchronously (< 25 ms) and the free-running 1234 POV
-    // image must stay stable. The key-driven display check is step 03b.
-    step("03 K1 press handled synchronously (< 25 ms); free-running 1234 POV unaffected",
-        press.ms < 25 && same, `${press.ms} ms unchanged=${same}`);
+    // K1 held -> EVERY tube shows '1' (segments b,c) at the mux duty (~0.25):
+    // the bundled sevseg_4tube.vhd binds key[3:0] and the stimulus map applies
+    // the new glyph set synchronously (< 25 ms, zero http).
+    const one = press.t.every((tube) => tube[1] >= 0.18 && tube[2] >= 0.18
+        && tube[0] < 0.12 && tube.slice(3).every((v) => v < 0.12));
+    step("03 K1 -> 1111 on all 4 tubes in < 25 ms", press.ms < 25 && one,
+        `${press.ms} ms 1111=${one} t=${press.t}`);
     await page.screenshot({ path: join(OUT, "installed-03-sevseg-4tube.png") });
+    await page.evaluate(() => window.__cyclone.setPhysicalKeyPressed(0, false));
+    await wait(300);
     await page.evaluate(() => window.__cyclone.setPhysicalKeyPressed(0, false));
     await wait(300);
 
@@ -409,6 +412,122 @@ await page.waitForFunction(() => [...document.querySelectorAll("#console-log .lo
     step("08 Right Workbench + Bottom Dock collapse/expand",
         rightCollapsed && rightBack && bottomCollapsed && bottomBack,
         `right=${rightCollapsed}->${rightBack} bottom=${bottomCollapsed}->${bottomBack}`);
+}
+
+// ------------------------------------------------------------------ step 9 --
+// Diagnostics tab: level filter chips, problem badge, Clear.
+{
+    await page.click('[data-btab="diagnostics"]');
+    await wait(500);
+    const diag = await page.evaluate(() => ({
+        chips: [...document.querySelectorAll("#bottompanel [data-lf]")].map((c) => c.dataset.lf),
+        badge: document.getElementById("diag-badge")?.textContent ?? null,
+        clear: !!document.querySelector('#bottompanel [data-act="clearlog"]'),
+        lines: document.querySelectorAll("#console-log .log-line").length,
+    }));
+    step("09 Diagnostics: INFO/OK/WARN/ERR/CMD chips + badge + Clear",
+        JSON.stringify(diag.chips) === JSON.stringify(["info", "ok", "warn", "error", "cmd"])
+        && diag.badge !== null && diag.clear && diag.lines > 0, JSON.stringify(diag));
+    await page.screenshot({ path: join(OUT, "installed-09-diagnostics.png") });
+    await page.click('#bottompanel [data-act="clearlog"]');
+    await wait(400);
+    const cleared = await page.evaluate(() => document.querySelectorAll("#console-log .log-line").length);
+    step("09 Diagnostics Clear empties the log", cleared === 0, `lines after clear=${cleared}`);
+}
+
+// ----------------------------------------------------------------- step 10 --
+// Serial / VGA / LCD tab: sub-views open with zero layout overflow.
+{
+    await page.click('[data-btab="displays"]');
+    await wait(500);
+    const disp = await page.evaluate(() => {
+        const pane = document.querySelector('#bottompanel [data-pane="displays"]');
+        const r = pane?.getBoundingClientRect();
+        return {
+            visible: !!pane && !pane.classList.contains("hidden") && r.width > 100 && r.height > 40,
+            vga: !!document.getElementById("vga-canvas"),
+            overflow: document.documentElement.scrollWidth - window.innerWidth,
+        };
+    });
+    step("10 Serial/VGA/LCD tab opens cleanly (VGA canvas, no horizontal overflow)",
+        disp.visible && disp.vga && disp.overflow <= 0, JSON.stringify(disp));
+    await page.screenshot({ path: join(OUT, "installed-10-serial-vga-lcd.png") });
+}
+
+// ----------------------------------------------------------------- step 11 --
+// Toolbar popovers: Board select, Examples select, audio volume popover.
+{
+    const pop = await page.evaluate(() => {
+        const board = document.getElementById("tb-board-select");
+        const ex = document.getElementById("tb-examples");
+        const br = board.getBoundingClientRect();
+        const er = ex.getBoundingClientRect();
+        return {
+            boardOpts: board.options.length, exOpts: ex.options.length,
+            boardInVp: br.x >= 0 && br.bottom <= window.innerHeight,
+            exInVp: er.x >= 0 && er.bottom <= window.innerHeight,
+        };
+    });
+    await page.click("#tb-audio-caret");
+    await wait(300);
+    const vol = await page.evaluate(() => {
+        const p = document.getElementById("tb-volume-pop");
+        const r = p.getBoundingClientRect();
+        return { open: !p.hidden, inVp: r.x >= 0 && r.right <= window.innerWidth + 1, hasRange: !!p.querySelector("#tb-volume") };
+    });
+    step("11 Toolbar: Board/Examples selects populated + volume popover opens cleanly",
+        pop.boardOpts >= 2 && pop.exOpts >= 2 && pop.boardInVp && pop.exInVp && vol.open && vol.inVp && vol.hasRange,
+        JSON.stringify({ ...pop, vol }));
+    await page.screenshot({ path: join(OUT, "installed-11-popovers.png") });
+    await page.click("#tb-audio-caret");
+    await wait(200);
+}
+
+// ----------------------------------------------------------------- step 12 --
+// Board tab: hardware summary + custom board import control + pin table.
+{
+    await page.click('.wb-tab[data-tab="board"]');
+    await wait(600);
+    const boardTab = await page.evaluate(() => {
+        const pane = document.querySelector('#sidebar-host [data-pane="board"]');
+        const r = pane?.getBoundingClientRect();
+        return {
+            visible: !!pane && !pane.classList.contains("hidden") && r.width > 100,
+            specs: document.querySelectorAll("#sidebar-host .bd-spec").length,
+            importBtn: !!document.getElementById("btn-load-board-json"),
+            pinRows: document.querySelectorAll("#sidebar-host .bd-table tr").length,
+        };
+    });
+    step("12 Board tab: hardware summary specs + custom .json import + pin table",
+        boardTab.visible && boardTab.specs >= 6 && boardTab.importBtn && boardTab.pinRows >= 4, JSON.stringify(boardTab));
+    await page.screenshot({ path: join(OUT, "installed-12-board-tab.png") });
+}
+
+// ----------------------------------------------------------------- step 13 --
+// Splitter drag: the workbench resizes and Monaco tracks the width live
+// (ResizeObserver auto-layout fix).
+{
+    await page.click('.wb-tab[data-tab="code"]');
+    await wait(500);
+    const resizer = await page.$("#workspace > .ep-resizer");
+    const before = await page.evaluate(() => ({
+        w: Math.round(document.getElementById("right").getBoundingClientRect().width),
+        mono: Math.round(document.querySelector("#ep-editor .monaco-editor")?.getBoundingClientRect().width || 0),
+    }));
+    const box = await resizer.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x - 70, box.y + box.height / 2, { steps: 6 });
+    await page.mouse.up();
+    await wait(600);
+    const after = await page.evaluate(() => ({
+        w: Math.round(document.getElementById("right").getBoundingClientRect().width),
+        mono: Math.round(document.querySelector("#ep-editor .monaco-editor")?.getBoundingClientRect().width || 0),
+    }));
+    step("13 Splitter drag widens the workbench; Monaco tracks the width",
+        after.w > before.w + 30 && after.mono > before.mono + 20,
+        `right=${before.w}->${after.w} monaco=${before.mono}->${after.mono}`);
+    await page.screenshot({ path: join(OUT, "installed-13-splitter.png") });
 }
 
 // ------------------------------------------------------------------ wrap ----

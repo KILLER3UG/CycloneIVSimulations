@@ -154,18 +154,32 @@ try {
         }
         await wait(600);
     };
-    const load = (src, top) => page.evaluate(({ s, t }) => {
-        const c = window.__cyclone;
-        c.editor.setFiles([{ name: "design.vhd", content: s }], false);
-        c.editor.setPinnedTop("design.vhd", t);
-        document.querySelector('[data-tab="pinmap"]')?.click();
-        document.querySelector("#pp-clear")?.click();
-        document.querySelector("#pp-defaults")?.click();
-    }, { s: src, t: top });
-    const compile = async () => {
-        await page.click("#tb-compile");
-        await page.waitForFunction(() => window.__cyclone.state.programmed === true, { timeout: 120000 });
+    // load() is async now: changing files/pins triggers debounced auto re-runs
+    // (ENG-10) whose completions must NOT be mistaken for the compile's own
+    // capture — let them finish here, before compile() snapshots the counter.
+    const load = async (src, top) => {
+        await page.evaluate(({ s, t }) => {
+            const c = window.__cyclone;
+            c.editor.setFiles([{ name: "design.vhd", content: s }], false);
+            c.editor.setPinnedTop("design.vhd", t);
+            document.querySelector('[data-tab="pinmap"]')?.click();
+            document.querySelector("#pp-clear")?.click();
+            document.querySelector("#pp-defaults")?.click();
+        }, { s: src, t: top });
         await wait(400);
+        await settle(60000);
+    };
+    // wait for a "Simulation complete" line logged AFTER this click — the
+    // capture that belongs to the design compiled here (programmed is already
+    // true from the previous design, so it cannot discriminate).
+    const compile = async () => {
+        const before = await completions();
+        await page.click("#tb-compile");
+        await page.waitForFunction((n) => {
+            return [...document.querySelectorAll("#console-log .log-line")]
+                .filter((l) => l.textContent.includes("Simulation complete")).length > n;
+        }, { timeout: 120000, polling: 250 }, before);
+        await wait(800);
     };
     // segHold[d*8 + b] = rendered POV duty for tube d, segment b (a..g = 0..6).
     // tube 0 = DIG0 = rightmost = board label D4; tube 3 = DIG3 = leftmost = D1.
@@ -224,6 +238,64 @@ try {
     const one = t.every((x) => x[1] > 0.85 && x[2] > 0.85 && x.slice(3).every((v) => v < 0.12) && x[0] < 0.12);
     step("3b) KEY1 pressed -> all tubes show '1' (segments b,c)", one, JSON.stringify(t));
     await page.screenshot({ path: join(OUT, "sevseg-4tube-key1.png") });
+
+    // ---- 4. the BUNDLED sevseg_4tube example is interactive on K1..K4 ----
+    // Load it from [Examples v], compile, then press K1..K4: each press must
+    // show that digit on ALL four tubes in < 25 ms with ZERO http requests
+    // (the pre-computed stimulus map applies the state synchronously).
+    await page.evaluate(() => {
+        const sel = document.querySelector("#tb-examples");
+        const opt = [...sel.options].find((o) => /sevseg_4tube/i.test(`${o.value} ${o.textContent}`));
+        sel.value = opt.value;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await wait(800);
+    await page.click('[data-tab="pinmap"]');
+    await wait(300);
+    await page.evaluate(() => document.querySelector("#pp-defaults")?.click());
+    await wait(400);
+    await page.click("#tb-compile");
+    await page.waitForFunction(() => window.__cyclone.state.programmed === true, { timeout: 120000 });
+    await settle();
+    await page.evaluate(() => {
+        window.__http = 0;
+        const of = window.fetch;
+        window.fetch = (...a) => { window.__http += 1; return of.apply(window, a); };
+        const oo = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function (...a) { window.__http += 1; return oo.apply(this, a); };
+    });
+    const digitSegs = { 1: [1, 2], 2: [0, 1, 3, 4, 6], 3: [0, 1, 2, 3, 6], 4: [1, 2, 5, 6] };
+    const latencies = [];
+    let keysOk = true;
+    for (let k = 0; k < 4; k += 1) {
+        const r = await page.evaluate((idx) => {
+            const t0 = performance.now();
+            window.__cyclone.setPhysicalKeyPressed(idx, true);
+            const d = window.__cyclone.board.io.display;
+            const tt = [0, 1, 2, 3].map((i) => Array.from(d.segHold.slice(i * 8, i * 8 + 7)).map((v) => Math.round(v * 100) / 100));
+            return { ms: Math.round((performance.now() - t0) * 100) / 100, tt };
+        }, k);
+        latencies.push(r.ms);
+        const want = digitSegs[k + 1];
+        const glyphOk = r.tt.every((tube) => want.every((b) => tube[b] >= 0.18)
+            && tube.every((v, i) => (want.includes(i) ? v >= 0.18 : v < 0.12)));
+        if (!(glyphOk && r.ms < 25)) keysOk = false;
+        await page.screenshot({ path: join(OUT, `sevseg-4tube-key${k + 1}-bundled.png`) });
+        await page.evaluate((idx) => window.__cyclone.setPhysicalKeyPressed(idx, false), k);
+        await wait(250);
+    }
+    // toggling S1 (DIP shares the KEY net) must behave exactly like K1
+    await page.evaluate(() => window.__cyclone.toggleDip(0));
+    await wait(400);
+    const dipT = await tubes();
+    const dipOk = dipT.every((tube) => tube[1] >= 0.18 && tube[2] >= 0.18 && tube[0] < 0.12 && tube.slice(3).every((v) => v < 0.12));
+    await page.evaluate(() => window.__cyclone.toggleDip(0));
+    await wait(250);
+    const httpCount = await page.evaluate(() => window.__http);
+    step("4) bundled sevseg_4tube: K1..K4 each show their digit on all tubes < 25 ms, zero HTTP",
+        keysOk && httpCount === 0, `latencies=${latencies} http=${httpCount}`);
+    step("4a) toggling S1 shows 1111 (shared KEY/DIP nets)", dipOk, JSON.stringify(dipT));
+    await page.screenshot({ path: join(OUT, "sevseg-4tube-dip.png") });
 } catch (err) {
     step("e2e completed", false, err?.stack || String(err));
 } finally {

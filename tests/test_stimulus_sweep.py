@@ -6,8 +6,9 @@ sweep, not a restatement of the implementation:
 * buzz_4tone latches 50_000 / 31_250 / 25_000 / 15_625 cycle half periods
   (500 / 800 / 1000 / 1600 Hz at 50 MHz) and a 25_000_000-cycle release note.
 * buzz1 binds only its two keys but still publishes all 16 board masks.
-* sevseg_4tube has no interactive input, so the fast path reuses the already
-  captured board image (four tubes at ~25 % duty).
+* sevseg_4tube binds all four keys: idle multiplexes 1/2/3/4 across the
+  tubes (each at ~25 % duty) and a held key forces that digit on ALL four
+  tubes at full duty.
 * sevseg_keys lights every tube only when S1 and at least one of S2..S4 close.
 * key_led4 mirrors active-low keys onto active-low LEDs.
 """
@@ -94,27 +95,49 @@ def test_buzz1_two_bound_keys_still_cover_sixteen_masks(sim: Simulator) -> None:
         assert _freq(sweep["releases"][index]) == 800
 
 
-def test_sevseg_4tube_fast_path_reuses_captured_board_image(sim: Simulator) -> None:
+def test_sevseg_4tube_keys_select_the_displayed_digit(sim: Simulator) -> None:
     # A full 4-digit scan at 16,384 cycles/tube is 65,536 cycles (1.31072 ms).
     sweep = _sweep(
         sim, EXAMPLES / "sevseg_4tube.vhd", "sevseg_4tube",
         duration=1_311_000,
     )
 
-    assert sweep["meta"]["boundChannels"] == []
+    assert sweep["meta"]["boundChannels"] == [0, 1, 2, 3]
     assert sweep["meta"]["partial"] is False
-    assert sweep["releases"] == {}
     assert sorted(sweep["vectors"], key=int) == [str(i) for i in range(16)]
 
-    # Every vector is the same pre-computed single entry.
-    first = sweep["vectors"]["0"]
-    assert all(entry == first for entry in sweep["vectors"].values())
-    pov = first["pov"]
-    assert len(pov) == 32
+    # Segment bit sets per glyph (bit 0 = 'a' ... bit 6 = 'g'; bit 7 = dp off).
+    seg = {"1": {1, 2}, "2": {0, 1, 3, 4, 6}, "3": {0, 1, 2, 3, 6}, "4": {1, 2, 5, 6}}
+
+    def lit_sets(entry: dict) -> list[set[int]]:
+        out = []
+        for digit in range(4):
+            bits = {bit for bit in range(8) if entry["povBits"][digit * 8 + bit]}
+            out.append({bit for bit in bits if bit != 7})
+        return out
+
+    # Idle (all keys open, mask 15): D1..D4 show 1/2/3/4, each tube lit only
+    # during its quarter of the scan -> ~25% duty per lit segment.
+    idle = sweep["vectors"]["15"]
+    idle_sets = lit_sets(idle)
+    assert idle_sets[3] == seg["1"]  # tube 3 = leftmost = D1
+    assert idle_sets[2] == seg["2"]  # tube 2 = D2
+    assert idle_sets[1] == seg["3"]  # tube 1 = D3
+    assert idle_sets[0] == seg["4"]  # tube 0 = rightmost = D4
     for digit in range(4):
-        lit = [pov[digit * 8 + bit] for bit in range(8) if first["povBits"][digit * 8 + bit]]
-        assert lit, f"tube {digit} is dark"
-        assert all(0.2 <= value <= 0.3 for value in lit), (digit, lit)
+        duties = [idle["pov"][digit * 8 + b] for b in sorted(idle_sets[digit])]
+        assert all(0.2 <= v <= 0.3 for v in duties), (digit, duties)
+
+    # Held key (bit b of the mask is the level of KEY(b+1): 0 = pressed)
+    # forces that digit on ALL four tubes. The tubes stay multiplexed (each
+    # driven 1/4 of the scan), so the lit duty stays ~0.25 per tube -- the
+    # GLYPH is what changes, on all four tubes at once.
+    for mask, glyph in (("14", "1"), ("13", "2"), ("11", "3"), ("7", "4")):
+        vec = sweep["vectors"][mask]
+        assert lit_sets(vec) == [seg[glyph]] * 4, (mask, lit_sets(vec))
+        for digit in range(4):
+            duties = [vec["pov"][digit * 8 + b] for b in sorted(seg[glyph])]
+            assert all(0.2 <= v <= 0.3 for v in duties), (mask, digit, duties)
 
 
 def test_sevseg_keys_pov_depends_on_switch_pattern(sim: Simulator) -> None:

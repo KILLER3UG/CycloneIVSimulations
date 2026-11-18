@@ -101,7 +101,10 @@ export function createBottomPanel(root, h) {
         Object.entries(panes).forEach(([key, pane]) => pane.classList.toggle("hidden", key !== id));
         if (id === "waveform") setTimeout(() => wave.resize(), 30);
     }
-    root.querySelector(".bp-tabs").addEventListener("click", (e) => {
+    // Delegated on the whole panel: tab switches happen in .bp-tabs, but the
+    // Diagnostics pane's Clear button ([data-act="clearlog"]) lives OUTSIDE
+    // the tab bar and must reach this handler too.
+    root.addEventListener("click", (e) => {
         const tab = e.target.closest(".bp-tab");
         if (tab) { showTab(tab.dataset.btab); return; }
         const act = e.target.closest("[data-act]");
