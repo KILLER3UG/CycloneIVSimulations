@@ -46,3 +46,4 @@ src-tauri/sidecar/
 src-tauri/target/
 release-artifacts/
 
+.worktrees/
