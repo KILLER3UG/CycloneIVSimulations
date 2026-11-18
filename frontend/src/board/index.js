@@ -410,7 +410,7 @@ export class Board3D {
         if (!ring) return;
         const active = bz.on && this.power;
         if (immediate) {
-            ring.material.opacity = active ? 0.65 : 0;
+            ring.material.opacity = active ? 0.9 : 0;
             ring.scale.setScalar(active ? 1.1 : 1);
             ring.visible = active;
         }
@@ -1031,7 +1031,7 @@ export class Board3D {
             if (ring) {
                 const on = bz.on && live;
                 const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.012);
-                ring.material.opacity += ((on ? 0.30 + 0.35 * pulse : 0) - ring.material.opacity) * (1 - Math.exp(-dt / 0.05));
+                ring.material.opacity += ((on ? 0.85 + 0.15 * pulse : 0) - ring.material.opacity) * (1 - Math.exp(-dt / 0.05));
                 ring.scale.setScalar(1 + (on ? 0.10 * pulse : 0));
                 ring.visible = ring.material.opacity > 0.01;
             }
@@ -1044,14 +1044,16 @@ export class Board3D {
         const ring = new THREE.Mesh(
             new THREE.RingGeometry(8.2, 9.6, 40),
             new THREE.MeshBasicMaterial({
-                color: 0x66ccff, transparent: true, opacity: 0,
-                side: THREE.DoubleSide, depthWrite: false,
+                color: 0x7fd4ff, transparent: true, opacity: 0,
+                side: THREE.DoubleSide, depthWrite: false, depthTest: false,
             }),
         );
         ring.rotation.x = -Math.PI / 2;
         ring.position.set(p.x, p.y + 4.9, p.z);
         ring.visible = false;
-        ring.renderOrder = 4;
+        // depthTest off + high renderOrder: the halo always reads on top of
+        // the black SP1 cylinder instead of z-fighting into it.
+        ring.renderOrder = 10;
         this.boardGroup.add(ring);
         this._buzzerRing = ring;
     }
