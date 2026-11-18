@@ -33,7 +33,9 @@ import { buildIO, LIT_COLOR, DARK_COLOR } from "./io.js";
 import { mulberry32, glowTexture, disposeObject } from "./util.js";
 
 const PRESETS = {
-    // framing tightened so the 132×104 mm board fills the viewport (was 178/178)
+    // Viewing DIRECTIONS only — the distance is always computed by
+    // _fitDistance() so the whole 132×104 mm board fits the visible
+    // #board-area with >=15% breathing room on every side.
     top: { pos: [0, 152, 0.02], target: [0, 0, 0], up: [0, 0, -1] },
     front: { pos: [4, 58, -122], target: [0, 0, 0], up: [0, 1, 0] },
     iso: { pos: [84, 96, -82], target: [0, 0, 0], up: [0, 1, 0] },
@@ -69,6 +71,10 @@ export class Board3D {
         this._tween = null;
         this._pulse = null;
         this._buzzerRing = null;
+        // Auto-fit: presets/Fit keep the whole board framed; a manual zoom
+        // (wheel or dolly buttons) or a component focus hands control back
+        // to the user until the next preset/fit.
+        this._autoFit = true;
         // Render throttle: the loop runs at display vsync (up to 165 Hz on
         // gaming monitors); rendering every vsync with bloom costs a full
         // CPU core. Cap to 60 fps while something is animating and drop to
@@ -168,9 +174,9 @@ export class Board3D {
         this.controls.enableDamping = true;
         this.controls.dampingFactor = 0.09;
         this.controls.minDistance = 28;
-        this.controls.maxDistance = 520;
+        this.controls.maxDistance = 900;
         this.controls.maxPolarAngle = 1.52;
-        this.controls.target.set(0, 2, 0);
+        this.controls.target.set(0, 0, 0);
         this.controls.autoRotateSpeed = 0.6;
     }
 
@@ -272,6 +278,10 @@ export class Board3D {
         el.style.display = "block";
         this.container.appendChild(el);
         this._buildBoard();
+        // First paint already frames the whole board (a preset tween may have
+        // been requested before mount — snap it to the fitted distance).
+        this._tween = null;
+        if (this._autoFit) this._applyFitDistance();
         this._resize();
         this._resizeObserver = new ResizeObserver(() => this._resize());
         this._resizeObserver.observe(this.container);
@@ -279,6 +289,9 @@ export class Board3D {
         for (const ev of ["pointerdown", "pointermove", "wheel"]) {
             el.addEventListener(ev, () => { this._lastActive = performance.now(); }, { passive: true });
         }
+        // Manual wheel zoom hands framing control back to the user until the
+        // next preset/Fit click.
+        el.addEventListener("wheel", () => { this._autoFit = false; }, { passive: true });
         this.controls.addEventListener("change", () => { this._lastActive = performance.now(); });
         this._raf = requestAnimationFrame(this._loop);
         // IO state (LED levels, segment persistence, key caps) evolves on a
@@ -304,6 +317,10 @@ export class Board3D {
         this.camera.aspect = w / h;
         this.camera.updateProjectionMatrix();
         if (this.composer) this.composer.setSize(w, h);
+        // Keep 100% of the board inside the visible area whenever the
+        // viewport changes shape (right-workbench resize, bottom-dock drag,
+        // window resize) — no clipped edges, >=15% breathing room.
+        if (this._autoFit && !this._tween) this._applyFitDistance();
     }
 
     _onDblClick = (event) => {
@@ -670,10 +687,43 @@ export class Board3D {
     }
 
     // ------------------------------------------------------------- camera ----
+    /**
+     * Camera distance that fits the whole board with >=15% breathing room on
+     * all four sides of the visible #board-area (the bottom HUD bar eats
+     * ~48px of height, hence the extra factor).
+     */
+    _fitDistance() {
+        const box = new THREE.Box3().setFromObject(this.boardGroup || this.scene);
+        const sphere = box.getBoundingSphere(new THREE.Sphere());
+        const fovV = (this.camera.fov * Math.PI) / 180;
+        const fovH = 2 * Math.atan(Math.tan(fovV / 2) * this.camera.aspect);
+        const fov = Math.min(fovV, fovH);
+        const h = Math.max(this.container.clientHeight || 600, 2);
+        const hudFactor = h / Math.max(1, h - 56);
+        const dist = (sphere.radius / Math.sin(fov / 2)) * 1.15 * hudFactor;
+        return Math.min(this.controls.maxDistance, Math.max(this.controls.minDistance, dist));
+    }
+
+    /** Snap (no tween) along the current orbit direction so the board fits. */
+    _applyFitDistance() {
+        if (!this.boardGroup) return;
+        const dist = this._fitDistance();
+        const dir = this.camera.position.clone().sub(this.controls.target);
+        if (dir.lengthSq() < 1e-6) dir.set(...PRESETS.iso.pos);
+        dir.normalize();
+        this.controls.target.set(0, 0, 0);
+        this.camera.position.set(0, 0, 0).add(dir.multiplyScalar(dist));
+        this.controls.update();
+    }
+
     setPreset(name) {
         const p = PRESETS[name];
         if (!p) return;
-        this.tweenCamera({ position: p.pos, target: p.target, up: p.up, duration: 750 });
+        this._autoFit = true;
+        // Keep the preset's viewing direction, but always frame the WHOLE board.
+        const dir = new THREE.Vector3(...p.pos).normalize();
+        const pos = dir.multiplyScalar(this._fitDistance());
+        this.tweenCamera({ position: pos.toArray(), target: p.target, up: p.up, duration: 750 });
     }
 
     tweenCamera({ position, target, up, duration = 700 } = {}) {
@@ -690,14 +740,13 @@ export class Board3D {
     }
 
     fit() {
-        const box = new THREE.Box3().setFromObject(this.boardGroup || this.scene);
-        const sphere = box.getBoundingSphere(new THREE.Sphere());
-        const fov = (this.camera.fov * Math.PI) / 180;
-        const dist = (sphere.radius / Math.sin(fov / 2)) * 1.06;
+        this._autoFit = true;
+        const dist = this._fitDistance();
         const dir = this.camera.position.clone().sub(this.controls.target).normalize();
+        if (dir.lengthSq() < 0.5) dir.set(...PRESETS.iso.pos).normalize();
         this.tweenCamera({
-            position: sphere.center.clone().add(dir.multiplyScalar(dist)).toArray(),
-            target: sphere.center.toArray(),
+            position: dir.multiplyScalar(dist).toArray(),
+            target: [0, 0, 0],
             duration: 600,
         });
     }
@@ -706,6 +755,7 @@ export class Board3D {
     zoomOut() { this._dolly(1.28); }
 
     _dolly(factor) {
+        this._autoFit = false; // manual zoom wins until the next preset/Fit
         const offset = this.camera.position.clone().sub(this.controls.target).multiplyScalar(factor);
         const len = offset.length();
         offset.setLength(Math.min(this.controls.maxDistance, Math.max(this.controls.minDistance, len)));
@@ -717,6 +767,7 @@ export class Board3D {
     focusComponent(id) {
         const anchor = this.anchors.find((a) => a.id === id);
         if (!anchor) return false;
+        this._autoFit = false; // a deliberate close-up wins over auto-fit
         const pos = new THREE.Vector3();
         anchor.object.getWorldPosition(pos);
         const dist = Math.max(26, (anchor.radius || 10) * 3.4);
