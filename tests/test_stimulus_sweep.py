@@ -146,6 +146,33 @@ def test_key_led4_active_low_mirroring(sim: Simulator) -> None:
     assert sweep["vectors"]["0"]["leds"] == [1, 1, 1, 1]   # all pressed
 
 
+def test_sweep_handles_typed_scalar_inputs(sim: Simulator, tmp_path) -> None:
+    """Integer/boolean inputs must not break the generated stimulus driver."""
+    design = tmp_path / "mixio.vhd"
+    design.write_text(
+        """library ieee;
+use ieee.std_logic_1164.all;
+entity mixio is
+  port (
+    clk  : in  std_logic;
+    btn1 : in  std_logic;
+    cfg  : in  integer := 0;
+    flag : in  boolean := false;
+    led  : out std_logic_vector(3 downto 0)
+  );
+end entity;
+architecture rtl of mixio is
+begin
+  led <= "0000";
+end architecture;
+""",
+        encoding="utf-8",
+    )
+    sweep = _sweep(sim, design, "mixio")
+    assert sweep["meta"]["boundChannels"] == [0]
+    assert sorted(sweep["vectors"], key=int) == [str(i) for i in range(16)]
+
+
 def test_include_stimulus_map_is_part_of_the_request_and_cache_key() -> None:
     payload = {"vhdl": "entity x is end entity;", "includeStimulusMap": True}
     request = SimulationRequest.from_dict(payload)

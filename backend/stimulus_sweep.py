@@ -139,6 +139,20 @@ def _elem(port_name: str, bit: int, width: int) -> str:
     return signal if width == 1 else f"{signal}({bit})"
 
 
+def _driver_literal(port: Port, level: str) -> str:
+    """VHDL literal that drives one bit/level of ``port`` (typed scalars too)."""
+    t = (port.type_name or "").lower()
+    if t in ("integer", "natural", "positive"):
+        return str(int(level))
+    if t == "boolean":
+        return "true" if level == "1" else "false"
+    if t == "real":
+        return str(float(level))
+    if t == "time":
+        return f"{int(level)} ns"
+    return f"'{level}'"
+
+
 def _final_expr(port: Port) -> str:
     sn = _sn(port.name)
     t = (port.type_name or "").lower()
@@ -450,6 +464,7 @@ def _gen_sweep_tb(
         add("  end generate;")
         add("")
 
+    port_by_name = {p.name: p for p in entity.ports}
     # stimulus driver
     add("  stim: process")
     add("  begin")
@@ -463,7 +478,7 @@ def _gen_sweep_tb(
                         if pname == port.name and bit == 0:
                             ch_for_port = ch["index"]
                 level = (steady_level(ch_for_port, k) if k < n_vec else idle_level(ch_for_port)) if ch_for_port is not None else default_level(port, 0)
-                add(f"    p_{sn}({k}) <= '{level}';")
+                add(f"    p_{sn}({k}) <= {_driver_literal(port, level)};")
             else:
                 for bit in range(port.width or 1):
                     ch_for_bit = None
@@ -472,7 +487,7 @@ def _gen_sweep_tb(
                             if pname == port.name and b == bit:
                                 ch_for_bit = ch["index"]
                     level = (steady_level(ch_for_bit, k) if k < n_vec else idle_level(ch_for_bit)) if ch_for_bit is not None else default_level(port, bit)
-                    add(f"    p_{sn}({k})({bit}) <= '{level}';")
+                    add(f"    p_{sn}({k})({bit}) <= {_driver_literal(port, level)};")
     if n_rel:
         if reset_cycles:
             add(f"    wait for {reset_cycles} * CLK_PERIOD;")
@@ -480,13 +495,13 @@ def _gen_sweep_tb(
             k = n_vec + r
             ch = bound[r]
             for (pname, bit, width) in chan_targets[ch]:
-                add(f"    p_{_sn(pname)}({k})" + ("" if width == 1 else f"({bit})") + f" <= '{active_level(ch)}';")
+                add(f"    p_{_sn(pname)}({k})" + ("" if width == 1 else f"({bit})") + f" <= {_driver_literal(port_by_name[pname], active_level(ch))};")
         add(f"    wait for 4 * CLK_PERIOD;")
         for r in range(n_rel):
             k = n_vec + r
             ch = bound[r]
             for (pname, bit, width) in chan_targets[ch]:
-                add(f"    p_{_sn(pname)}({k})" + ("" if width == 1 else f"({bit})") + f" <= '{idle_level(ch)}';")
+                add(f"    p_{_sn(pname)}({k})" + ("" if width == 1 else f"({bit})") + f" <= {_driver_literal(port_by_name[pname], idle_level(ch))};")
     add("    wait;")
     add("  end process;")
     add("")
