@@ -68,7 +68,7 @@ try {
             .filter((l) => l.textContent.includes("Simulation complete")).length);
     const compile = async () => {
         const before = await completions();
-        await page.evaluate(() => document.querySelector("#ep-run")?.click());
+        await page.evaluate(() => document.querySelector("#tb-compile")?.click());
         await page.waitForFunction(() => window.__cyclone.state.programmed === true, { timeout: 120000 });
         const t0 = Date.now();
         for (;;) {

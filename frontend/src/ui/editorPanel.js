@@ -119,27 +119,6 @@ export function createEditorPanel(root, h) {
             <div class="ep-drop-hint hidden" id="ep-drop-hint">Drop VHDL / Verilog / QSF / MIF / HEX files here</div>
         </div>
 
-        <div class="ep-footer">
-            <button class="btn btn-primary ep-run" id="ep-run" title="Compile design and load onto board (Ctrl+Enter)">${icon("play")}<span>Compile</span></button>
-        </div>
-
-        <div class="ep-messages" id="ep-messages" aria-label="Compile messages">
-            <div class="ep-msg-head">
-                <span class="ep-msg-title">Messages</span>
-                <span class="ep-msg-summary" id="ep-msg-summary">Ready to compile</span>
-                <button type="button" class="icon-btn ep-msg-toggle" data-act="toggle-msgs" title="Collapse messages" aria-label="Collapse messages" aria-expanded="true">${icon("chevron")}</button>
-                <span class="ep-msg-filters">
-                    <button type="button" class="ep-mf active" data-filter="all">All</button>
-                    <button type="button" class="ep-mf" data-filter="error">Err</button>
-                    <button type="button" class="ep-mf" data-filter="warning">Warn</button>
-                    <button type="button" class="ep-mf" data-filter="info">Info</button>
-                </span>
-            </div>
-            <div class="ep-msg-list" id="ep-msg-list">
-                <div class="ep-msg-empty">Press Compile (Ctrl+Enter) to build and program the board.</div>
-            </div>
-        </div>
-
         <input type="file" id="ep-file" multiple accept=".vhd,.vhdl,.v,.sv,.qsf,.qpf,.mif,.hex" class="hidden">
     `;
 
@@ -147,8 +126,6 @@ export function createEditorPanel(root, h) {
     const emptyEl = root.querySelector("#ep-empty");
     const tabsEl = root.querySelector("#ep-tabs");
     const collapseBtn = root.querySelector('[data-act="collapse"]');
-    const msgPanel = root.querySelector("#ep-messages");
-    const msgToggle = root.querySelector('[data-act="toggle-msgs"]');
 
     const editor = monaco.editor.create(editorHost, {
         value: "",
@@ -174,8 +151,6 @@ export function createEditorPanel(root, h) {
     let suppressModify = false;
     let refreshTimer = 0;
     let lastUndo = null;
-    let messagesList = [];
-    let msgFilter = "all";
 
     function snapshotFiles() {
         return files.map((f) => ({
@@ -732,19 +707,6 @@ export function createEditorPanel(root, h) {
         setCollapsed(false);
     }
 
-    // Collapsible Quartus-style Messages panel (summary stays visible).
-    function setMessagesCollapsed(collapsed) {
-        if (!msgPanel) return;
-        msgPanel.classList.toggle("collapsed", collapsed);
-        if (msgToggle) {
-            const label = collapsed ? "Expand messages" : "Collapse messages";
-            msgToggle.title = label;
-            msgToggle.setAttribute("aria-label", label);
-            msgToggle.setAttribute("aria-expanded", String(!collapsed));
-        }
-        try { localStorage.setItem("c4_msgs_collapsed", collapsed ? "1" : "0"); } catch { /* ignore */ }
-    }
-
     // Drag handle on the sidebar's left edge: resizes the 3D viewport column.
     const resizer = root.querySelector(".ep-resizer");
     if (resizer) {
@@ -783,9 +745,6 @@ export function createEditorPanel(root, h) {
             if (Number.isFinite(saved)) applyWidth(saved, false);
         } catch { /* ignore */ }
     }
-    try {
-        if (localStorage.getItem("c4_msgs_collapsed") === "1") setMessagesCollapsed(true);
-    } catch { /* ignore */ }
 
     root.addEventListener("click", (e) => {
         const btn = e.target.closest("[data-act]");
@@ -812,9 +771,6 @@ export function createEditorPanel(root, h) {
                     setCollapsed(!root.classList.contains("collapsed"));
                 }
                 break;
-            case "toggle-msgs":
-                setMessagesCollapsed(!msgPanel.classList.contains("collapsed"));
-                break;
             default: break;
         }
     });
@@ -838,50 +794,6 @@ export function createEditorPanel(root, h) {
         const label = root.querySelector("#ep-fontsize");
         if (label) label.textContent = `${fontSize}px`;
     }
-
-    // --------------------------------------------------------- messages ----
-    function renderMessages() {
-        const listEl = root.querySelector("#ep-msg-list");
-        const visible = messagesList.filter((m) => msgFilter === "all" || m.sev === msgFilter);
-        if (!visible.length) {
-            listEl.innerHTML = `<div class="ep-msg-empty">${messagesList.length ? "No messages match filter." : "No messages."}</div>`;
-            return;
-        }
-        listEl.innerHTML = visible.map((m, i) => {
-            const loc = m.file ? `${escHtml(m.file)}${m.line ? ":" + m.line : ""}` : "";
-            const cls = m.sev === "error" ? "err" : m.sev === "warning" ? "warn" : "info";
-            return `
-                <button type="button" class="ep-msg-row ep-msg-${cls}" data-idx="${i}" ${m.file ? "" : 'data-noloc="1"'}>
-                    <span class="ep-msg-badge">${cls.toUpperCase()}</span>
-                    <span class="ep-msg-text">${escHtml(m.message)}</span>
-                    ${loc ? `<span class="ep-msg-loc">${loc}</span>` : ""}
-                </button>`;
-        }).join("");
-        listEl.querySelectorAll(".ep-msg-row").forEach((row) => {
-            const item = visible[Number(row.dataset.idx)];
-            if (!item?.file) return;
-            row.addEventListener("click", () => openFile(item.file, item.line, item.column));
-        });
-    }
-
-    function setMessages(summaryText, items = []) {
-        const sumEl = root.querySelector("#ep-msg-summary");
-        if (sumEl) sumEl.textContent = summaryText || "";
-        messagesList = (items || []).map((m) => {
-            const raw = String(m.severity || "info").toLowerCase();
-            const sev = /err/.test(raw) ? "error" : /warn/.test(raw) ? "warning" : "info";
-            return { sev, message: m.message || String(m), file: m.file || "", line: m.line || 0, column: m.column || 1 };
-        });
-        renderMessages();
-    }
-
-    root.querySelectorAll(".ep-mf").forEach((btn) => {
-        btn.addEventListener("click", () => {
-            msgFilter = btn.dataset.filter;
-            root.querySelectorAll(".ep-mf").forEach((b) => b.classList.toggle("active", b === btn));
-            renderMessages();
-        });
-    });
 
     // --------------------------------------------------------- run setup ---
     const DEFAULT_SETUP = {
@@ -976,12 +888,6 @@ export function createEditorPanel(root, h) {
     }
 
     // -------------------------------------------------------------- run ----
-    function setRunState(running, paused = false) {
-        const btn = root.querySelector("#ep-run");
-        btn.classList.toggle("running", running && !paused);
-        btn.querySelector("span").textContent = running && !paused ? "Compiling\u2026" : "Compile";
-    }
-
     function setEntity(e) {
         entity = e;
         if (e) for (const port of e.ports) {
@@ -1031,7 +937,6 @@ export function createEditorPanel(root, h) {
     root.querySelector("#ep-device").addEventListener("change", (e) => {
         h.onDevice?.(e.target.value);
     });
-    root.querySelector("#ep-run").addEventListener("click", () => h.onRun?.());
 
     function openFile(name, line, col) {
         const i = files.findIndex((f) => f.name === name);
@@ -1059,8 +964,8 @@ export function createEditorPanel(root, h) {
         },
         getTopEntity: () => getTopContext().topEntity,
         setTopEntity: () => refreshHierarchy(false),
-        setEntity, setProblems, setMessages,
-        setRunState, setTheme, setDevice,
+        setEntity, setProblems,
+        setTheme, setDevice,
         readSetup, buildStimuli, getStimulusValue, setStimulusValue,
         setStimulusPulseOnce,
         setCollapsed, expand,

@@ -103,7 +103,7 @@ try {
     }, { s: src, t: top });
     const compile = async () => {
         const before = await completions();
-        await page.click("#ep-run");
+        await page.click("#tb-compile");
         await page.waitForFunction(() => window.__cyclone.state.programmed === true, { timeout: 120000 });
         await page.waitForFunction(() => !!window.__cyclone.state.stimulusMap?.vectors, { timeout: 120000 });
         // Let the capture's sim_done land before measuring interaction; a

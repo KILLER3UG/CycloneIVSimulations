@@ -136,7 +136,7 @@ for (const [top, src] of Object.entries(VHDL)) {
         const p = window.__cyclone.sidebar.getPinPlan();
         return { assigned: p.validation?.assignedCount, errors: (p.validation?.errors || []).slice(0, 3) };
     });
-    await page.click("#ep-run");
+    await page.click("#tb-compile");
     const ok = await page.waitForFunction(() => window.__cyclone.state.programmed === true, { timeout: 45000 })
         .then(() => true).catch(() => false);
     const st = await page.evaluate(() => {

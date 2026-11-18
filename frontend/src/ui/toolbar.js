@@ -71,6 +71,14 @@ export function createToolbar(root, h) {
         pauseBtn.classList.toggle("active", !!paused);
         pauseBtn.title = paused ? "Resume" : "Pause";
         stepBtn.disabled = !!running && !paused;
+        // The header owns compile now (the workbench footer button is gone):
+        // mirror the run state on Compile & Run.
+        const runBtn = root.querySelector("#tb-compile");
+        if (runBtn) {
+            runBtn.disabled = !!running;
+            const label = runBtn.querySelector("span");
+            if (label) label.textContent = running ? "Compiling\u2026" : "Compile & Run";
+        }
     }
 
     function setExamples(list) {

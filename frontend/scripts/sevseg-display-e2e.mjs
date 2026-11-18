@@ -103,7 +103,7 @@ try {
     step("sevseg_keys pin defaults (s1..s4, dtube, seven_seg)", plan.valid.length >= 6 && plan.errors.length === 0, JSON.stringify(plan.valid));
     await page.screenshot({ path: join(OUT, "sevseg-pinplan.png") });
 
-    await page.click("#ep-run");
+    await page.click("#tb-compile");
     await page.waitForFunction(() => window.__cyclone.state.programmed === true, { timeout: 120000 });
     await wait(800);
 

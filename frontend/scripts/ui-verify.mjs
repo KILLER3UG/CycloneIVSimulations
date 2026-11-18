@@ -69,7 +69,7 @@ const rect = (sel) => page.evaluate((s) => {
 
 const layout = {};
 for (const sel of ["#toolbar", "#tb-pipeline", "#cam-presets", "#board-topbar .viewtools", "#stats",
-    "#board-host canvas", "#right", ".ep-footer", "#ep-run", "#bottom", ".bp-main", ".bp-dock", "#sb-speccard"]) {
+    "#board-host canvas", "#right", "#tb-compile", "#bottom", ".bp-main", ".bp-dock", "#sb-speccard"]) {
     layout[sel] = await rect(sel);
 }
 layout.state = await page.evaluate(() => ({

@@ -770,57 +770,6 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 .ep-field input, .ep-field select { font-size: 12px; text-transform: none; letter-spacing: normal; font-weight: 500; }
 
-.ep-footer {
-    flex: 0 0 auto; display: flex; gap: 8px;
-    padding: 8px 12px;
-    border-top: 1px solid var(--line-soft);
-}
-.ep-run { width: 100%; justify-content: center; }
-.ep-messages {
-    flex: 0 0 184px; min-height: 120px; max-height: 240px;
-    display: flex; flex-direction: column; min-width: 0;
-    border-top: 1px solid var(--line); background: var(--surface-2);
-}
-.ep-msg-head {
-    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
-    padding: 5px 10px; border-bottom: 1px solid var(--line-soft);
-}
-.ep-msg-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-dim); }
-.ep-msg-summary { flex: 1; font-family: var(--mono); font-size: 9.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ep-msg-filters { display: inline-flex; gap: 2px; }
-.ep-mf {
-    border: 1px solid transparent; background: transparent; color: var(--muted);
-    font-size: 9.5px; font-weight: 600; padding: 1px 6px; border-radius: 5px; cursor: pointer;
-}
-.ep-mf:hover { background: var(--elevated); color: var(--text); }
-.ep-mf.active { background: var(--blue-soft); border-color: rgba(37, 99, 235, 0.35); color: var(--blue); }
-.ep-msg-list { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 6px; display: flex; flex-direction: column; gap: 2px; }
-.ep-msg-toggle { width: 20px; height: 20px; padding: 0; flex: 0 0 auto; }
-.ep-msg-toggle .icon { width: 12px; height: 12px; transition: transform 0.15s; }
-.ep-messages.collapsed { flex: 0 0 auto; max-height: none; }
-.ep-messages.collapsed .ep-msg-list,
-.ep-messages.collapsed .ep-msg-filters { display: none; }
-.ep-messages.collapsed .ep-msg-head { border-bottom: 0; }
-.ep-messages.collapsed .ep-msg-toggle .icon { transform: rotate(180deg); }
-.ep-msg-empty { font-size: 10.5px; color: var(--faint); padding: 8px; font-style: italic; }
-.ep-msg-row {
-    display: flex; align-items: baseline; gap: 6px; width: 100%; text-align: left;
-    border: 1px solid transparent; background: transparent; border-radius: 6px;
-    padding: 3px 6px; font-size: 10.5px; color: var(--text-dim); cursor: pointer;
-}
-.ep-msg-row[data-noloc="1"] { cursor: default; }
-.ep-msg-row:hover { background: var(--surface); border-color: var(--line-soft); }
-.ep-msg-badge {
-    flex: 0 0 auto; font-family: var(--mono); font-size: 8px; font-weight: 700;
-    padding: 1px 4px; border-radius: 4px;
-}
-.ep-msg-err .ep-msg-badge { background: rgba(220, 38, 38, 0.14); color: var(--red); }
-.ep-msg-warn .ep-msg-badge { background: rgba(217, 119, 6, 0.14); color: var(--amber); }
-.ep-msg-info .ep-msg-badge { background: var(--blue-soft); color: var(--blue); }
-.ep-msg-text { flex: 1; line-height: 1.35; overflow-wrap: anywhere; }
-.ep-msg-loc { flex: 0 0 auto; font-family: var(--mono); font-size: 9.5px; color: var(--blue); text-decoration: underline; }
-.ep-footer .ep-run { flex: 1; height: 38px; justify-content: center; font-size: 13px; }
-
 /* ------------------------------------------------------------ bottom panel */
 #bottom {
     display: flex; align-items: stretch; min-height: 0;
@@ -1404,22 +1353,13 @@ input[type="checkbox"], input[type="radio"] { accent-color: #ffffff; }
 .wb-tab.active { background: #27272a; color: #ffffff; font-weight: 650; }
 #editor-host, #sidebar-host { display: none; flex: 1 1 auto; min-height: 0; min-width: 0; width: 100%; overflow: hidden; }
 #right[data-tab="code"] #editor-host { display: flex; flex-direction: column; flex: 1 1 auto; width: 100%; min-width: 0; min-height: 0; }
-/* Sidebar views grow into the free space; the editor footer is pinned below
-   them so Compile, the message summary and the message drawer remain usable
-   from every workbench tab. Only the editor's code surfaces are hidden. */
+/* Sidebar views own the whole workbench height. Compile lives in the header
+   (#tb-compile) and messages in the bottom dock's Diagnostics tab, so the
+   editor panel is a code-tab-only surface. */
 #right:not([data-tab="code"]) #sidebar-host {
-    display: flex; flex-direction: column; flex: 1 1 auto; width: 100%; min-height: 0; min-width: 0; overflow: hidden; order: 1;
+    display: flex; flex-direction: column; flex: 1 1 auto; width: 100%; min-height: 0; min-width: 0; overflow: hidden;
 }
-#right:not([data-tab="code"]) #editor-host {
-    display: flex; flex-direction: column; flex: 0 0 auto; width: 100%; height: auto; min-width: 0; order: 2; overflow: visible;
-}
-#right:not([data-tab="code"]) #editor-host .editor-panel { flex: 0 0 auto; min-height: 0; }
-#right:not([data-tab="code"]) #editor-host .ep-head,
-#right:not([data-tab="code"]) #editor-host .ep-tabs-wrap,
-#right:not([data-tab="code"]) #editor-host .ep-editor-wrap { display: none !important; }
-#right:not([data-tab="code"]) #editor-host .ep-messages {
-    flex: 0 0 auto; min-height: 0; max-height: 120px;
-}
+#right:not([data-tab="code"]) #editor-host { display: none !important; }
 #editor-host .editor-panel { flex: 1 1 auto; min-height: 0; min-width: 0; width: 100%; display: flex; flex-direction: column; }
 #editor-host .ep-resizer { display: none !important; }
 #editor-host .ep-head {
@@ -1434,14 +1374,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: #ffffff; }
 #editor-host .ep-tabs { flex: 1 1 auto; min-width: 0; }
 #editor-host .ep-editor-wrap { position: relative; flex: 1 1 auto; min-height: 200px; min-width: 0; width: 100%; }
 #editor-host #ep-editor { position: absolute; inset: 0; width: 100%; height: 100%; }
-#editor-host .ep-footer { background: #111113; border-top: var(--hair); padding: 8px 10px; }
-#editor-host .ep-footer .ep-run {
-    height: 32px; background: #ffffff; color: #0a0a0b; border: 1px solid #ffffff;
-    box-shadow: none; font-size: 12px; font-weight: 700;
-}
-#editor-host .ep-footer .ep-run:hover { background: #e4e4e7; }
 #editor-host .ep-editor-wrap { flex: 1 1 auto; min-height: 0; }
-#editor-host .ep-messages { background: #111113; border-top: var(--hair); }
 .monaco-editor, .monaco-editor-background, .monaco-editor .margin,
 .monaco-editor .monaco-editor-background { background-color: #111113 !important; }
 #sidebar-host .sidebar { width: 100%; height: 100%; display: flex; flex-direction: column; }

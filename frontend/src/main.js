@@ -907,7 +907,6 @@ function formatSummary({ topEntity, topFile, filesUsed, pinPlan, errCount, warnC
 }
 
 function showCompileFailure(summary, msgs, errCount, step = 1) {
-    editor.setMessages(summary, msgs);
     bottom.setProblems(msgs.filter((m) => m.severity === "error" || m.severity === "warning"));
     editor.setProblems(msgs);
     toolbar.setStep(step, "error");
@@ -959,7 +958,6 @@ async function compileAndProgram() {
     } catch (err) {
         toolbar.setStep(0, "error");
         setStatus("error", err.message);
-        editor.setMessages("Compile request failed", [{ severity: "error", message: err.message }]);
         log(`Compile request failed: ${err.message}`, "error");
         return;
     }
@@ -977,7 +975,8 @@ async function compileAndProgram() {
     S.problems = combined.filter((m) => m.severity !== "info");
     bottom.setProblems(S.problems);
     editor.setProblems(S.problems);
-    editor.setMessages(summary, combined);
+    // The Diagnostics dock is the single home for compile messages now.
+    log(summary, allErrors.length ? "error" : "ok");
     if (!res.httpOk || !res.data?.ok || allErrors.length) {
         showCompileFailure(summary, combined, allErrors.length || 1);
         return;
@@ -1082,7 +1081,6 @@ function handleSimReady(msg) {
     safeCall(() => board?.setRunning?.(true));
     setStatus("running");
     toolbar.setRunning(true, false);
-    editor.setRunState(true, false);
     log(`Simulation running — ${S.totalCycles} cycles captured`, "ok");
     applyPeripherals(msg.peripherals, msg.clockNs);
 }
@@ -1130,7 +1128,6 @@ function handleSessionMessage(msg) {
             } else driveBuzzer(false, 0, 0);
             setStatus("idle");
             toolbar.setRunning(false, false);
-            editor.setRunState(false, false);
             log(wasRefresh && msg.boardImage ? "Simulation complete — board updated"
                 : `Simulation complete — ${msg.totalCycles ?? S.totalCycles} cycles`, "ok");
             if (refreshPending) { refreshPending = false; refresh(); }
@@ -1142,7 +1139,6 @@ function handleSessionMessage(msg) {
             flushPendingUi();
             setStatus("paused");
             toolbar.setRunning(true, true);
-            editor.setRunState(true, true);
             driveBuzzer(false, 0, 0);
             break;
         case "sim_resumed":
@@ -1150,7 +1146,6 @@ function handleSessionMessage(msg) {
             safeCall(() => board?.setRunning?.(true));
             setStatus("running");
             toolbar.setRunning(true, false);
-            editor.setRunState(true, false);
             break;
         case "sim_reset":
             S.cursorCycle = 0; S.simTimeNs = 0; S.liveValues = {};
@@ -1166,7 +1161,6 @@ function handleSessionMessage(msg) {
             flushPendingUi();
             setStatus("idle");
             toolbar.setRunning(false, false);
-            editor.setRunState(false, false);
             toolbar.setStep(-1);
             break;
         case "sim_error":
@@ -1174,14 +1168,12 @@ function handleSessionMessage(msg) {
             safeCall(() => board?.setRunning?.(false));
             setStatus("error", msg.message || "simulation error");
             toolbar.setRunning(false, false);
-            editor.setRunState(false, false);
             toolbar.setStep(4, "error");
             log(`Simulation error: ${msg.message || "unknown"}`, "error");
             if (msg.errors?.length) {
                 S.problems = msg.errors;
                 bottom.setProblems(msg.errors);
                 editor.setProblems(msg.errors);
-                editor.setMessages("Simulation failed", msg.errors);
             }
             break;
         default: break;

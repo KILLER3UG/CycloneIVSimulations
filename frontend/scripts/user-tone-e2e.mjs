@@ -78,7 +78,7 @@ try {
         { timeout: 15000 },
     ).catch(() => {});
     await wait(300);
-    await page.click("#ep-run");
+    await page.click("#tb-compile");
     await page.waitForFunction(() => window.__cyclone.state.programmed === true, { timeout: 120000 });
 
     // Wait until the re-simulation has fully settled (a new "Simulation

@@ -148,18 +148,18 @@ end architecture rtl;`;
         c.editor.setPinnedTop("top_dep.vhd", "top_dep");
     }, { leafSrc: leaf, topSrc: top });
     await wait(500);
-    await page.click("#ep-run");
+    await page.click("#tb-compile");
     await page.waitForFunction(() => window.__cyclone.state.entity?.name === "top_dep", { timeout: 120000 }).catch(() => {});
     await wait(700);
     const dep = await page.evaluate(() => ({
         entity: window.__cyclone.state.entity?.name || "",
-        summary: document.querySelector("#ep-msg-summary")?.textContent || "",
+        logHasFiles2: [...document.querySelectorAll("#console-log .log-line")].some((l) => /Files:\s*2/.test(l.textContent || "")),
         files: window.__cyclone.editor.getFiles().map((f) => f.name),
     }));
     step(
         "Set as Top-Level + automatic dependency inclusion",
-        dep.entity === "top_dep" && /Files:\s*2/.test(dep.summary) && dep.files.includes("leaf.vhd"),
-        `${dep.entity}; ${dep.summary}`,
+        dep.entity === "top_dep" && dep.logHasFiles2 && dep.files.includes("leaf.vhd"),
+        `${dep.entity}; files2=${dep.logHasFiles2}`,
     );
     await page.screenshot({ path: join(OUT, "partcd-top-dep.png") });
 

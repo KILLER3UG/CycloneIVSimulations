@@ -163,7 +163,7 @@ try {
         document.querySelector("#pp-defaults")?.click();
     }, { s: src, t: top });
     const compile = async () => {
-        await page.click("#ep-run");
+        await page.click("#tb-compile");
         await page.waitForFunction(() => window.__cyclone.state.programmed === true, { timeout: 120000 });
         await wait(400);
     };

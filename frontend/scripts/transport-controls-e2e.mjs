@@ -116,7 +116,7 @@ try {
         { timeout: 15000 },
     ).catch(() => {});
     await wait(300);
-    await page.click("#ep-run");
+    await page.click("#tb-compile");
     await page.waitForFunction(() => window.__cyclone.state.programmed === true, { timeout: 120000 });
 
     const completions = () => page.evaluate(() =>

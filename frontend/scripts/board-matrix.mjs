@@ -234,12 +234,13 @@ const boot = await page.evaluate(() => ({
     headerRunGone: !document.querySelector("#toolbar [data-act='run']"),
     stimuliBtnGone: !document.querySelector(".ep-stimuli-btn"),
     overlayGone: !document.querySelector(".board-overlay"),
-    sidebarRun: !!document.querySelector("#ep-run"),
+    headerRun: !!document.querySelector("#tb-compile"),
+    workbenchRunGone: !document.querySelector("#ep-run, .ep-run"),
     gpu: window.__cyclone.board.gpuName,
     gpuSw: window.__cyclone.board.gpuIsSoftware,
 }));
-step("M1 default example = sevseg_keys; sim-setup panel, header Run, Stimuli button and Not-programmed overlay removed; sidebar Run is the only Run",
-    (boot.tab === "VHDsevseg_keys.vhd" || /sevseg_keys\.vhd/.test(boot.tab || "")) && boot.entity === "sevseg_keys" && boot.setupGone && boot.headerRunGone && boot.stimuliBtnGone && boot.overlayGone && boot.sidebarRun,
+step("M1 default example = sevseg_keys; sim-setup panel, header Run, Stimuli button and Not-programmed overlay removed; header Compile & Run is the only Run",
+    (boot.tab === "VHDsevseg_keys.vhd" || /sevseg_keys\.vhd/.test(boot.tab || "")) && boot.entity === "sevseg_keys" && boot.setupGone && boot.headerRunGone && boot.stimuliBtnGone && boot.overlayGone && boot.headerRun && boot.workbenchRunGone,
     `tab=${boot.tab} entity=${boot.entity}`);
 step("M1 GPU renderer reported (headless probes use SwiftShader; real browsers report the GPU)",
     typeof boot.gpu === "string" && boot.gpu.length > 0, `${boot.gpu} (software=${boot.gpuSw})`);

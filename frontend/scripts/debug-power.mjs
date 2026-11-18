@@ -41,7 +41,7 @@ await page.evaluate((s) => {
     document.querySelector("#pp-defaults")?.click();
 }, SRC);
 await wait(400);
-await page.evaluate(() => document.querySelector("#ep-run")?.click());
+await page.evaluate(() => document.querySelector("#tb-compile")?.click());
 await page.waitForFunction(() => window.__cyclone.state.programmed === true, { timeout: 60000 }).catch(() => {});
 const dump = (tag) => page.evaluate((t) => {
     const S = window.__cyclone.state;
