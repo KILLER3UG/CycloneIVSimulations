@@ -17,9 +17,9 @@ const SEG_OFFSETS = {
 // real 0.36" digits lean the segment ring like an italic numeral (top to the
 // right): shear x by −k·z, tilt the vertical bars by the same angle
 const DIGIT_SLEW = 0.14;
-export const LIT_COLOR = new THREE.Color(0xff2e38).multiplyScalar(4.8); // HDR studio-red → feeds bloom
-// unlit segments read as pale grey diffuser plastic on the vendor photo
-export const DARK_COLOR = new THREE.Color(0.30, 0.325, 0.36);
+export const LIT_COLOR = new THREE.Color(0xff2b2b).multiplyScalar(5.2); // HDR studio-red → feeds bloom
+// unlit segments read as a recessed near-black diffuser on the charcoal housing
+export const DARK_COLOR = new THREE.Color(0x18191c);
 
 export function buildIO(mats, {
     pinIndex, segBitMap = SEG_BIT_MAP_FALLBACK, ledMeta = null, seed = 42,
@@ -195,7 +195,7 @@ export function buildIO(mats, {
         const net = ledMeta?.nets?.[i];
         const dual = diode && net ? ` / ${diode} (net ${net})` : "";
         const material = mats.ledLens.clone();
-        material.emissive.setHex(0xff2818);
+        material.emissive.setHex(0xff1e1e);
         material.emissiveIntensity = 0;
         const lens = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.85, 1.6), material);
         lens.position.set(x, BOARD_TOP + 0.45, z);

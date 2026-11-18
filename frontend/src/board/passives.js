@@ -68,7 +68,7 @@ export function buildPassives(mats, seed = 77) {
     const d1Cluster = clusters.find((c) => c.id === "R1_D1");
     if (d1Cluster) {
         const mat = mats.ledLens.clone();
-        mat.emissive.setHex(0xff3520);
+        mat.emissive.setHex(0xff1e1e);
         const mesh = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.7, 1.3), mat);
         mesh.position.set(worldX(d1Cluster.pos[0] + 2.4), BOARD_TOP + 0.35, worldZ(d1Cluster.pos[1]));
         mesh.castShadow = true;
