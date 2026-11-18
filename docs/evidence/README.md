@@ -42,7 +42,7 @@ cd .. && python tests/run_all.py
 | `buzz1.qsf` | exported Quartus `.qsf` (4 assignments) |
 | `buzz1-sidebar-resized.png` | drag handle: 420 → 530 px, canvas reflows |
 | `buzz1-sidebar-collapsed.png` / `-expanded.png` | collapse/expand |
-| `buzz1-messages-expanded.png` | Messages panel (collapsible; see log) |
+| `buzz1-diagnostics.png` | compile messages live in the bottom dock's **Diagnostics** tab (single home; the old workbench Messages drawer is gone) |
 | `sevseg-keys-open.png` | all keys open → display dark |
 | `sevseg-display.png` | all DIP closed → **4 tubes integrate via POV** |
 | `sevseg-pinplan.png` | s1..s4 / dtube / seven_seg pin defaults |

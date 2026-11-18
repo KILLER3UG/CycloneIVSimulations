@@ -1,10 +1,10 @@
 # QA results
 
-Generated: 2026-11-18 18:22:33
+Generated: 2026-11-18 19:52:10
 GHDL: GHDL 6.0.0 (6.0.0.r0.ge589c698c.dirty) [Dunoon edition]
-Wall time: 65.3s
+Wall time: 140.8s
 Jobs: 8
-Cache: 6 hits, 131 misses, 29 fallbacks
+Cache: 5 hits, 134 misses, 27 fallbacks
 Units: 169 passed (pytest tests/)
 Total: 231  PASS: 231  FAIL: 0
 
@@ -20,10 +20,10 @@ Total: 231  PASS: 231  FAIL: 0
 | IN-05B | QSF pin/top/IO-standard/file-list parsing is complete | QSF | TOP_LEVEL_ENTITY, 8 pin assignments, IO_STANDARD and file list all visible in the result | top, 8 pins, IO_STANDARD and file list parsed from the vendor .qsf | PASS |
 | IN-05C | QSF errors: invalid pin, duplicate pin, unknown port, wrong device | QSF | Each problem produces a specific error naming the pin/port; the simulation does not start | 4 specific errors: invalid pin, duplicate pin, unknown port, wrong device | PASS |
 | IN-08 | QSF pin assignments are validated against the top-level ports | QSF | A pin assigned to a port that exists is honoured; the missing-pin warning stays quiet for those ports | no unpinned-port warnings for ports the .qsf assigns | PASS |
-| IN-09 | VHDL syntax error reports file and line | VHDL | GHDL diagnostic with line number, no crash | ?:3: Expected ':' in interface declaration \| ?:1: Unexpected end of file inside entity declaration \| C:\Users\rober\AppData\Local\Temp\cyclone_compile_i3i9rhrs\design.vhd:3: interface declaration expected \| C:\Users\rob… | PASS |
+| IN-09 | VHDL syntax error reports file and line | VHDL | GHDL diagnostic with line number, no crash | ?:3: Expected ':' in interface declaration \| ?:1: Unexpected end of file inside entity declaration \| C:\Users\rober\AppData\Local\Temp\cyclone_compile_z9f473k_\design.vhd:3: interface declaration expected \| C:\Users\rob… | PASS |
 | IN-10 | Verilog syntax error reports file and line | Verilog | Diagnostic with line number naming the missing endmodule | design.vhd:1: Missing 'endmodule' for module 'broken' | PASS |
-| IN-11 | Unsupported Altera primitive gives a clear error | VHDL | Error names the unbound Altera megafunction (altsyncram/lpm_*) | c:\users\rober\appdata\local\temp\cyclone_qa_worker_i6zfjip2\cache\sources\808d390967d0ab9a1d8f6d856588a42a78caaae3120b0961b12d84f4c645aec6\design.vhd:84: instance "u_ram" of component "altsyncram" is not bound \| c:\use… | PASS |
-| IN-12 | Mixed-language project (VHDL top + Verilog submodule) | VHDL+Verilog | Malformed mixed input is rejected with a file:line diagnostic (split .vhd/.v files) | C:\Users\rober\AppData\Local\Temp\cyclone_qa_worker_ysi9v49q\cache\sources\b1aac9a420d6a61c62ee606fbc0caae8841a1dadadafa0d7713cb5d231bd67d9\design.vhd:11: missing entity, architecture, package or configuration \| C:\User… | PASS |
+| IN-11 | Unsupported Altera primitive gives a clear error | VHDL | Error names the unbound Altera megafunction (altsyncram/lpm_*) | c:\users\rober\appdata\local\temp\cyclone_qa_worker_x_ozwfb5\cache\sources\808d390967d0ab9a1d8f6d856588a42a78caaae3120b0961b12d84f4c645aec6\design.vhd:84: instance "u_ram" of component "altsyncram" is not bound \| c:\use… | PASS |
+| IN-12 | Mixed-language project (VHDL top + Verilog submodule) | VHDL+Verilog | Malformed mixed input is rejected with a file:line diagnostic (split .vhd/.v files) | C:\Users\rober\AppData\Local\Temp\cyclone_qa_worker_lm8up0fr\cache\sources\b1aac9a420d6a61c62ee606fbc0caae8841a1dadadafa0d7713cb5d231bd67d9\design.vhd:11: missing entity, architecture, package or configuration \| C:\User… | PASS |
 | CLK-01 | Board clock frequency and pin are modelled | VHDL | CLOCK_50 = 50 MHz on pin PIN_23; the result reports the board frequency | CLOCK_50 = 50 MHz on PIN_23 | PASS |
 | CLK-02 | Counter at the real clock rate matches expected count after N ms | VHDL | 100 ns at 10 ns period, reset 2 cycles -> count = 8 | count=8 after 100 ns | PASS |
 | CLK-03 | Clock scaling makes a 1 Hz blinker visible in real time | VHDL | Scale factor reported; 1 Hz blinker toggles once per simulated second at 50 MHz | scale={'boardClockHz': 50000000, 'simClockHz': 100000000, 'scale': 2.0, 'note': 'simClockHz is the simulated clock rate; a design cycles the same number of clock ticks per simulated second as on the board, so wall-clock… | PASS |
@@ -102,8 +102,8 @@ Total: 231  PASS: 231  FAIL: 0
 | ENG-01 | Raw VCD export works from the CLI/keep-dir path | VHDL | VCD file is produced and matches the final LED value | VCD wave.vcd (1277 bytes) | PASS |
 | ENG-01B | Waveform export button/endpoint in the web UI | UI | A UI action downloads VCD/FST | Export VCD control present (frontend/src) | PASS |
 | ENG-02 | Waveform matches board state at the same timestamp | VHDL | Cycle samples and final state agree with LED/switch values | all 10 cycles agree (key_edge, 1 press) | PASS |
-| ENG-03 | Stop/cancel a running simulation | UI | sim_stop kills the server-side GHDL run and emits sim_stopped within 10 s (the uncanceled long_run fixture needs minutes of wall time) | sim_stopped after 0.01 s; whole cycle 4.1 s (uncanceled run: minutes) | PASS |
-| ENG-03B | Stop is a kill, not a wait: GHDL child exits promptly | API | Simulator.cancel() ends a minutes-long run within ~5 s | worker exited 0.0 s after cancel (killed=True) | PASS |
+| ENG-03 | Stop/cancel a running simulation | UI | sim_stop kills the server-side GHDL run and emits sim_stopped within 10 s (the uncanceled long_run fixture needs minutes of wall time) | sim_stopped after 0.03 s; whole cycle 4.5 s (uncanceled run: minutes) | PASS |
+| ENG-03B | Stop is a kill, not a wait: GHDL child exits promptly | API | Simulator.cancel() ends a minutes-long run within ~5 s | worker exited 0.1 s after cancel (killed=True) | PASS |
 | ENG-04 | Re-upload during a running sim leaves no stale state | VHDL | A second upload starts from a fresh temp directory | 0xFF then 0x00, no stale state | PASS |
 | ENG-11 | Server health reports GHDL | API | GET /api/health -> ok | GHDL 6.0.0 (6.0.0.r0.ge589c698c.dirty) [Dunoon edition] | PASS |
 | ENG-12 | Concurrent HTTP simulations are isolated | API | Two different designs run at the same time without interference | not-gate=0, buffer=1 concurrently | PASS |
@@ -134,7 +134,7 @@ Total: 231  PASS: 231  FAIL: 0
 | SPEC-11 | Device profile: 91 user I/O, both trainer chips selectable | infra | EP4CE6E22C8N and EP4CE10E22C8N both report 91 user I/O and the handbook resources | 91 user I/O on both variants; resources match the handbook | PASS |
 | SPEC-12 | Every pin in vendor/Pinos_RZEasyFPGA.txt matches the profile | infra | clock/reset/keys/LED/SEG/DIG/SDRAM/VGA/PS2/UART/I2C/IR/buzzer/LCD pins all agree | all 86 vendor pins match the simulator profile | PASS |
 | BJ-01 | board.json pinMap matches every vendor pin assignment | infra | all 86 vendor pins present with the same PIN numbers | 86 vendor pins match board.json | PASS |
-| BJ-02 | Every fact in board.json carries VERIFIED/INFERRED/UNVERIFIED | infra | 34 facts, all tagged, no empty sources | 39 facts tagged: {'UNVERIFIED': 5, 'INFERRED': 1, 'VERIFIED': 33} | PASS |
+| BJ-02 | Every fact in board.json carries VERIFIED/INFERRED/UNVERIFIED | infra | 34 facts, all tagged, no empty sources | 39 facts tagged: {'VERIFIED': 33, 'INFERRED': 1, 'UNVERIFIED': 5} | PASS |
 | BJ-03 | No hard-coded pin numbers in backend or frontend runtime code | infra | zero PIN_<number> literals outside board.json, specs and tests | scanned 22 runtime files, no PIN_<n> literals | PASS |
 | BJ-04 | Backend profile is loaded from board.json (not duplicated) | infra | BOARD pins, SEG map, I2C addresses and SDRAM DQ equal board.json | backend BOARD/DEVICE mirror board.json | PASS |
 | BJ-05 | All board.json pins are valid EQFP-144 and uniquely owned | infra | every pin in 1..144; only KEY/DIP share pins 88-91 by design | 90 pin entries; only KEY/DIP share nets | PASS |
@@ -169,9 +169,9 @@ Total: 231  PASS: 231  FAIL: 0
 | PR-10 | UART echo at the wrong baud: receiver rejects the frame, TX stays idle | VHDL | a 0x5A frame at 10x the bit time (11.52 kbaud into a 115.2 kbaud receiver) is never echoed: decode_uart(TXD) reports no bytes/no frames; ECHO_COUNT=0; FRM_ERR=4 (one framing error per low region of the foreign-baud stream) | wrong baud -> no echo (TXD idle, 0 bytes decoded); ECHO_COUNT=0, FRM_ERR=4 | PASS |
 | PR-11 | EEPROM reference design (i2c_eeprom_test) runs its full I2C sequence vs the model | VHDL | master clocks the whole write+read sequence without hanging (65 SCL falling edges: write 28 + read 37); WP tied to VCC (board.json writeProtected) blocks the 0x5A write so the readback low nibble is 0 -> LED=0xF; model dump: size=1024, every cell still 00 | I2C master sequence clean (65 SCL falls, no hang); write blocked by WP (readback 0x00 -> LED=0xF); dump size=1024, first 256 bytes all 00 | PASS |
 | RB-01 | VHDL parser survives random binary garbage | fuzz | 200 random inputs: no exception, no hang | 200 random inputs parsed without an exception | PASS |
-| RB-02 | QSF parser survives garbage and a 1 MB file | fuzz | random garbage + 1 MB input: no exception, bounded time | garbage + 1 MB qsf parsed without an exception (0.03s) | PASS |
+| RB-02 | QSF parser survives garbage and a 1 MB file | fuzz | random garbage + 1 MB input: no exception, bounded time | garbage + 1 MB qsf parsed without an exception (0.07s) | PASS |
 | RB-03 | WebSocket survives malformed and unknown messages | WS | invalid JSON -> error; unknown type -> error; ping -> pong; connection stays open | malformed/unknown WS messages rejected; connection stayed open | PASS |
-| RB-04 | A huge VHDL file (5k lines) compiles without unbounded memory | VHDL | compile succeeds in bounded time | 5k-line VHDL compiled in 0.21s | PASS |
+| RB-04 | A huge VHDL file (5k lines) compiles without unbounded memory | VHDL | compile succeeds in bounded time | 5k-line VHDL compiled in 0.37s | PASS |
 | RB-05 | HDL textio with literal absolute host paths is rejected | VHDL | the pre-scan rejects the design with a clear error; no host file is written | absolute textio read+write rejected before GHDL (clear error, no host file written) | PASS |
 | RB-05B | Relative textio stays confined to the workdir and works | VHDL | a design that writes out.txt (relative) and reads it back passes end-to-end | relative textio write+read round-trips inside the throw-away workdir | PASS |
 | RB-06 | Concurrent simulations are isolated | VHDL | two designs run at once; each result matches its own design | two concurrent simulations isolated (not=0, buffer=1) | PASS |
@@ -183,7 +183,7 @@ Total: 231  PASS: 231  FAIL: 0
 | SEM-01 | Delta-cycle ordering: signal updates land on later edges | VHDL | a registered chain a->b->c: at edge 1 only a is new; b/c follow on later edges | signal updates propagate one edge per register: c lags a by two edges (seen=100) | PASS |
 | SEM-02 | Variable updates are immediate; signal updates are deferred | VHDL | q_var shows the new input one edge earlier than q_sig | q_var toggles immediately, q_sig one edge behind (16 vs 15 transitions) | PASS |
 | SEM-03 | std_logic resolution: 0/1/Z/X/U/H/L/- table | VHDL | 0&Z=0, 1&H=1, H alone=H, L&0=0, 0&1=X, undriven=U (RESULT bit i set per rule) | 0&Z=0, 1&H=1, H=H, L&0=0, 0&1=X, undriven=U — all six rules observed | PASS |
-| SEM-04 | Multiple drivers on an unresolved type are a clear error | VHDL | two processes drive one integer signal -> GHDL 'multiple drivers' error, no silent result | rejected with: C:\Users\rober\AppData\Local\Temp\cyclone_sim_t7kl88n4\design.vhd:8: too many drivers for signal "comm" | PASS |
+| SEM-04 | Multiple drivers on an unresolved type are a clear error | VHDL | two processes drive one integer signal -> GHDL 'multiple drivers' error, no silent result | rejected with: C:\Users\rober\AppData\Local\Temp\cyclone_qa_worker_x_ozwfb5\cache\sources\365eb77faf36c19e748cd8843c1bde6d88b9b5e29dc3e | PASS |
 | SEM-05 | numeric_std overflow wraps (mod 2^n) | VHDL | unsigned 255+1 -> 0; signed 127+1 -> -128 (10000000) | unsigned 0xFF+1 -> 0x00; signed 0x7F+1 -> 0x80 (two's-complement wrap) | PASS |
 | SEM-06 | Generics change width and behaviour | VHDL | WIDTH=12 counter wraps at 4095; WIDTH=4 wraps at 15 | WIDTH=4 -> q=10 (max 15); WIDTH=12 -> q=10 (max 4095); same stimulus | PASS |
 | SEM-07 | Generate loop instantiates N parallel slices | VHDL | 8 independent inverter slices; changing one input bit changes exactly that output bit | 8 slices generated; d=0x05 -> 11111010, d=0x01 -> 11111110 (only the toggled bit changed) | PASS |
@@ -220,13 +220,13 @@ Total: 231  PASS: 231  FAIL: 0
 | TSC-05 | 7-segment scan rate scales with the clock period | VHDL | the digit-select toggle period doubles when the clock period doubles | 7-seg digit toggle 20.0 ns at 10 ns clock vs 40.0 ns at 20 ns (ratio 2.00) | PASS |
 | DET-01 | The same request twice produces identical waveforms | VHDL | two identical simulations: identical signal transitions, cycles and final state | identical waveforms over 30 cycles (cache hit on the repeat) | PASS |
 | DET-02 | Two Simulator instances share no state | VHDL | a cached and an uncached Simulator return identical, independent results | cached and uncached Simulators agree; instance reuse does not leak state | PASS |
-| DET-03 | Runs leave no stale temp directories or zombie GHDL processes | infra | temp dir count and ghdl.exe process count return to baseline after simulations | 3 runs: temp dirs 26->24, ghdl processes 3->1 (no zombies, no stale dirs) | PASS |
+| DET-03 | Runs leave no stale temp directories or zombie GHDL processes | infra | temp dir count and ghdl.exe process count return to baseline after simulations | 3 runs: temp dirs 26->26, ghdl processes 1->1 (no zombies, no stale dirs) | PASS |
 | RF-01 | Malformed VHDL is rejected with a clear error, never a crash | VHDL | truncated/garbled VHDL -> ok=False with a diagnostic; the server stays usable | 5 malformed sources rejected with diagnostics; backend still healthy | PASS |
 | RF-02 | Random binary garbage is handled without a crash | fuzz | 300 random byte strings through simulate/compile: no exception, no hang | 300 random garbage inputs handled without an exception | PASS |
-| RF-03 | An oversized upload is handled in bounded time and memory | VHDL | a 2 MB design (valid but huge) compiles without unbounded memory or a hang | 1903 KiB upload compiled in 0.9s | PASS |
+| RF-03 | An oversized upload is handled in bounded time and memory | VHDL | a 2 MB design (valid but huge) compiles without unbounded memory or a hang | 1903 KiB upload compiled in 6.9s | PASS |
 | RF-04 | Empty and whitespace-only inputs give a clear error | VHDL | empty source -> 'no entity' style error, not a crash or a silent pass | empty inputs rejected with a clear no-entity error | PASS |
 | RF-05 | WebSocket survives hostile message shapes | WS | arrays, strings, numbers, deep nesting and huge payloads all get error replies; the socket stays open | 10 hostile WS messages answered with errors; connection stayed open | PASS |
-| RF-06 | A runaway design hits the scaled GHDL timeout with a clear message | VHDL | with GHDL_TIMEOUT=3 the infinite-loop design fails with 'timed out after 3 s' and a runaway hint | runaway design stopped by the scaled timeout in 3.2s: ghdl:0: GHDL timed out after 3 s of wall time — possible runaway design (an infinite loop without a wait statement?) or | PASS |
+| RF-06 | A runaway design hits the scaled GHDL timeout with a clear message | VHDL | with GHDL_TIMEOUT=3 the infinite-loop design fails with 'timed out after 3 s' and a runaway hint | runaway design stopped by the scaled timeout in 4.9s: ghdl:0: GHDL timed out after 3 s of wall time — possible runaway design (an infinite loop without a wait statement?) or | PASS |
 | RF-07 | Sandbox reality: literal absolute textio paths are rejected; runs stay isolated | VHDL | the pre-scan rejects the design with a clear error, the host file is never read and no temp dir is left behind | Honest statement: the absolute-path design is rejected before GHDL runs (no host read); per-run isolation comes from throw-away tempdirs, and this run left none behind | PASS |
 | DIF-01 | Differential: counter - backend vs raw GHDL VCD | VHDL | every port's transition list is identical between the backend waveform and an independent raw GHDL run | counter: 3 ports identical between backend.simulate() and raw GHDL VCD | PASS |
 | DIF-02 | Differential: FSM (Moore traffic light) - backend vs raw GHDL VCD | VHDL | every port's transition list is identical between the backend waveform and an independent raw GHDL run | traffic_moore: 5 ports identical between backend.simulate() and raw GHDL VCD | PASS |
