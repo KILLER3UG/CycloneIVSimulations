@@ -141,6 +141,19 @@ export function createEditorPanel(root, h) {
         lineNumbersMinChars: 3,
     });
 
+    // Monaco measures its container when it is created, which can still be
+    // display:none during startup or a workbench-tab switch. Keep it sized on
+    // init, on tab switches and on every container/window resize so the code
+    // never renders into a stale zero-width box.
+    const layoutEditor = () => {
+        try { editor.layout(); } catch { /* not mounted yet */ }
+    };
+    requestAnimationFrame(layoutEditor);
+    if (typeof ResizeObserver !== "undefined") {
+        new ResizeObserver(layoutEditor).observe(editorHost);
+    }
+    window.addEventListener("resize", layoutEditor);
+
     const models = new Map(); // name -> monaco.editor.ITextModel
     let files = [];
     let activeFile = -1;
@@ -468,6 +481,7 @@ export function createEditorPanel(root, h) {
         syncEmptyState();
         const f = files[i];
         editor.setModel(modelFor(f.name, f.content));
+        requestAnimationFrame(layoutEditor);
         refreshHierarchy(changed && !pinnedTop);
     }
 
@@ -953,6 +967,7 @@ export function createEditorPanel(root, h) {
     return {
         root, editor,
         setFiles, selectFile, openFile,
+        layout: layoutEditor,
         addNewSourceFile, deleteFileAt,
         getFiles: snapshotFiles,
         getActiveFile: () => files[activeFile]?.name || "",
