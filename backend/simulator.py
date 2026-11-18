@@ -100,6 +100,11 @@ class SimulationRequest:
     #: updates the board without shipping ~20 MB of per-cycle samples.
     compact_board: bool = False
 
+    #: Pre-compute the board response for every interactive channel vector in
+    #: one extra GHDL sweep, returned as ``stimulusMap``. Interactive runs only
+    #: (no custom testbench, no non-PLL device models).
+    include_stimulus_map: bool = False
+
     #: Pin Planner mode: only explicit pin assignments map to the board.
 
     strict_pins: bool = False
@@ -199,6 +204,7 @@ class SimulationRequest:
             memory_init_file=memory_init_file,
             skip_synth=bool(data.get("skipSynth", False)),
             compact_board=bool(data.get("compactBoard", False)),
+            include_stimulus_map=bool(data.get("includeStimulusMap", data.get("include_stimulus_map", False))),
             strict_pins=bool(data.get("strictPins", data.get("strict_pins", False))),
             clamp_notes=notes,
         )
@@ -224,6 +230,7 @@ class SimulationRequest:
             "qsf": self.qsf,
             "skip_synth": self.skip_synth,
             "compact_board": self.compact_board,
+            "include_stimulus_map": self.include_stimulus_map,
             "strict_pins": self.strict_pins,
         }
         return hashlib.sha256(
@@ -1157,7 +1164,7 @@ class Simulator:
         self.ghdl = ghdl or GhdlTool()
         # Opt-in persistent GHDL work-library cache.  ``None`` (the default)
         # keeps the classic isolated temp-workdir behaviour byte-identical.
-        self.library_cache = Path(library_cache) if library_cache else None
+        self.library_cache = Path(library_cache).resolve() if library_cache else None
         # Outcome of the last simulate() call: hit | miss | fallback | none.
         self.last_cache_outcome = "none"
         self._manifest: Optional[dict] = None
@@ -1584,6 +1591,48 @@ class Simulator:
                 entry = None
             return self._ghdl_phase_cached(prep, manifest, key, entry, cancel_token)
 
+    def _attach_stimulus_map(
+        self, prep: _Prep, waveform: dict, peripherals: dict,
+        result: Dict[str, Any], cancel_token: Optional[dict] = None,
+    ) -> None:
+        """Best-effort extra GHDL sweep for interactive input vectors."""
+        request = prep.request
+        if not request.include_stimulus_map or request.testbench:
+            return
+        if [m for m in prep.models if m.get("kind") != "altpll"]:
+            return
+        try:
+            from .stimulus_sweep import build_stimulus_map
+
+            stimulus_map = build_stimulus_map(
+                self.ghdl,
+                prep.entity,
+                prep.sources,
+                map_board(
+                    prep.entity,
+                    (prep.qsf_info or {}).get("pins"),
+                    strict_pins=request.strict_pins,
+                    bit_pins=(prep.qsf_info or {}).get("bitPins"),
+                ),
+                clock_period=float(request.clock_period),
+                reset_cycles=request.reset_cycles,
+                reset_active_high=request.reset_active_high,
+                reset_port=request.reset_port,
+                clock_port=request.clock_port,
+                constant_inputs=request.constant_inputs,
+                generics=request.generics,
+                stimuli=request.stimuli,
+                initial_board_image=waveform.get("boardImage"),
+                initial_peripherals=peripherals,
+                initial_final_values=waveform.get("final"),
+                cancel_token=cancel_token,
+            )
+            if stimulus_map is not None:
+                result["stimulusMap"] = stimulus_map
+        except Exception:
+            # An unsupported design must never fail simulate().
+            pass
+
     def _ghdl_phase_cached(
         self, prep: _Prep, manifest: dict, key: str, entry: Optional[dict],
         cancel_token: Optional[dict] = None,
@@ -1753,6 +1802,7 @@ class Simulator:
                 "warnings": warnings,
                 "logs": logs[-4000:],
             }
+            self._attach_stimulus_map(prep, waveform, peripherals, result, cancel_token)
             if keep:
                 result["workdir"] = str(workdir)
                 result["vcd"] = str(vcd_file)
@@ -2047,6 +2097,7 @@ class Simulator:
                 "warnings": warnings,
                 "logs": logs[-4000:],
             }
+            self._attach_stimulus_map(prep, waveform, peripherals, result, cancel_token)
             if keep:
                 result["workdir"] = str(workdir)
                 result["vcd"] = str(vcd_file)
