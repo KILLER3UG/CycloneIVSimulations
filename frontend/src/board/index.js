@@ -889,12 +889,12 @@ export class Board3D {
         this.renderer.getSize(size);
         this.composer = new EffectComposer(this.renderer);
         this.composer.addPass(new RenderPass(this.scene, this.camera));
-        // Selective bloom: lit 7-seg segments are HDR studio-red (r≈5.2 →
-        // luminance ≈1.2) and cross the 1.0 threshold; lit metals and the
-        // charcoal PCB stay below it, so only the hardware glows. SSAO was
-        // evaluated and produced a black frame at this millimetre scene
-        // scale, so it stays disabled.
-        const bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.28, 0.22, 1.0);
+        // Selective bloom: lit 7-seg segments are HDR studio-red (luminance
+        // ≈2.8) and cross the 2.5 threshold; key-lit silkscreen, connector
+        // plastics (env clamped) and the charcoal PCB stay below it, so only
+        // the hardware glows. SSAO was evaluated and produced a black frame
+        // at this millimetre scene scale, so it stays disabled.
+        const bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.32, 0.22, 2.5);
         this.composer.addPass(bloom);
         this.composer.addPass(new OutputPass());
     }
@@ -1172,9 +1172,9 @@ export class Board3D {
         const ring = new THREE.Mesh(
             new THREE.RingGeometry(8.2, 9.6, 40),
             new THREE.MeshBasicMaterial({
-                // Studio-red hardware accent (was off-palette cyan): the pulse
-                // ring reads as part of the board, not a debug overlay.
-                color: new THREE.Color(0xff3b30).multiplyScalar(1.6),
+                // Studio-red hardware accent (was off-palette cyan): HDR
+                // multiplier lets the pulse ring bloom softly like the tubes.
+                color: new THREE.Color(0xff3b30).multiplyScalar(12),
                 transparent: true, opacity: 0,
                 side: THREE.DoubleSide, depthWrite: false, depthTest: false,
             }),

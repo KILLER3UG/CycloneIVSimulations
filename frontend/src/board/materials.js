@@ -60,7 +60,10 @@ export function createMaterials(profile = null) {
         plasticBlack: physical({ color: 0x15171a, roughness: 0.55, metalness: 0.04, clearcoat: 0.12, clearcoatRoughness: 0.6, envMapIntensity: 0.3 }),
         // EQFP packages read dark grey (lighter than the PCB) in the photos
         chipBlack: physical({ color: 0x1a1c20, roughness: 0.46, metalness: 0.05, clearcoat: 0.22, clearcoatRoughness: 0.5, envMapIntensity: 0.35 }),
-        plasticWhite: physical({ color: 0xe9e7df, roughness: 0.5, metalness: 0.0 }),
+        // White connectors: envMapIntensity clamped to the black plastics so
+        // key-lit faces stay under the bloom threshold — crisp matte parts,
+        // no white halo (only the hardware emissives glow).
+        plasticWhite: physical({ color: 0xe9e7df, roughness: 0.5, metalness: 0.0, envMapIntensity: 0.3 }),
         // photo headers are saturated warm yellow
         headerYellow: physical({ color: 0xf0c11c, roughness: 0.52, metalness: 0.0 }),
         red: physical({ color: 0xc42b1f, roughness: 0.42, metalness: 0.0, clearcoat: 0.3, clearcoatRoughness: 0.45 }),

@@ -17,7 +17,11 @@ const SEG_OFFSETS = {
 // real 0.36" digits lean the segment ring like an italic numeral (top to the
 // right): shear x by −k·z, tilt the vertical bars by the same angle
 const DIGIT_SLEW = 0.14;
-export const LIT_COLOR = new THREE.Color(0xff2b2b).multiplyScalar(5.2); // HDR studio-red → feeds bloom
+// HDR studio-red → feeds bloom. Built directly in the linear working space:
+// the red channel is pushed far past the key-lit whites' luminance so the
+// bloom high-pass separates the tubes/silkscreen cleanly, while g/b stay at
+// the shipped studio-red hue (0xff2b2b) instead of washing out to salmon.
+export const LIT_COLOR = new THREE.Color().setRGB(13.0, 0.126, 0.126);
 // unlit segments read as a recessed near-black diffuser on the charcoal housing
 export const DARK_COLOR = new THREE.Color(0x18191c);
 
