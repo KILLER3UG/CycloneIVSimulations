@@ -10,9 +10,10 @@ timings, renderer state, backend phase profile. Screenshots reviewed visually.
 
 - [x] Step 1 live audit (this document, measurements below)
 - [x] Phase 1 — layout defects (CSS/DOM, low risk) — verify-phase1 ALL PASS, terminal-e2e ALL PASS
-- [ ] Phase 2 — render path: hero framing, glow, palette, demand-driven rendering
-- [ ] Phase 3 — backend VCD parse speed (QA-protected)
-- [ ] Step 3 full gates · Step 4 rebuild + installed-app verification + lifecycle
+- [x] Phase 2 — render path: hero framing, glow, palette, demand-driven rendering — GPU probe ALL PASS, board-matrix 16/16
+- [x] Phase 3 — backend VCD parse speed (QA-protected) — output-identical proof, test_vcd green
+- [x] Phase 4 — bloom retune (fresh-agent pass): white halos removed, tubes glow HDR red — hue-check probe, board-matrix 16/16
+- [x] Step 3 full gates · Step 4 rebuild + installed-app verification + lifecycle
 
 Baseline gates at `7e1bf22` (before edits): `python tests/run_all.py` →
 **169 unit + 231/231 QA, exit 0**; `npm --prefix frontend run test:unit` →
@@ -60,14 +61,39 @@ Baseline gates at `7e1bf22` (before edits): `python tests/run_all.py` →
 | 2.4 | Demand-driven rendering: dirty-flag wake/sleep. Render only when state changed, controls damping/tween/pulse active, capture streaming, or IO transitions in flight; sleep (cancel rAF) after 1.5 s fully static, wake on any mutator/DOM event. 10 Hz IO timer becomes a no-op when nothing moves (no buffer uploads). Software caps preserved. Key/DIP press still paints synchronously and renders next frame (≤16 ms). | `frontend/src/board/index.js:85-91` (wake wrapper), `296-307` (loop+IO timer), `942-1011` (`_loop`), `1013-1099` (`_updateIO`) | idle render count ≈ 0 over 10 s (was ~60); press→pixel ≤ 16 ms; all 8 web e2e + installed-app green |
 | 2.5 | xterm refit: ResizeObserver on the terminal host (rAF-debounced `fit()`), plus `showTab("terminal")` hook. Covers dock drag, collapse, window resize, tab show. | `frontend/src/ui/terminal.js:84-112,207-210`, `frontend/src/ui/bottomPanel.js:93-103`, hooks `frontend/src/main.js:534-546` | terminal-e2e; resize probe: cols/rows track the pane |
 
+## Phase 4 — bloom retune (fresh-agent pass, render-only)
+
+The shipped bloom (threshold 1.0) caught the key-lit white silkscreen and
+connector plastics (linear luminance ≈1.8–2.3) *before* the studio-red
+segments (linear luminance ≈1.1 — `Color(0xff2b2b)` is sRGB→linear
+converted, so g/b are ≈0.126, not 0.88): every white part bloomed while the
+tube glow stayed subtle. Fix, all render-only (`frontend/src/board/`):
+
+| # | Action | Verify |
+| --- | --- | --- |
+| 4.1 | `LIT_COLOR` built in the linear working space (`setRGB(13, 0.126, 0.126)`) — same shipped hue, luminance ≈2.8 | hue-check close-up: vivid red glow, no wash-out |
+| 4.2 | Bloom threshold 1.0 → 2.5, strength 0.28 → 0.32 — only hardware crosses | full-board probe: crisp silkscreen, no white halos |
+| 4.3 | `plasticWhite.envMapIntensity` 1.0 → 0.3 (matches the black plastics) — kills the env-driven halo on VGA/USB/power shells | same probe |
+| 4.4 | SP1 pulse ring HDR multiplier 1.6 → 12 — soft red glow like the tubes | installed-app step 02 |
+
+Rejected: raising the threshold with the raw multiplied color (`×9`, `×13`)
+— scaling the sRGB-converted color also scales g/b into salmon wash-out;
+the linear-space construction keeps the exact shipped hue.
+
 ## Phase 3 — backend compile/sweep speed (QA-protected)
 
 | # | Action | Citation | Verify |
 | --- | --- | --- | --- |
-| 3.1 | `parse_vcd` hot loop: binary line iteration, scalar fast path without per-line `strip()`/regex, duration tracked on `#` timestamps only, interned scalar values. **Output identical** (byte-for-byte VcdData equivalence on a real buzz1 dump before/after). | `backend/vcd_parser.py:119-247` | scratch equivalence check; `tests/test_vcd.py`; full QA (differential cases); re-profile: target ≥ 2× parse speed |
+| 3.1 | `_convert_vector` int-first: pure-binary values convert in one C call; x/z detection via four C containment scans instead of a per-character generator (2.9 M Python iterations removed on the buzz1 capture). **Output identical** — proven against the original semantics on the real 12.9 MB / 975 024-transition dump + edge cases (no-space vectors, glued/split reals, spaced scalars, x/z, unknown ids, CRLF, multi-line timescale). | `backend/vcd_parser.py:86-103` | equivalence proof; `tests/test_vcd.py` green; parse ≈ 1.2× faster at median under load, up to ≈ 1.9× quiet (laptop turbo variance dominates microbenchmarks) |
 
 ### Rejected / deferred (with evidence)
 
+- **Bytes-mode VCD hot loop** (dispatch table + bytes regex, header shared):
+  implemented and proven output-identical, but **slower** than the text path
+  (0.53–0.87× across runs; cProfile showed the loop body 1.7× faster yet the
+  profiler taxes the text path's many C calls — without it, CPython's 1-char
+  str caching + C `startswith`/containment/`lower` beat Python-level byte
+  dispatch). Reverted; only the shared `_convert_vector` win shipped.
 - **Exclude the free-running clock from the VCD** (would shrink dumps ~10×):
   rejected — `pov_clock_edges()` and the Waveform tab's clock row consume clock
   transitions (`backend/waveform.py`), QA CLK cases assert them; behavior risk

@@ -3,8 +3,8 @@ INFO:httpx2:HTTP Request: POST http://testserver/api/simulate "HTTP/1.1 200 OK"
 INFO:httpx2:HTTP Request: POST http://testserver/api/simulate "HTTP/1.1 200 OK"
 INFO:httpx2:HTTP Request: GET http://testserver/api/board "HTTP/1.1 200 OK"
 INFO:cyclone.server:WebSocket client disconnected
-INFO:httpx2:HTTP Request: GET http://testserver/api/health "HTTP/1.1 200 OK"
 INFO:cyclone.server:WebSocket client disconnected
+INFO:httpx2:HTTP Request: GET http://testserver/api/health "HTTP/1.1 200 OK"
 Units: 169 passed (pytest tests/)
 [PASS] DEV-01     Device definition EP4CE6E22C8 present and matches datasheet
 [PASS] DEV-02     Pin map internally consistent (no duplicate/invalid pins)
@@ -12,115 +12,115 @@ Units: 169 passed (pytest tests/)
 [PASS] IN-05C     QSF errors: invalid pin, duplicate pin, unknown port, wrong device
 [PASS] IN-10      Verilog syntax error reports file and line
 [PASS] IN-09      VHDL syntax error reports file and line
-[PASS] IN-01      Single .vhd upload loads and simulates
 [PASS] IN-12      Mixed-language project (VHDL top + Verilog submodule)
-[PASS] IN-02      Single .v (Verilog) upload compiles and simulates
-[PASS] IN-03      Multi-entity project (several entities in one upload) loads
+[PASS] IN-01      Single .vhd upload loads and simulates
 [PASS] IN-04      Multi-file project upload (separate .vhd files)
 [PASS] IN-11      Unsupported Altera primitive gives a clear error
-[PASS] IN-08      QSF pin assignments are validated against the top-level ports
+[PASS] IN-02      Single .v (Verilog) upload compiles and simulates
+[PASS] IN-03      Multi-entity project (several entities in one upload) loads
 [PASS] IN-05      Quartus .qsf upload is parsed and honored
+[PASS] IN-08      QSF pin assignments are validated against the top-level ports
 [PASS] CLK-01     Board clock frequency and pin are modelled
-[PASS] CLK-02     Counter at the real clock rate matches expected count after N ms
+[PASS] CLK-06     Active-high reset
 [PASS] CLK-05     Synchronous reset
+[PASS] CLK-02     Counter at the real clock rate matches expected count after N ms
 [PASS] CLK-04     Asynchronous active-low reset
 [PASS] CLK-07     Power-on value from a VHDL initializer
-[PASS] CLK-06     Active-high reset
 [PASS] CLK-08     Uninitialized register reports X/U (GHDL power-up semantics)
 [PASS] CLK-03     Clock scaling makes a 1 Hz blinker visible in real time
-[PASS] INP-03     Button polarity matches the board (idle high, active low)
 [PASS] INP-02     All 256 switch combinations reach the LEDs
+[PASS] INP-03     Button polarity matches the board (idle high, active low)
 [PASS] INP-05     Press shorter than one clock period is missed (documented)
 [PASS] INP-06     Input changes appear on the next simulation step
 [PASS] OUT-05     7-segment polarity follows the board schematic
-[PASS] INP-07     Rapid toggling does not miss or duplicate edges
-[PASS] OUT-07     On-board connectors match the real board; nothing fake is implied
 [PASS] INP-04     Edge detector sees a press and release
+[PASS] OUT-07     On-board connectors match the real board; nothing fake is implied
+[PASS] INP-07     Rapid toggling does not miss or duplicate edges
 [PASS] OUT-02     LED polarity is active-high and not configurable
 [PASS] OUT-09B    The 3D/2D board renders X and Z distinctly from 0
+[PASS] OUT-08     Unassigned output is shown as U, not as a plain 0
 [PASS] OUT-03     7-segment hex decoder for digits 0..F
 [PASS] OUT-06     Multiplexed multi-digit display is scanned correctly
-[PASS] OUT-08     Unassigned output is shown as U, not as a plain 0
 [PASS] OUT-09     Tri-state 'Z' is preserved by the simulator
 [PASS] OUT-10     'X' from an uninitialized signal is preserved
 [PASS] OUT-11     Multiple drivers are diagnosed
 [PASS] OUT-13     Combinational loop is diagnosed or rejected
-[PASS] OUT-04     Segment ordering a-g and dp
 [PASS] OUT-12     Latch inference is diagnosed
+[PASS] OUT-04     Segment ordering a-g and dp
 [PASS] OUT-14     Delta-cycle ordering is deterministic
 [PASS] HDL-01     Combinational gates
 [PASS] HDL-02     4:1 multiplexer
-[PASS] OUT-01     LED patterns: walking one, all on, all off
-[PASS] HDL-05     2-to-4 decoder
 [PASS] HDL-04     Comparator
 [PASS] HDL-03     4-bit adder with carry
+[PASS] HDL-05     2-to-4 decoder
+[PASS] OUT-01     LED patterns: walking one, all on, all off
 [PASS] HDL-08     Up counter
+[PASS] HDL-10     Counter with parallel load
 [PASS] HDL-06     Priority encoder
 [PASS] HDL-09     Down counter
-[PASS] HDL-10     Counter with parallel load
 [PASS] HDL-12     8-bit LFSR
 [PASS] HDL-07     D flip-flop with async reset
 [PASS] HDL-13     Moore traffic-light FSM
 [PASS] HDL-15     Enumerated-state FSM
-[PASS] HDL-14     Mealy sequence detector (1011, overlap)
 [PASS] HDL-11     Universal shift register
-[PASS] HDL-18     Function
+[PASS] HDL-14     Mealy sequence detector (1011, overlap)
 [PASS] HDL-17     Generate loop
-[PASS] INP-01     Each switch individually reaches the matching LED
-[PASS] HDL-19     Procedure
+[PASS] HDL-18     Function
 [PASS] HDL-20     Record type
-[PASS] HDL-22     Signed overflow wrap
 [PASS] HDL-21     Signed arithmetic
+[PASS] HDL-19     Procedure
+[PASS] INP-01     Each switch individually reaches the matching LED
 [PASS] HDL-16     Generic parameter
+[PASS] HDL-22     Signed overflow wrap
 [PASS] HDL-24     Multiple clock domains
-[PASS] HDL-25     Clock-divider output used as a clock
-[PASS] HDL-32     Assertion failure in user design is reported with file/line
+[PASS] HDL-31     'after' in a user design is rejected or warned
 [PASS] HDL-33     report note from user design is visible
 [PASS] HDL-30     Delta-cycle ordering
-[PASS] HDL-31     'after' in a user design is rejected or warned
+[PASS] HDL-25     Clock-divider output used as a clock
+[PASS] HDL-32     Assertion failure in user design is reported with file/line
 [PASS] HDL-34     'wait for' in a user design is rejected or warned
-[PASS] BLK-01     Unsupported Altera megafunction is rejected clearly
 [PASS] BLK-08     M9K init from .mif/.hex file
 [PASS] HDL-23     Tri-state bus and inout port
+[PASS] BLK-01     Unsupported Altera megafunction is rejected clearly
 [PASS] BLK-02     ALTPLL output frequency and locked signal
-[PASS] BLK-04     Inferred ROM
-[PASS] BLK-06     Registered RAM read latency
 [PASS] BLK-10     altsyncram megafunction is rejected clearly
-[PASS] BLK-07     Dual-port RAM
 [PASS] BLK-03     Two-PLL limit is reported
+[PASS] BLK-06     Registered RAM read latency
 [PASS] BLK-05     Single-port RAM read-after-write
+[PASS] BLK-04     Inferred ROM
+[PASS] BLK-07     Dual-port RAM
 [PASS] ENG-01B    Waveform export button/endpoint in the web UI
 [PASS] BLK-11     lpm_* megafunction is rejected clearly
 [PASS] BLK-15     Warning when the design exceeds 91 user I/O
 [PASS] BLK-12     Warning when the design exceeds 6272 LEs
-[PASS] BLK-09     18x18 multiplier product
 [PASS] ENG-01     Raw VCD export works from the CLI/keep-dir path
-[PASS] BLK-13     Warning when the design exceeds 30 M9K blocks
 [PASS] BLK-14     Warning when the design exceeds 15 multipliers
-[PASS] ENG-07     Uploaded HDL cannot write host files
+[PASS] BLK-09     18x18 multiplier product
+[PASS] ENG-02     Waveform matches board state at the same timestamp
+[PASS] BLK-13     Warning when the design exceeds 30 M9K blocks
 [PASS] ENG-08     3D board assets are present and the page has no obvious errors
 [PASS] ENG-09     All clickable 3D parts respond
-[PASS] ENG-02     Waveform matches board state at the same timestamp
 [PASS] ENG-10     Toggling a switch updates the port (zero-delay lookup or fallback)
+[PASS] ENG-07     Uploaded HDL cannot write host files
 [PASS] FID-01     (1) Blinker: logic toggles at the scaled rate
 [PASS] ENG-04     Re-upload during a running sim leaves no stale state
-[PASS] FID-02     (2) Switch-to-LED pass-through
 [PASS] FID-01B    (1) Blinker: 1 Hz at the real 50 MHz board clock
+[PASS] FID-02     (2) Switch-to-LED pass-through
 [PASS] FID-03     (3) Button debounce + counter
-[PASS] FID-04     (4) 7-segment hex counter
 [PASS] FID-05     (5) Knight-rider LED sweep
+[PASS] FID-04     (4) 7-segment hex counter
 [PASS] FID-06     (6) Traffic-light FSM
-[PASS] ENG-03B    Stop is a kill, not a wait: GHDL child exits promptly
-[PASS] SPEC-03    SEG bit map and SEG/DIG pins match the schematic sheet
 [PASS] FID-07     (7) PLL-driven blink
 [PASS] SPEC-01    Clock = pin 23, RESET key = pin 25 active-low (schematic §0a)
-[PASS] SPEC-02    KEY/DIP shared nets 88-91, active-low profile
+[PASS] SPEC-03    SEG bit map and SEG/DIG pins match the schematic sheet
 [PASS] FID-08     (8) ROM-based display pattern
+[PASS] SPEC-02    KEY/DIP shared nets 88-91, active-low profile
 [PASS] SPEC-05    Buzzer idle high stays silent; type flagged unverified in the UI notes
+[PASS] SPEC-06    AT24C08 write is blocked (WP tied to VCC) on the I2C_SCL/SDA bus
 [PASS] SPEC-08    board_detect attaches EEPROM and LM75 to their own buses
 [PASS] SPEC-07    LM75 answers on its own bus (FPGA_SCL/SDA = 112/113) at 0x48
 [PASS] SPEC-11    Device profile: 91 user I/O, both trainer chips selectable
-[PASS] SPEC-06    AT24C08 write is blocked (WP tied to VCC) on the I2C_SCL/SDA bus
+[PASS] ENG-03B    Stop is a kill, not a wait: GHDL child exits promptly
 [PASS] SPEC-12    Every pin in vendor/Pinos_RZEasyFPGA.txt matches the profile
 [PASS] BJ-01      board.json pinMap matches every vendor pin assignment
 [PASS] BJ-02      Every fact in board.json carries VERIFIED/INFERRED/UNVERIFIED
@@ -128,114 +128,114 @@ Units: 169 passed (pytest tests/)
 [PASS] BJ-04      Backend profile is loaded from board.json (not duplicated)
 [PASS] BJ-05      All board.json pins are valid EQFP-144 and uniquely owned
 [PASS] SPEC-09    UART frames from UART_TXD (114) decode at the design's rate
-[PASS] POL-01     LEDs are active-low: driving 0 lights, driving 1 is off
-[PASS] POL-02     KEY and DIP share the net: reads 0 if either is closed
-[PASS] POL-03     7-segment SEG bit map and active-low polarity render correct glyphs
-[PASS] POL-04     Buzzer is active-low: ON = FPGA_BUZZER 0, idle 1 is silent
 [PASS] ENG-11     Server health reports GHDL
+[PASS] POL-01     LEDs are active-low: driving 0 lights, driving 1 is off
+[PASS] POL-03     7-segment SEG bit map and active-low polarity render correct glyphs
+[PASS] POL-02     KEY and DIP share the net: reads 0 if either is closed
+[PASS] POL-04     Buzzer is active-low: ON = FPGA_BUZZER 0, idle 1 is silent
+[PASS] QF-01      All four vendor .qsf files parse without errors
+[PASS] QF-02      TOP_LEVEL_ENTITY, DEVICE, IO_STANDARD and file lists are parsed
 [PASS] QF-03      Comments, whitespace, tabs and mixed case are tolerated
-[PASS] QF-07      A device mismatch is reported
 [PASS] QF-04      A pin used by two different ports is an error
 [PASS] QF-06      The same port bit given two pins is an error
 [PASS] QF-05      Invalid pin tokens are rejected (0, 145, 999, malformed)
-[PASS] QF-01      All four vendor .qsf files parse without errors
-[PASS] QF-02      TOP_LEVEL_ENTITY, DEVICE, IO_STANDARD and file lists are parsed
+[PASS] QF-07      A device mismatch is reported
 [PASS] QF-08      compile_source uses the .qsf top and reports unknown ports
-[PASS] OD-01      Open-drain wired-AND: any low wins, release returns high
 [PASS] ENG-12     Concurrent HTTP simulations are isolated
-[PASS] OD-02      I2C clock stretching: a slave holding SCL low keeps it low
+[PASS] OD-01      Open-drain wired-AND: any low wins, release returns high
 [PASS] POL-05     Active-low conversion happens exactly once (no double/zero inversion)
+[PASS] OD-02      I2C clock stretching: a slave holding SCL low keeps it low
 [PASS] OD-03      A floating bus with only a pull-up reads H (not X/Z)
 [PASS] OD-05      AT24C08 block select: all four control bytes 0xA0-0xA7 ACK
 [PASS] OD-04      AT24C08 model: 5 ms write-cycle NACK and 16-byte page wrap
 [PASS] PR-02      LM75 registers: temp 0x1900, config 0x0000, Thyst 0x4B00, Tos 0x5000
-[PASS] ENG-03     Stop/cancel a running simulation
 [PASS] PR-01      UART 8N1: baud, LSB-first data and stop bit
-[PASS] PR-07      SDRAM: pin map verified; no timing model (documented limitation)
 [PASS] SPEC-04    Buzzer toggling produces a decoded tone on FPGA_BUZZER
-[PASS] PR-08      EPCS16/JTAG: .sof volatile / .pof persistent documented; no model
 [PASS] BJ-06      GET /api/board serves the canonical profile to the frontend
-[PASS] PR-10      UART echo at the wrong baud: receiver rejects the frame, TX stays idle
+[PASS] PR-07      SDRAM: pin map verified; no timing model (documented limitation)
+[PASS] PR-08      EPCS16/JTAG: .sof volatile / .pof persistent documented; no model
+[PASS] ENG-03     Stop/cancel a running simulation
 [PASS] PR-09      UART echo: a framed 8N1 byte into UART_RXD comes back on UART_TXD
+[PASS] PR-10      UART echo at the wrong baud: receiver rejects the frame, TX stays idle
 [PASS] RB-01      VHDL parser survives random binary garbage
 [PASS] RB-02      QSF parser survives garbage and a 1 MB file
 [PASS] RB-03      WebSocket survives malformed and unknown messages
 [PASS] RB-04      A huge VHDL file (5k lines) compiles without unbounded memory
-[PASS] PR-03      PS/2 frame: start=0, 8 data bits LSB first, odd parity, stop=1
 [PASS] RB-05      HDL textio with literal absolute host paths is rejected
 [PASS] RB-05B     Relative textio stays confined to the workdir and works
 [PASS] RB-06      Concurrent simulations are isolated
 [PASS] E2E-01     Vendor example my_and (led_and): AND truth table
+[PASS] E2E-02     Vendor example key_led: case table for the four keys
 [PASS] E2E-03     Vendor example ckey_led: LED = ckey (DIP shares KEY nets)
 [PASS] E2E-04     Vendor example led_twinkle unmodified: 25M-cycle counter, no early tog
-[PASS] E2E-02     Vendor example key_led: case table for the four keys
 [PASS] E2E-05     led_twinkle toggle logic (simulation-adapted 2500-cycle threshold)
 [PASS] SEM-01     Delta-cycle ordering: signal updates land on later edges
 [PASS] SEM-02     Variable updates are immediate; signal updates are deferred
 [PASS] SEM-03     std_logic resolution: 0/1/Z/X/U/H/L/- table
 [PASS] SEM-04     Multiple drivers on an unresolved type are a clear error
 [PASS] SEM-05     numeric_std overflow wraps (mod 2^n)
-[PASS] SEM-06     Generics change width and behaviour
+[PASS] PR-03      PS/2 frame: start=0, 8 data bits LSB first, odd parity, stop=1
 [PASS] SEM-07     Generate loop instantiates N parallel slices
-[PASS] SEM-08     Record and array ports pass structured data
+[PASS] SEM-06     Generics change width and behaviour
 [PASS] CKM-01     Counter at 50 MHz gives exact cycle counts
+[PASS] SEM-08     Record and array ports pass structured data
 [PASS] CKM-02     Divided clock: /2 divider toggles at half rate
 [PASS] CKM-03     Two clock domains advance independently
 [PASS] CKM-04     PLL: behavioural model produces c0 and locked
 [PASS] MEM-01     M9K inference: init file + registered read latency
 [PASS] MEM-02     M9K overflow produces a clear resource warning
-[PASS] MEM-04     Register-bit overflow produces a clear LE warning
 [PASS] MEM-03     Multiplier overflow produces a clear resource warning
 [PASS] PIN-01     Every board.json pinMap entry reaches the backend pin map and board ma
+[PASS] MEM-04     Register-bit overflow produces a clear LE warning
 [PASS] PIN-03     SEG bit order follows displayConfig.segBitMap; SEG/DIG pins match the 
 [PASS] PIN-04     LED index order matches the silkscreen order (LED[0]=LED1 ... LED[3]=L
 [PASS] PIN-05     KEY/DIP shared nets: pin reads 0 iff key pressed OR dip on (all 16x16 
-[PASS] SEG7-01    Segment and digit polarity are active-low per board.json
 [PASS] PIN-02     Every pinMap port can be driven and flips with the driven value (raw, 
+[PASS] SEG7-01    Segment and digit polarity are active-low per board.json
 [PASS] SEG7-02    Fast scan: all four digits appear lit across sampled cycles
 [PASS] SEG7-03    Slow scan: sampled cycles show a single held digit
 [PASS] SEG7-04    Non-simultaneous digit+segment change shows a visible ghosting window
-[PASS] PRO-02     UART: a frame at the wrong bit time is garbage for a locked receiver
-[PASS] PRO-01     UART 8N1: a bad stop bit is a framing error (byte rejected)
 [PASS] BUZ-01     Buzzer toggle frequency matches the driven square wave
+[PASS] PRO-01     UART 8N1: a bad stop bit is a framing error (byte rejected)
+[PASS] PRO-02     UART: a frame at the wrong bit time is garbage for a locked receiver
 [PASS] TRI-01     Released (high-Z) outputs read Z: LEDs off, buzzer silent
-[PASS] PRO-03     VGA: no sync toggles means no signal (bad mode)
 [PASS] PRO-05     PS/2 host inhibit: documented limitation (keyboard-hosted model)
+[PASS] PRO-03     VGA: no sync toggles means no signal (bad mode)
 [PASS] PRO-06     SDRAM controller timing: documented limitation (pin map only)
 [PASS] PRO-04     HD44780: E pulse below PWEH is ignored; busy flag follows the write cy
 [PASS] TSC-01     The reported time scale factor is accurate
-[PASS] ENG-05     Runaway design is caught with a message
 [PASS] TSC-03     Buzzer frequency scales with the clock period
 [PASS] TSC-02     UART baud scales with the clock period
 [PASS] TSC-05     7-segment scan rate scales with the clock period
 [PASS] DET-01     The same request twice produces identical waveforms
-[PASS] PR-11      EEPROM reference design (i2c_eeprom_test) runs its full I2C sequence v
 [PASS] DET-02     Two Simulator instances share no state
+[PASS] PR-11      EEPROM reference design (i2c_eeprom_test) runs its full I2C sequence v
 [PASS] RF-01      Malformed VHDL is rejected with a clear error, never a crash
+[PASS] RF-02      Random binary garbage is handled without a crash
 [PASS] DET-03     Runs leave no stale temp directories or zombie GHDL processes
 [PASS] RF-04      Empty and whitespace-only inputs give a clear error
-[PASS] RF-02      Random binary garbage is handled without a crash
-[PASS] RF-06      A runaway design hits the scaled GHDL timeout with a clear message
-[PASS] RF-07      Sandbox reality: literal absolute textio paths are rejected; runs stay
+[PASS] RF-05      WebSocket survives hostile message shapes
 [PASS] RF-03      An oversized upload is handled in bounded time and memory
+[PASS] RF-07      Sandbox reality: literal absolute textio paths are rejected; runs stay
+[PASS] TSC-04     VGA line timing scales with the clock period
 [PASS] DIF-01     Differential: counter - backend vs raw GHDL VCD
+[PASS] RF-06      A runaway design hits the scaled GHDL timeout with a clear message
 [PASS] DIF-02     Differential: FSM (Moore traffic light) - backend vs raw GHDL VCD
 [PASS] DIF-03     Differential: dual-port RAM - backend vs raw GHDL VCD
 [PASS] DIF-04     Differential: UART TX - backend vs raw GHDL VCD
-[PASS] DIF-06     Second reference simulator (NVC): availability documented
-[PASS] DIF-05     Differential: 7-segment decoder - backend vs raw GHDL VCD
-[PASS] QE-03      Duplicate assignments: identical is idempotent, conflicting is an erro
-[PASS] QE-02      CRLF, tabs and irregular spacing are tolerated
 [PASS] QE-01      Inline comments are stripped; the assignment survives (audit M5)
+[PASS] DIF-06     Second reference simulator (NVC): availability documented
+[PASS] QE-02      CRLF, tabs and irregular spacing are tolerated
 [PASS] QE-04      Invalid pins: out-of-range, zero, non-numeric and boundary values
+[PASS] QE-03      Duplicate assignments: identical is idempotent, conflicting is an erro
 [PASS] QE-05      TOP_LEVEL_ENTITY is honoured (quotes and case) and drives the compile 
 [PASS] QE-06      IO_STANDARD checks and missing-file errors are reported
+[PASS] DIF-05     Differential: 7-segment decoder - backend vs raw GHDL VCD
 [PASS] VER-01     Verilog upload compiles and simulates on both paths
-[PASS] RF-05      WebSocket survives hostile message shapes
-[PASS] TSC-04     VGA line timing scales with the clock period
 [PASS] SPEC-10    VGA sync + 1-bit RGB decode into a frame
-[PASS] PR-04      VGA 640x480@60: 525 hsync lines per vsync frame
 [PASS] PR-06      NEC IR: 9 ms lead burst, 33 bursts, 560 us space for bit 0
+[PASS] PR-04      VGA 640x480@60: 525 hsync lines per vsync frame
+[PASS] ENG-05     Runaway design is caught with a message
 [PASS] PR-05      HD44780: init sequence, E pulse and DDRAM addressing show HELLO
 
 231/231 passed; results written to C:\schoolPersonalProjects\CycloneIVSimulations\tests\RESULTS.md
