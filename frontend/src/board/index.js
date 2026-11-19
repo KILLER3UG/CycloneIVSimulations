@@ -75,17 +75,20 @@ export class Board3D {
         // (wheel or dolly buttons) or a component focus hands control back
         // to the user until the next preset/fit.
         this._autoFit = true;
-        // Render throttle: the loop runs at display vsync (up to 165 Hz on
-        // gaming monitors); rendering every vsync with bloom costs a full
-        // CPU core. Cap to 60 fps while something is animating and drop to
-        // 24 fps after 5 s of no activity — visually identical, ~85% less
-        // idle CPU (see _loop).
+        // Demand-driven rendering: the board renders only when something
+        // actually changed (state paint, controls damping, tween/pulse,
+        // streaming capture, IO transition). After 1.5 s fully static the
+        // rAF loop sleeps entirely — a static board costs zero GPU/CPU —
+        // and any mutator or pointer event wakes it via _wake().
         this._lastActive = performance.now();
         this._lastRender = 0;
-        for (const m of ["applyCycle", "setPower", "resetVisual", "pressKey", "setDip", "pressReset", "setPreset", "zoomIn", "zoomOut", "fit", "setTheme"]) {
+        this._dirty = true;
+        this._sleeping = false;
+        this._ioActive = false;
+        for (const m of ["applyCycle", "setPower", "resetVisual", "pressKey", "setDip", "pressReset", "setPreset", "zoomIn", "zoomOut", "fit", "setTheme", "applyBoardImage", "setLedTarget", "setBuzzerActive", "setDesign", "resetDisplayHold", "rebuildBoard", "setRunning", "setProfile", "focusComponent", "highlightPin", "setQuality", "setPhotoOpacity", "enablePhotoOverlay", "setDeterministic"]) {
             const orig = this[m].bind(this);
             this[m] = (...args) => {
-                this._lastActive = performance.now();
+                this._wake();
                 return orig(...args);
             };
         }
@@ -287,17 +290,20 @@ export class Board3D {
         this._resizeObserver.observe(this.container);
         el.addEventListener("dblclick", this._onDblClick);
         for (const ev of ["pointerdown", "pointermove", "wheel"]) {
-            el.addEventListener(ev, () => { this._lastActive = performance.now(); }, { passive: true });
+            el.addEventListener(ev, () => this._wake(), { passive: true });
         }
         // Manual wheel zoom hands framing control back to the user until the
         // next preset/Fit click.
         el.addEventListener("wheel", () => { this._autoFit = false; }, { passive: true });
-        this.controls.addEventListener("change", () => { this._lastActive = performance.now(); });
+        this.controls.addEventListener("change", () => this._wake());
+        // Selective bloom on hardware GPUs (lit HDR segments cross the
+        // threshold); a software rasterizer keeps the plain, cheap path.
+        this._ensureComposer();
         this._raf = requestAnimationFrame(this._loop);
         // IO state (LED levels, segment persistence, key caps) evolves on a
-        // cheap 10 Hz timer, decoupled from the GPU render rate. Under software
-        // rendering the pixels refresh at ~1 fps, but the state the UI/tests
-        // read stays fresh — and a static board costs almost no CPU.
+        // cheap 10 Hz timer, decoupled from the GPU render rate. The timer
+        // no-ops while the board is static (_ioNeedsWork), so a settled board
+        // costs no easing, no buffer uploads and no frames at all.
         this._ioLast = performance.now();
         this._ioTimer = setInterval(() => {
             const now = performance.now();
@@ -305,9 +311,20 @@ export class Board3D {
             this._ioLast = now;
             this._updateIO(now, dt);
         }, 100);
-        this.renderer.render(this.scene, this.camera); // first render → ready
+        if (this.composer) this.composer.render();
+        else this.renderer.render(this.scene, this.camera); // first render → ready
         if (this.container) this.container.dataset.ready = "1";
         return this;
+    }
+
+    /** Mark the frame dirty and restart the loop if it was sleeping. */
+    _wake() {
+        this._dirty = true;
+        this._lastActive = performance.now();
+        if (this._sleeping && !this._disposed) {
+            this._sleeping = false;
+            this._raf = requestAnimationFrame(this._loop);
+        }
     }
 
     _resize() {
@@ -321,6 +338,7 @@ export class Board3D {
         // viewport changes shape (right-workbench resize, bottom-dock drag,
         // window resize) — no clipped edges, >=15% breathing room.
         if (this._autoFit && !this._tween) this._applyFitDistance();
+        this._wake();
     }
 
     _onDblClick = (event) => {
@@ -709,7 +727,10 @@ export class Board3D {
         const fov = Math.min(fovV, fovH);
         const h = Math.max(this.container.clientHeight || 600, 2);
         const hudFactor = h / Math.max(1, h - 56);
-        const dist = (sphere.radius / Math.sin(fov / 2)) * 1.15 * hudFactor;
+        // 1.08 keeps the bounding sphere inside the frustum with a small
+        // breathing margin while letting the board fill the viewport as the
+        // unmistakable hero (the old 1.15 margin framed it ~25% too small).
+        const dist = (sphere.radius / Math.sin(fov / 2)) * 1.08 * hudFactor;
         return Math.min(this.controls.maxDistance, Math.max(this.controls.minDistance, dist));
     }
 
@@ -795,7 +816,7 @@ export class Board3D {
         }
         const ring = new THREE.Mesh(
             new THREE.RingGeometry(anchor.radius * 0.7, anchor.radius * 0.85, 40),
-            new THREE.MeshBasicMaterial({ color: 0x66d9ff, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }),
+            new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }),
         );
         ring.rotation.x = -Math.PI / 2;
         ring.position.copy(pos).y += 0.4;
@@ -812,7 +833,7 @@ export class Board3D {
         if (!point) return false;
         if (!this._highlight) {
             const mat = new THREE.SpriteMaterial({
-                map: glowTexture(), color: new THREE.Color(0.4, 1.6, 2.6),
+                map: glowTexture(), color: new THREE.Color(1.6, 1.6, 1.6),
                 transparent: true, opacity: 0.95, depthWrite: false, blending: THREE.AdditiveBlending,
             });
             this._highlight = new THREE.Sprite(mat);
@@ -846,7 +867,7 @@ export class Board3D {
         this.lights.key.castShadow = shadows;
         this.scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
         this.renderer.shadowMap.needsUpdate = true;
-        if (q === "high") this._ensureComposer();
+        if (q !== "performance" && !this.gpuIsSoftware) this._ensureComposer();
         else if (this.composer) {
             disposeObject(this.composer);
             this.composer = null;
@@ -861,18 +882,20 @@ export class Board3D {
 
     _ensureComposer() {
         if (this.composer) return;
+        // Software rasterizers draw every fragment on the CPU — bloom's
+        // extra passes are unaffordable there; keep the plain render path.
+        if (this.gpuIsSoftware || this.quality === "performance") return;
         const size = new THREE.Vector2();
         this.renderer.getSize(size);
         this.composer = new EffectComposer(this.renderer);
         this.composer.addPass(new RenderPass(this.scene, this.camera));
-        if (this.quality === "high") {
-            // Selective bloom: HDR emissives (lit LEDs / 7-seg segments, boosted
-            // to luminance ≈ 5+) cross the threshold 4.0 while lit metals sit
-            // below it. SSAO was evaluated and produced a black frame at this
-            // millimetre scene scale, so it stays disabled.
-            const bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.45, 0.3, 4.0);
-            this.composer.addPass(bloom);
-        }
+        // Selective bloom: lit 7-seg segments are HDR studio-red (r≈5.2 →
+        // luminance ≈1.2) and cross the 1.0 threshold; lit metals and the
+        // charcoal PCB stay below it, so only the hardware glows. SSAO was
+        // evaluated and produced a black frame at this millimetre scene
+        // scale, so it stays disabled.
+        const bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.28, 0.22, 1.0);
+        this.composer.addPass(bloom);
         this.composer.addPass(new OutputPass());
     }
 
@@ -900,6 +923,7 @@ export class Board3D {
                 mat.map = tex;
                 mat.needsUpdate = true;
                 mesh.visible = true;
+                this._wake();
             },
             undefined,
             () => console.info("[Board3D] photo overlay URL failed to load:", url),
@@ -939,37 +963,36 @@ export class Board3D {
     }
 
     // ----------------------------------------------------------- main loop ----
+    // Demand-driven: render only when dirty (state/camera changed), animating
+    // (streaming capture, tween, focus pulse) or IO transitions are in flight.
+    // After 1.5 s fully static the loop sleeps (no rAF, zero GPU work) until
+    // _wake() is called by a mutator, the controls or a pointer event.
     _loop = () => {
         if (this._disposed) return;
-        this._raf = requestAnimationFrame(this._loop);
         const now = performance.now();
-        // 60 fps while a simulation runs, a camera tween/pulse animates or
-        // the user interacted recently; 24 fps when idle; 6 fps after 20 s
-        // fully idle (desktop sessions stay open for hours — a static board
-        // is visually identical at 6 fps and costs ~0.2% CPU).
-        const idleMs = now - this._lastActive;
-        // Frame-rate tiers. A real GPU renders cheaply, so it keeps the smooth
-        // 60/24/6 ladder. A SOFTWARE rasterizer (headless tests, or hardware
-        // acceleration disabled) draws every frame on the CPU — 60 fps there
-        // saturates a core, starves the editor/init microtasks and makes the
-        // laptop unusable, so it is capped hard (a static board is visually
-        // identical at 1–2 fps). `animating` = a capture streams or the camera
-        // tweens; otherwise the board only needs occasional redraws.
         const animating = this.running || this._tween || this._pulse;
-        const sw = this.gpuIsSoftware;
-        // SwiftShader spreads ONE frame across many CPU cores, so even a modest
-        // fps keeps several cores busy continuously. Tests read state on the
-        // main thread (not pixels), so software rendering drops to ~1–2 fps —
-        // the board still updates, but the cores idle between frames.
-        const cap = animating ? (sw ? 2 : 60)
-            : idleMs < 3000 ? (sw ? 2 : 60)
-            : idleMs < 20000 ? (sw ? 1 : 24)
-            : (sw ? 1 : 6);
+        if (!this._dirty && !animating && !this._ioActive) {
+            if (now - this._lastActive > 1500) {
+                this._sleeping = true;
+                this._raf = 0;
+                return; // no further frames until _wake()
+            }
+            this._raf = requestAnimationFrame(this._loop);
+            return;
+        }
+        this._raf = requestAnimationFrame(this._loop);
+        // A real GPU renders cheaply at 60 fps while anything moves. A
+        // SOFTWARE rasterizer (headless tests, hardware acceleration off)
+        // spreads ONE frame across many CPU cores — cap it hard at 2 fps
+        // (the old interactive tier); tests read state, not pixels, and the
+        // board still updates. A static board renders nothing at all.
+        const cap = this.gpuIsSoftware ? 2 : 60;
         if (now - this._lastRender < 1000 / cap) return;
         this._lastRender = now;
+        // Clear BEFORE controls.update()/render: their synchronous 'change'
+        // events must be able to re-dirty the next frame (damping tail).
+        this._dirty = false;
         this.renderer.info.reset();
-        const dt = Math.min(0.05, (now - (this._lastFrame || now)) / 1000);
-        this._lastFrame = now;
 
         // fps (rolling, sampled twice a second)
         this._fps.frames += 1;
@@ -1006,13 +1029,58 @@ export class Board3D {
         // dust drift removed — Studio Monochrome keeps the void perfectly clean
 
         this.controls.update();
-        if (this.composer && this.quality === "high") this.composer.render();
+        if (this.composer) this.composer.render();
         else this.renderer.render(this.scene, this.camera);
     };
+
+    // Cheap static-board scan: true only when some IO state is still moving
+    // toward its target. Mirrors the targets computed in _updateIO — keep the
+    // two in sync. When false, the 10 Hz timer does NO easing and NO buffer
+    // uploads, and the render loop is free to sleep.
+    _ioNeedsWork() {
+        const io = this.io;
+        if (!io) return false;
+        const live = this.power && this.programmed;
+        for (const led of io.leds) {
+            if (Math.abs((live ? led.target : 0) - led.level) > 0.002) return true;
+        }
+        if (this.powerLed && Math.abs((this.power ? 1 : 0) - this.powerLed.level) > 0.002) return true;
+        const d = io.display;
+        const instantaneous = isInstantaneousScan(this._scanHz);
+        for (let i = 0; i < 32; i += 1) {
+            const duty = this._dutyTotal > 0
+                ? Math.min(1, this._dutyLit[i] / this._dutyTotal)
+                : d.segHold[i];
+            const target = instantaneous ? (live ? d.segTarget[i] : 0) : (live ? duty : 0);
+            if (Math.abs(target - d.segCurrent[i]) > 0.002) return true;
+        }
+        for (const key of io.keys) {
+            if (Math.abs((key.pressed ? key.pressY : key.baseY) - key.cap.position.y) > 0.01) return true;
+        }
+        if (Math.abs((io.reset.pressed ? io.reset.pressY : io.reset.baseY) - io.reset.cap.position.y) > 0.01) return true;
+        for (const lever of io.dip) {
+            if (Math.abs((lever.on ? lever.baseY + 1.1 : lever.baseY) - lever.lever.position.y) > 0.01) return true;
+            if (Math.abs((lever.on ? -0.5 : 0) - lever.lever.rotation.x) > 0.01) return true;
+        }
+        const ps = io.powerSwitch;
+        if (Math.abs((ps.on ? ps.baseY : ps.baseY - 2.6) - ps.cap.position.y) > 0.01) return true;
+        const bz = io.buzzer;
+        if (bz.on && live) return true; // shiver + ring pulse animate continuously
+        if (Math.abs(bz.baseY - bz.body.position.y) > 0.001) return true;
+        const ring = this._buzzerRing;
+        if (ring && ring.material.opacity > 0.01) return true; // fade-out in flight
+        return false;
+    }
 
     _updateIO(now, dt) {
         const io = this.io;
         if (!io) return;
+        if (!this._ioNeedsWork()) {
+            this._ioActive = false;
+            return;
+        }
+        this._ioActive = true;
+        this._wake();
         const k = 1 - Math.exp(-dt / 0.045);
         const live = this.power && this.programmed;
 
@@ -1104,7 +1172,10 @@ export class Board3D {
         const ring = new THREE.Mesh(
             new THREE.RingGeometry(8.2, 9.6, 40),
             new THREE.MeshBasicMaterial({
-                color: 0x7fd4ff, transparent: true, opacity: 0,
+                // Studio-red hardware accent (was off-palette cyan): the pulse
+                // ring reads as part of the board, not a debug overlay.
+                color: new THREE.Color(0xff3b30).multiplyScalar(1.6),
+                transparent: true, opacity: 0,
                 side: THREE.DoubleSide, depthWrite: false, depthTest: false,
             }),
         );
