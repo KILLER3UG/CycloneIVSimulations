@@ -160,8 +160,12 @@ try {
         if (xterm) xterm.style.display = "none";
         const pre = document.querySelector("pre#terminal-output");
         if (pre) {
+            // The mirror is sr-only in the studio (xterm is the visual surface);
+            // reveal it for the evidence frame.
+            pre.classList.remove("term-mirror");
             pre.style.maxHeight = "none";
             pre.style.height = "190px";
+            pre.style.padding = "6px 9px";
             pre.style.font = "10px/1.2 ui-monospace,monospace";
             pre.style.overflow = "auto";
             pre.scrollTop = pre.scrollHeight;

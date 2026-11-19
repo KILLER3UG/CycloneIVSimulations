@@ -1422,12 +1422,22 @@ input[type="checkbox"], input[type="radio"] { accent-color: #ffffff; }
 .bd-table td { font-family: var(--mono); font-size: 10.5px; }
 
 /* ------------------------------ Zone 4: collapsible bottom dock --------- */
+/* Responsive default height + a user-draggable override (--bottom-h persisted
+   in localStorage by main.js). The board viewport keeps the rest. */
 #bottom {
-    height: 260px; min-height: 28px; display: flex; flex-direction: column;
+    height: var(--bottom-h, clamp(190px, 26vh, 280px)); min-height: 28px;
+    display: flex; flex-direction: column; position: relative;
     background: #111113; border-top: var(--hair); box-shadow: none;
 }
 #bottom.collapsed { height: 28px; }
 #bottom.collapsed .bp-body { display: none; }
+#bottom.collapsed .bp-resizer { display: none; }
+.bp-resizer {
+    position: absolute; top: -3px; left: 0; right: 0; height: 7px;
+    cursor: row-resize; z-index: 12; touch-action: none; background: transparent;
+}
+.bp-resizer:hover, body.resizing-bottom .bp-resizer { background: rgba(255, 255, 255, 0.08); }
+body.resizing-bottom { cursor: row-resize; user-select: none; }
 .bottom-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .bp-tabs { display: flex; align-items: center; gap: 3px; height: 28px; flex: 0 0 28px;
     padding: 0 8px; background: #111113; border-bottom: var(--hair); }
@@ -1451,6 +1461,16 @@ input[type="checkbox"], input[type="radio"] { accent-color: #ffffff; }
 .term-wrap, #terminal-output { flex: 1 1 auto; min-height: 0; overflow: auto;
     background: #0a0a0b; border: var(--hair); border-radius: 7px; }
 #terminal-output .xterm { height: 100%; padding: 6px 8px; }
+/* The accessible output mirror stays live in the DOM (every e2e reads its
+   textContent) but xterm is the single visual surface — the mirror must not
+   steal dock height or duplicate the transcript below the command bar. */
+.studio-terminal { position: relative; }
+#terminal-output.term-mirror {
+    position: absolute; width: 1px; height: 1px; margin: 0; padding: 0;
+    overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%);
+    white-space: nowrap; border: 0; flex: none; min-height: 0;
+}
+.studio-terminal .xterm { min-height: 60px; }
 .bp-term-input { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
 .bp-term-input span { color: #71717a; font-family: var(--mono); }
 #terminal-input { flex: 1; height: 27px; padding: 0 9px; background: #18181b;
@@ -1466,9 +1486,10 @@ input[type="checkbox"], input[type="radio"] { accent-color: #ffffff; }
 .log-line.log-ok .log-tag { color: #d4d4d8; }
 .wave-wrap, .probe-bar { background: #0a0a0b; border: var(--hair); border-radius: 7px; }
 .display-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: minmax(0, 1fr);
     gap: 10px; flex: 1 1 auto; min-height: 0; }
-.display-card { display: flex; flex-direction: column; gap: 7px; min-width: 0;
-    background: #0a0a0b; border: var(--hair); border-radius: 7px; padding: 9px; }
+.display-card { display: flex; flex-direction: column; gap: 7px; min-width: 0; min-height: 0;
+    background: #0a0a0b; border: var(--hair); border-radius: 7px; padding: 9px; overflow: hidden; }
 .display-card > header { display: flex; justify-content: space-between; gap: 6px;
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: #71717a; }
 .serial-out { flex: 1 1 auto; min-height: 0; overflow: auto; font-family: var(--mono);
@@ -1478,9 +1499,13 @@ input[type="checkbox"], input[type="radio"] { accent-color: #ffffff; }
 .vga-wrap canvas { max-width: 100%; max-height: 100%; object-fit: contain; }
 .vga-nosignal { position: absolute; inset: 0; display: flex; align-items: center;
     justify-content: center; color: #71717a; font-family: var(--mono); font-size: 11px; }
-.lcd-panel { display: flex; flex-direction: column; gap: 8px; }
-.lcd-screen { background: #18181b; border: var(--hair); border-radius: 5px; padding: 10px;
-    font-family: var(--mono); font-size: 14px; color: #f4f4f5; letter-spacing: 0.1em; }
+.lcd-panel { display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; min-height: 0;
+    justify-content: center; }
+.lcd-screen { background: #18181b; border: var(--hair); border-radius: 5px; padding: 8px 10px;
+    font-family: var(--mono); font-size: 13px; line-height: 1.5; color: #f4f4f5; letter-spacing: 0.1em;
+    width: 100%; min-height: 0; text-shadow: none; box-shadow: none; }
+.display-card .lcd-screen { width: 100%; min-height: 0; font-size: 13px; padding: 8px 10px; }
+.display-card .lcd-panel { padding: 0; align-items: stretch; }
 .lcd-note { color: #71717a; font-size: 10px; }
 
 /* Narrow screens: dock the workbench over the board instead of a 3rd column. */

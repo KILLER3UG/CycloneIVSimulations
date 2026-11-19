@@ -54,9 +54,9 @@ export function createStatsBlock(container) {
         el.time.textContent = `Sim: ${fmtSimTime(state.simTimeNs)}`;
         el.status.textContent = state.status || "Live";
         el.latency.textContent = state.stimulusMap ? "<1ms" : "GHDL";
-        el.keys.textContent = keys ? (shared ? `KEY 1..${keys}` : `KEY 0..${keys - 1}`) : "KEY --";
+        el.keys.textContent = keys ? (shared ? `K1..${keys}` : `K0..${keys - 1}`) : "K --";
         el.sw.textContent = switches
-            ? (shared ? `SW shared` : `SW 0..${switches - 1}`)
+            ? (shared ? `S1..${switches} shared` : `SW0..${switches - 1}`)
             : "SW --";
     }
 

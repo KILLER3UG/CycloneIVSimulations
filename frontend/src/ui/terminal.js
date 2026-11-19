@@ -45,10 +45,10 @@ export function createTerminalController(containerEl) {
                  placeholder="Run command (e.g. ghdl --version)..."
                  style="flex:1;min-width:0;background:#0a0a0b;color:#f4f4f5;border:1px solid #34343a;border-radius:3px;padding:5px 7px;font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" />
         </div>
-        <pre id="terminal-output" role="log" aria-live="polite"
-             style="margin:0;padding:6px 9px;background:#0a0a0b;color:#f4f4f5;
+        <pre id="terminal-output" class="term-mirror" role="log" aria-live="polite"
+             style="background:#0a0a0b;color:#f4f4f5;
                     font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-                    white-space:pre-wrap;overflow:auto;max-height:150px"></pre>`;
+                    white-space:pre-wrap;overflow:auto"></pre>`;
 
     const xtermEl = containerEl.querySelector(".xterm");
     const cwdEl = containerEl.querySelector("#term-cwd");
@@ -239,6 +239,21 @@ export function createTerminalController(containerEl) {
 
     if (clearBtn) clearBtn.addEventListener("click", clear);
     if (restartBtn) restartBtn.addEventListener("click", restart);
+    // Keep xterm's grid synced with the dock: tab shows, dock drags, collapse
+    // and window resizes all change the host box. rAF-debounced so a drag
+    // coalesces into one fit per frame; hidden hosts are skipped (fit throws).
+    let fitRaf = 0;
+    const resizeObserver = typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => {
+            if (fitRaf) return;
+            fitRaf = requestAnimationFrame(() => {
+                fitRaf = 0;
+                const box = containerEl.getBoundingClientRect();
+                if (box.width > 40 && box.height > 40) fit();
+            });
+        })
+        : null;
+    resizeObserver?.observe(containerEl);
     if (inputEl) {
         inputEl.addEventListener("keydown", (ev) => {
             if (ev.key === "Enter") {

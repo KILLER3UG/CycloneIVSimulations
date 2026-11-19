@@ -593,6 +593,49 @@ function initComponents() {
         wbResizer.addEventListener("pointerup", endDrag);
         wbResizer.addEventListener("pointercancel", endDrag);
     }
+
+    // Bottom dock height: drag its top edge (same pattern as the workbench
+    // resizer). Persisted; the board viewport re-fits around the new height.
+    const bottomEl = $("bottom");
+    const bpResizer = bottomEl?.querySelector(".bp-resizer");
+    const applyBottomHeight = (px, persist) => {
+        const max = Math.min(560, Math.round(window.innerHeight * 0.6));
+        const h = Math.min(max, Math.max(180, Math.round(px)));
+        document.documentElement.style.setProperty("--bottom-h", `${h}px`);
+        if (persist) {
+            try { localStorage.setItem("c4_bottom_h", String(h)); } catch { /* ignore */ }
+        }
+        resizeBoardSoon();
+    };
+    try {
+        const saved = Number(localStorage.getItem("c4_bottom_h"));
+        if (Number.isFinite(saved) && saved >= 180) applyBottomHeight(saved, false);
+    } catch { /* ignore */ }
+    if (bpResizer) {
+        let drag = null;
+        bpResizer.addEventListener("pointerdown", (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            drag = { y: e.clientY, h: bottomEl.getBoundingClientRect().height };
+            try { bpResizer.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+            document.body.classList.add("resizing-bottom");
+        });
+        bpResizer.addEventListener("pointermove", (e) => {
+            if (!drag) return;
+            applyBottomHeight(drag.h - (e.clientY - drag.y), false);
+        });
+        const endDrag = (e) => {
+            if (!drag) return;
+            const h = drag.h - (e.clientY - drag.y);
+            drag = null;
+            document.body.classList.remove("resizing-bottom");
+            try { bpResizer.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+            applyBottomHeight(Number.isFinite(h) ? h : bottomEl.getBoundingClientRect().height, true);
+            setTimeout(() => bottom?.wave?.resize?.(), 60);
+        };
+        bpResizer.addEventListener("pointerup", endDrag);
+        bpResizer.addEventListener("pointercancel", endDrag);
+    }
 }
 
 function setWorkbenchTab(key) {
