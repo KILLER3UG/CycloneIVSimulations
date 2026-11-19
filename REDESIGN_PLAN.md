@@ -13,7 +13,8 @@ timings, renderer state, backend phase profile. Screenshots reviewed visually.
 - [x] Phase 2 — render path: hero framing, glow, palette, demand-driven rendering — GPU probe ALL PASS, board-matrix 16/16
 - [x] Phase 3 — backend VCD parse speed (QA-protected) — output-identical proof, test_vcd green
 - [x] Phase 4 — bloom retune (fresh-agent pass): white halos removed, tubes glow HDR red — hue-check probe, board-matrix 16/16
-- [x] Step 3 full gates · Step 4 rebuild + installed-app verification + lifecycle
+- [x] Step 3 full gates — QA 231/231, units 169, vitest 43, 8/8 web e2e suites on the fresh dist
+- [x] Step 4 rebuild (50.61 MiB NSIS) + in-place upgrade + installed-app-e2e 30/30 + every screenshot inspected + uninstall/clean-reinstall lifecycle, 0 orphans
 
 Baseline gates at `7e1bf22` (before edits): `python tests/run_all.py` →
 **169 unit + 231/231 QA, exit 0**; `npm --prefix frontend run test:unit` →
