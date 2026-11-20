@@ -109,7 +109,7 @@ def detect_reset(entity: Entity) -> Optional[tuple[Port, bool]]:
     drives the bare-API path where no board polarity is supplied.
     """
     board_reset = _normalize(BOARD.get("resetPort", ""))
-    board_active_high = not BOARD.get("resetActiveLow", False)
+    board_active_high = not BOARD.get("resetActiveLow", True)
     for port in entity.ports:
         if not port.is_input:
             continue

@@ -144,14 +144,17 @@ def _classify_port(name: str) -> Optional[str]:
         return "display"
     if re.fullmatch(r"(?:buzzerb?|beep|spk|speaker|buzz)\d*", lower):
         return "buzzer"
-    if "led" in lower:
-        return "led"
-    if any(token in lower for token in ("sw", "switch", "dip")):
-        return "switch"
-    if any(token in lower for token in ("key", "btn", "button", "push")):
-        return "button"
-    if any(token in lower for token in ("hex", "seg", "seven", "display")):
-        return "display"
+    # Substring fallback with a leading boundary: the token must start the
+    # name or follow a non-letter, so "answer" does not match "sw" and
+    # "monkey" does not match "key" (while "LED_DONE" still matches "led").
+    for token, kind in (
+        ("led", "led"),
+        ("switch", "switch"), ("sw", "switch"), ("dip", "switch"),
+        ("button", "button"), ("btn", "button"), ("key", "button"), ("push", "button"),
+        ("display", "display"), ("seven", "display"), ("seg", "display"), ("hex", "display"),
+    ):
+        if re.search(r"(?:^|[^a-z])" + re.escape(token), lower):
+            return kind
     return None
 
 
@@ -323,7 +326,7 @@ def map_board(
     if board.reset:
         profile_reset = BOARD.get("resetPort", "").upper()
         if board.reset.upper() == profile_reset:
-            board.reset_active_high = not BOARD.get("resetActiveLow", False)
+            board.reset_active_high = not BOARD.get("resetActiveLow", True)
     return board
 
 

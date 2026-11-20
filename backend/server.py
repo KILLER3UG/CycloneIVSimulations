@@ -188,6 +188,9 @@ def device_select(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
         device = set_device(key)
     except ValueError as exc:
         return _error_response(str(exc), 400)
+    # The selected chip changes the I/O / resource warnings, so cached
+    # compact results must not survive a device switch (same as board select).
+    _clear_simulator_request_cache()
     return {"ok": True, "device": DEVICE(), "selected": device["key"]}
 
 
@@ -571,6 +574,7 @@ async def _ws_compile(websocket: WebSocket, simulator: Simulator, message: dict)
         message.get("top"),
         message.get("files"),
         message.get("qsf"),
+        strict_pins=bool(message.get("strictPins", message.get("strict_pins", False))),
     )
     await websocket.send_json({"type": "compiled", "requestId": request_id, **result})
 
