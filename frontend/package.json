@@ -13,6 +13,9 @@
     "shot:board": "node scripts/board-shot.mjs"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.12.5",
+    "@tauri-apps/plugin-process": "^2.4.0",
+    "@tauri-apps/plugin-updater": "^2.14.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "jszip": "^3.10.2",

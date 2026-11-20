@@ -9,6 +9,7 @@ export const icons = {
     pause: I('<rect x="5" y="4" width="5" height="16" fill="currentColor" stroke="none"/><rect x="14" y="4" width="5" height="16" fill="currentColor" stroke="none"/>'),
     stop: I('<rect x="5" y="5" width="14" height="14" fill="currentColor" stroke="none"/>'),
     reset: I('<polyline points="1 4 1 10 7 10"/><path d="M3.5 15a9 9 0 1 0 2-9.4L1 10"/>'),
+    update: I('<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10"/><path d="M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/>'),
     step: I('<polygon points="4 3 15 12 4 21 4 3" fill="currentColor" stroke="none"/><line x1="19" y1="4" x2="19" y2="20"/>'),
     zoomIn: I('<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16" y2="16"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>'),
     zoomOut: I('<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16" y2="16"/><line x1="8" y1="11" x2="14" y2="11"/>'),

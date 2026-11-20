@@ -41,6 +41,7 @@ export function createToolbar(root, h) {
             </div>
             <button class="icon-btn tb-view" data-act="collapse" aria-label="Toggle right workbench" title="Toggle right workbench">${icon("slider")}</button>
             <button class="icon-btn tb-view" id="tb-toggle-bottom" aria-label="Toggle bottom dock" title="Toggle bottom dock">${icon("monitor")}</button>
+            <button class="icon-btn" id="tb-update" aria-label="Check for updates" title="Check for updates">${icon("update")}</button>
         </div>
     `;
 
@@ -140,6 +141,10 @@ export function createToolbar(root, h) {
         }
         if (e.target.closest("#tb-toggle-bottom")) {
             h.onToggleBottom?.();
+            return;
+        }
+        if (e.target.closest("#tb-update")) {
+            h.onUpdate?.();
             return;
         }
         const btn = e.target.closest("[data-act]");

@@ -18,6 +18,7 @@ import { createInteractions } from "./ui/interactions.js";
 import { dialog, toast, cheatSheet } from "./ui/toast.js";
 import { icon } from "./ui/icons.js";
 import { audio } from "./audio.js";
+import { runUpdateFlow, updatesSupported } from "./updater.js";
 import { buildVcd } from "./vcdExport.js";
 import { createTerminalController } from "./ui/terminal.js";
 
@@ -494,7 +495,13 @@ function initComponents() {
         onExample: (id) => loadExample(id),
         onToggleRight: () => toggleRight(),
         onToggleBottom: () => toggleBottom(),
+        onUpdate: () => { void runUpdateFlow(); },
     });
+
+    // The update button only makes sense inside the desktop webview.
+    if (!updatesSupported()) {
+        document.getElementById("tb-update")?.remove();
+    }
 
     const vol = $("tb-volume");
     if (vol) {

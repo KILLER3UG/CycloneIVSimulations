@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "remote-sidecar",
+  "description": "The app UI is served by the local backend sidecar origin; grant it the updater/process IPC.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*/*", "http://localhost:*/*"]
+  },
+  "permissions": [
+    "updater:default",
+    "process:default"
+  ]
+}
