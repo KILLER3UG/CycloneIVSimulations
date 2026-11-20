@@ -271,3 +271,79 @@ def test_board_models_still_attach_on_the_default_board():
     assert eeprom["eeprom"]["address"] == 80  # AT24C08 at 0x50 (schematic)
     lm75 = next(m for m in models if m["kind"] == "i2c_lm75")
     assert lm75["lm75"]["address"] == 72  # LM75 at 0x48 (schematic)
+
+
+# ---------------------------------------------------------------------------
+# Imported-board device figures: a known Cyclone IV E part must never get
+# zeroed resource figures (which made every design "exceed the 0 available"),
+# and manifest-provided device metadata must be honored verbatim.
+# ---------------------------------------------------------------------------
+
+def test_imported_board_with_known_part_gets_real_device_figures():
+    manifest = _sdk_manifest()  # fpga_part EP4CE10E22C8N
+    manifest["id"] = "figures-board"
+    board_registry.register_board(manifest)
+    try:
+        device = board_registry.get_board("figures-board")["devices"]["ep4ce10"]
+        assert device["logicElements"] == 10320
+        assert device["m9kBlocks"] == 46
+        assert device["memoryKbit"] == 414
+        assert device["multipliers18x18"] == 23
+        assert device["plls"] == 2
+        assert device["userIo"] == 91  # EQFP-144
+        assert device["package"] == "EQFP-144"
+        assert device["speedGrade"] == "8"
+    finally:
+        board_registry.unregister_board("figures-board")
+
+
+def test_imported_ep4ce22_board_matches_the_de0_nano_figures():
+    manifest = _sdk_manifest()
+    manifest["id"] = "figures-22"
+    manifest["fpga_part"] = "EP4CE22F17C6N"
+    board_registry.register_board(manifest)
+    try:
+        device = board_registry.get_board("figures-22")["devices"]["ep4ce22"]
+        assert device["logicElements"] == 22320
+        assert device["m9kBlocks"] == 66
+        assert device["memoryKbit"] == 594
+        assert device["multipliers18x18"] == 66
+        assert device["plls"] == 4
+        assert device["userIo"] == 153  # FBGA-256
+        assert device["package"] == "FBGA-256"
+    finally:
+        board_registry.unregister_board("figures-22")
+
+
+def test_imported_board_devices_metadata_is_not_zeroed():
+    manifest = _sdk_manifest()
+    manifest["id"] = "figures-custom"
+    manifest["devices"] = {"custom": {
+        "key": "custom", "family": "Cyclone IV E", "part": "EP4CE30F23C8N",
+        "quartusDevice": "EP4CE30F23C8", "package": "FBGA-484",
+        "speedGrade": "8", "logicElements": 28848, "m9kBlocks": 126,
+        "memoryKbit": 1134, "multipliers18x18": 126, "plls": 4, "userIo": 235,
+    }}
+    board_registry.register_board(manifest)
+    try:
+        device = board_registry.get_board("figures-custom")["devices"]["custom"]
+        assert device["logicElements"] == 28848
+        assert device["m9kBlocks"] == 126
+        assert device["userIo"] == 235
+        assert device["speedGrade"] == "8"
+        assert device["package"] == "FBGA-484"
+    finally:
+        board_registry.unregister_board("figures-custom")
+
+
+def test_imported_board_with_unknown_part_still_registers():
+    manifest = _sdk_manifest()
+    manifest["id"] = "figures-unknown"
+    manifest["fpga_part"] = "XC7Z020CLG484"
+    board_registry.register_board(manifest)
+    try:
+        device = next(iter(board_registry.get_board("figures-unknown")["devices"].values()))
+        assert device["part"] == "XC7Z020CLG484"
+        assert device["logicElements"] == 0  # honest zero for an unknown part
+    finally:
+        board_registry.unregister_board("figures-unknown")

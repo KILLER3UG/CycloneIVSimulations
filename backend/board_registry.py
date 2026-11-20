@@ -75,30 +75,114 @@ def _infer_id(raw: dict, fallback: str = "") -> str:
     return slug or "custom-board"
 
 
+# Cyclone IV E resource figures (device handbook): family part -> the
+# package-independent resources.  User I/O is package-dependent and resolved
+# by _user_io below.  A known part is NEVER zeroed, so imported boards get
+# the same quality of resource warnings as the built-in profiles.
+_CYCLONE_IV_E_FIGURES = {
+    "EP4CE6": {"logicElements": 6272, "m9kBlocks": 30, "memoryKbit": 270,
+               "multipliers18x18": 15, "plls": 2},
+    "EP4CE10": {"logicElements": 10320, "m9kBlocks": 46, "memoryKbit": 414,
+                "multipliers18x18": 23, "plls": 2},
+    "EP4CE15": {"logicElements": 15408, "m9kBlocks": 56, "memoryKbit": 504,
+                "multipliers18x18": 56, "plls": 4},
+    "EP4CE20": {"logicElements": 19970, "m9kBlocks": 64, "memoryKbit": 576,
+                "multipliers18x18": 64, "plls": 4},
+    "EP4CE22": {"logicElements": 22320, "m9kBlocks": 66, "memoryKbit": 594,
+                "multipliers18x18": 66, "plls": 4},
+    "EP4CE28": {"logicElements": 27648, "m9kBlocks": 84, "memoryKbit": 756,
+                "multipliers18x18": 84, "plls": 4},
+    "EP4CE30": {"logicElements": 28848, "m9kBlocks": 126, "memoryKbit": 1134,
+                "multipliers18x18": 126, "plls": 4},
+    "EP4CE40": {"logicElements": 39600, "m9kBlocks": 126, "memoryKbit": 1134,
+                "multipliers18x18": 126, "plls": 4},
+    "EP4CE55": {"logicElements": 55856, "m9kBlocks": 260, "memoryKbit": 2340,
+                "multipliers18x18": 156, "plls": 4},
+    "EP4CE75": {"logicElements": 75408, "m9kBlocks": 305, "memoryKbit": 2745,
+                "multipliers18x18": 220, "plls": 4},
+    "EP4CE115": {"logicElements": 114480, "m9kBlocks": 423, "memoryKbit": 3807,
+                 "multipliers18x18": 266, "plls": 4},
+}
+
+# Altera package code (the digits after the package letter in the part
+# number) -> (package name, pin/ball count).  F17 is FBGA-256, E22 is
+# EQFP-144, ... the number is a code, not the ball count.
+_PART_PACKAGE_CODES = {
+    "E22": ("EQFP-144", 144),
+    "M164": ("MBGA-164", 164),
+    "F17": ("FBGA-256", 256),
+    "F23": ("FBGA-484", 484),
+    "F29": ("FBGA-780", 780),
+}
+
+
+def _package_from_part(text: str) -> tuple:
+    """'EP4CE22F17C6N' -> ('FBGA-256', 'F17'); ('', code) when the code is
+    unknown and ('', '') when the part is not parseable."""
+    match = re.match(r"^EP4CE\d+([A-Z]\d+)", text, re.IGNORECASE)
+    if not match:
+        return "", ""
+    code = match.group(1).upper()
+    entry = _PART_PACKAGE_CODES.get(code)
+    if entry is None:
+        return "", code
+    return entry[0], code
+
+
+def _user_io(family_part: str, package_code: str) -> int:
+    """User I/O pins for the known part/package combinations (handbook).
+
+    Every Cyclone IV E part in an EQFP-144 exposes the same 91 user I/O; the
+    F17 FBGA-256 parts expose 153.  Unknown combinations return 0 (honest
+    'not known' rather than a guessed figure).
+    """
+    part = family_part.upper()
+    package = package_code.upper()
+    if package == "E22":
+        return 91
+    if part in ("EP4CE15", "EP4CE20", "EP4CE22", "EP4CE28") and package == "F17":
+        return 153
+    return 0
+
+
 def _device_from_part(part: str) -> dict:
-    """Build a minimal device entry from a part number such as EP4CE22F17C6N."""
+    """Build a device entry from a part number such as EP4CE22F17C6N.
+
+    Resource figures come from the Cyclone IV E handbook table, the package
+    and speed grade are decoded from the part string, and user I/O follows
+    the package.  Only a truly unknown part falls back to zeroed figures so
+    an imported board never silently claims resources it does not have.
+    """
     text = str(part or "").strip()
-    match = re.match(r"^(EP4CE\d+)(F\d+)(C\d+)", text, re.IGNORECASE)
+    match = re.match(r"^(EP4CE\d+)([A-Z]\d+)(C\d+)", text, re.IGNORECASE)
     if match:
-        family_part, package_code, speed = match.group(1).upper(), match.group(2).upper(), match.group(3).upper()
+        family_part = match.group(1).upper()
+        package_part = match.group(2).upper()
+        speed = match.group(3)[1:]
         key = family_part.lower()
-        quartus = f"{family_part}{package_code}{speed}"
+        package, package_code = _package_from_part(text)
+        figures = _CYCLONE_IV_E_FIGURES.get(family_part, {})
+        quartus = f"{family_part}{package_part}C{speed}"
     else:
+        family_part = text.upper()
+        package, package_code = "", ""
+        speed = ""
         key = re.sub(r"[^a-z0-9]", "", text.lower()) or "custom"
+        figures = {}
         quartus = text
     return {
         "key": key,
         "family": "Cyclone IV E",
         "part": text,
         "quartusDevice": quartus,
-        "package": "FBGA-256",
-        "speedGrade": "6",
-        "logicElements": 0,
-        "m9kBlocks": 0,
-        "memoryKbit": 0,
-        "multipliers18x18": 0,
-        "plls": 0,
-        "userIo": 0,
+        "package": package or "unknown",
+        "speedGrade": speed or "6",
+        "logicElements": figures.get("logicElements", 0),
+        "m9kBlocks": figures.get("m9kBlocks", 0),
+        "memoryKbit": figures.get("memoryKbit", 0),
+        "multipliers18x18": figures.get("multipliers18x18", 0),
+        "plls": figures.get("plls", 0),
+        "userIo": _user_io(family_part, package_code),
         "coreVoltage": "1.2 V",
         "ioStandard": "3.3 V LVTTL",
     }
@@ -237,6 +321,30 @@ def _peripheral_dict(peripherals: dict, key: str, defaults: dict) -> dict:
     return out
 
 
+def _devices_from_manifest(raw: dict, part: str) -> Dict[str, dict]:
+    """Device entries for an imported board.
+
+    A manifest may carry its own ``devices`` metadata (the canonical schema
+    shape); those figures are honored verbatim on top of the part-derived
+    defaults, so a valid spec supplied by the importer is never zeroed.
+    Otherwise the Cyclone IV E figures table fills in known parts.
+    """
+    provided = raw.get("devices")
+    devices: Dict[str, dict] = {}
+    if isinstance(provided, dict):
+        for dev_key, entry in provided.items():
+            if not isinstance(entry, dict):
+                continue
+            base = _device_from_part(str(entry.get("part") or part))
+            base.update({k: v for k, v in entry.items() if v is not None})
+            base["key"] = str(entry.get("key") or dev_key)
+            devices[str(dev_key)] = base
+    if not devices:
+        device = _device_from_part(part)
+        devices[device["key"]] = device
+    return devices
+
+
 def _normalize_sdk_manifest(raw: dict) -> dict:
     """Expand the simplified declarative SDK schema into canonical form."""
     if not str(raw.get("id") or "").strip():
@@ -340,7 +448,7 @@ def _normalize_sdk_manifest(raw: dict) -> dict:
         "layout3d": copy.deepcopy(raw.get("layout3d") or {}),
     }
     part = str(raw.get("fpga_part") or raw.get("fpga") or "")
-    device = _device_from_part(part)
+    devices = _devices_from_manifest(raw, part)
     facts = raw.get("facts")
     if not isinstance(facts, list) or not facts:
         facts = [
@@ -353,7 +461,7 @@ def _normalize_sdk_manifest(raw: dict) -> dict:
         "schema": "cyclone-sdk-board/1",
         "title": f"{name} board profile",
         "id": board_id,
-        "devices": {device["key"]: device},
+        "devices": devices,
         "board": board,
         "pinMap": pin_map,
         "facts": facts,
