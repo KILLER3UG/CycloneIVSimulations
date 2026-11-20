@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
 import time
 
 import pytest
@@ -13,11 +14,41 @@ from backend import terminal as terminal_mod
 from backend.paths import bundle_root
 from backend.server import app
 
+#: Hard bound per WebSocket read: a stalled shell bridge must FAIL the test
+#: with a clear message instead of hanging the whole suite (this exact hang
+#: burned >2 h of CI when the PTY spawn stalled on a hosted runner).
+RECV_TIMEOUT = 60.0
+
+
+def _receive_json(ws, timeout: float = RECV_TIMEOUT) -> dict:
+    """``ws.receive_json()`` with a hard bound (the SDK call blocks forever)."""
+    result: dict = {}
+    done = threading.Event()
+
+    def _run() -> None:
+        try:
+            result["value"] = ws.receive_json()
+        except BaseException as exc:  # noqa: BLE001 - re-raised in the tester
+            result["error"] = exc
+        finally:
+            done.set()
+
+    reader = threading.Thread(target=_run, daemon=True, name="ws-receive")
+    reader.start()
+    if not done.wait(timeout):
+        raise AssertionError(
+            f"terminal sent no message within {timeout:g}s — the shell bridge "
+            "is stalled (see backend/terminal.py)"
+        )
+    if "error" in result:
+        raise result["error"]
+    return result["value"]
+
 
 def _recv_until(ws, kind: str, limit: int = 120) -> dict:
     """Read messages until one of ``kind`` arrives (output may interleave)."""
     for _ in range(limit):
-        message = ws.receive_json()
+        message = _receive_json(ws)
         if message.get("type") == kind:
             return message
     raise AssertionError(f"no {kind!r} message in {limit} reads")
@@ -26,7 +57,7 @@ def _recv_until(ws, kind: str, limit: int = 120) -> dict:
 def _collect_output(ws, needle: str, limit: int = 120) -> str:
     chunks: list[str] = []
     for _ in range(limit):
-        message = ws.receive_json()
+        message = _receive_json(ws)
         kind = message.get("type")
         if kind == "output":
             chunks.append(str(message.get("data", "")))

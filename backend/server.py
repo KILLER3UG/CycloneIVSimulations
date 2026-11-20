@@ -472,7 +472,9 @@ async def websocket_terminal(websocket: WebSocket) -> None:
 
     term = TerminalSession(on_output=on_output, on_exit=on_exit)
     try:
-        term.start()
+        # Off the event loop: a slow/stalled PTY spawn must not freeze every
+        # other WebSocket and request served by this process.
+        await asyncio.to_thread(term.start)
     except Exception as exc:
         await websocket.send_json({"type": "error", "message": str(exc)})
         await websocket.close()

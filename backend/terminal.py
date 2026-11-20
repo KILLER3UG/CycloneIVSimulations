@@ -19,6 +19,7 @@ import shutil
 import signal
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -63,6 +64,10 @@ def _decode(data) -> str:
 class TerminalSession:
     """One interactive shell attached to an optional output callback."""
 
+    #: Seconds to wait for the winpty ConPTY spawn before falling back to a
+    #: pipe-backed shell (a stalled spawn must never hang the caller).
+    SPAWN_TIMEOUT = 15.0
+
     def __init__(
         self,
         rows: int = 24,
@@ -105,17 +110,49 @@ class TerminalSession:
         return self
 
     def _start_windows(self, env: dict) -> None:
-        try:
-            import winpty  # type: ignore
-            self._proc = winpty.PtyProcess.spawn(
-                "cmd.exe", cwd=self.cwd, env=env,
-                dimensions=(self.rows, self.cols),
-            )
+        # winpty's ConPTY spawn can stall indefinitely in environments without
+        # a usable window station (observed on hosted CI runners).  Run the
+        # spawn under a bounded wait and fall back to a pipe-backed cmd.exe
+        # instead of hanging the caller; a late-completing spawn is discarded.
+        outcome: dict = {"proc": None, "error": None, "done": False}
+
+        def _spawn() -> None:
+            try:
+                import winpty  # type: ignore
+                outcome["proc"] = winpty.PtyProcess.spawn(
+                    "cmd.exe", cwd=self.cwd, env=env,
+                    dimensions=(self.rows, self.cols),
+                )
+            except Exception as exc:  # noqa: BLE001 - any winpty failure => fallback
+                outcome["error"] = exc
+            finally:
+                outcome["done"] = True
+
+        spawner = threading.Thread(target=_spawn, daemon=True, name="winpty-spawn")
+        spawner.start()
+        spawner.join(timeout=self.SPAWN_TIMEOUT)
+        if outcome["done"] and outcome["proc"] is not None:
+            self._proc = outcome["proc"]
             self._using_winpty = True
             return
-        except Exception:
-            # winpty is optional; a pipe-backed shell is still usable.
-            self._using_winpty = False
+        if not outcome["done"]:
+            # The spawn may still complete after the timeout; make sure that
+            # late shell never leaks.
+            def _discard_late() -> None:
+                while not outcome["done"]:
+                    time.sleep(0.2)
+                late = outcome["proc"]
+                if late is not None:
+                    try:
+                        late.terminate(force=True)
+                    except Exception:
+                        pass
+
+            threading.Thread(target=_discard_late, daemon=True,
+                             name="winpty-discard").start()
+
+        # winpty is optional; a pipe-backed shell is still usable.
+        self._using_winpty = False
 
         creationflags = 0
         if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
@@ -152,7 +189,10 @@ class TerminalSession:
             return data or None
         if os.name == "nt":
             assert self._proc.stdout is not None
-            chunk = self._proc.stdout.read(4096)
+            # read1() returns whatever the pipe has now; BufferedReader.read()
+            # would block until the FULL 4096 bytes arrive (or EOF), which
+            # stalls the interactive prompt/output flow (CI hang root cause).
+            chunk = self._proc.stdout.read1(4096)
             return _decode(chunk) if chunk else None
         assert self._master_fd is not None
         try:
