@@ -4,7 +4,8 @@ uvicorn[standard]>=0.30
 websockets>=12.0
 # Interactive terminal bridge (ConPTY) — the pipe-backed cmd.exe fallback is
 # only a degraded mode; the real app and CI both want the PTY path.
-winpty>=2.0 ; sys_platform == "win32"
+# (The import name is "winpty"; the PyPI distribution is "pywinpty".)
+pywinpty>=2.0 ; sys_platform == "win32"
 
 # Tests
 pytest>=8.0
