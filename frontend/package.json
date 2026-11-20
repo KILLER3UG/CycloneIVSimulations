@@ -1,7 +1,7 @@
 {
   "name": "cyclone4-frontend",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "description": "Cyclone IV Studio \u2014 Vite frontend for the RZ-EasyFPGA A2.2 simulator",
   "scripts": {

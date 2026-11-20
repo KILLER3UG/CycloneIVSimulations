@@ -94,13 +94,18 @@ const expected = EXPECTED || (existsSync(resolve(HERE, "../../VERSION"))
     ? (await import("node:fs")).readFileSync(resolve(HERE, "../../VERSION"), "utf8").trim()
     : "");
 let healthy = "";
-for (let i = 0; i < 120; i++) {
+let connection = browser;
+for (let i = 0; i < 180; i++) {
     await wait(1000);
     try {
         const res = await fetch("http://127.0.0.1:9229/json/version");
         if (!res.ok) continue;
-        // the relaunch creates a NEW webview target — re-attach each pass
-        const pages2 = await browser.pages();
+        // The relaunch kills the old webview target (and may invalidate the
+        // old CDP connection) — reconnect when needed and re-attach.
+        if (!connection || connection.disconnected) {
+            connection = await puppeteer.connect({ browserURL: CDP, defaultViewport: null });
+        }
+        const pages2 = await connection.pages();
         const page2 = pages2[0];
         if (!page2) continue;
         healthy = await page2.evaluate(async () => {
@@ -108,7 +113,9 @@ for (let i = 0; i < 120; i++) {
             return (await r.json()).appVersion || "";
         }).catch(() => "");
         if (healthy) break;
-    } catch { /* relaunching */ }
+    } catch {
+        connection = null; // stale/dead connection — reconnect next pass
+    }
 }
 step(`app relaunched on v${healthy}`, expected ? healthy === expected : Boolean(healthy),
     `expected v${expected}, got v${healthy}`);

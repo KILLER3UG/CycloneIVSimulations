@@ -48,7 +48,7 @@ export function createStore() {
         bottomOpen: true,
 
         // backend data
-        appVersion: "0.1.2",
+        appVersion: "0.1.3",
         backendOk: null, // null = unknown, true/false
         ghdlVersion: "",
         profile: null, // GET /api/board → { board, device }
