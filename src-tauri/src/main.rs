@@ -328,21 +328,11 @@ fn launch_sidecar(
 fn main() {
     let backend_state = Arc::new(Mutex::new(None::<BackendGuard>));
     // The updater polls this repository's published releases (the latest.json
-    // asset uploaded by the release workflow). Local verification can point
-    // it at any manifest with CYCLONE_UPDATE_ENDPOINT (semicolon-separated).
-    let mut updater = tauri_plugin_updater::Builder::new();
-    if let Ok(raw) = env::var("CYCLONE_UPDATE_ENDPOINT") {
-        let endpoints: Vec<tauri_plugin_updater::UpdaterEndpoint> = raw
-            .split(';')
-            .filter_map(|entry| entry.trim().parse().ok())
-            .collect();
-        if !endpoints.is_empty() {
-            updater = updater.endpoints(endpoints);
-        }
-    }
+    // asset uploaded by the release workflow); endpoint + minisign pubkey are
+    // configured in tauri.conf.json.
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
-        .plugin(updater.build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppBackendState(Arc::clone(&backend_state)))
         .setup(move |app| {
             let handle = app.handle().clone();
