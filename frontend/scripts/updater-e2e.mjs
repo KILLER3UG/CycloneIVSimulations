@@ -54,28 +54,42 @@ if (/Up to date/.test(dialogText)) {
     process.exit(failures ? 1 : 0);
 }
 
-// 3. download + install (the dialog shows a progress bar, then the restart prompt)
+// 3. download + install. Two outcomes are valid:
+//    - the app survives and shows the "Update installed" dialog, or
+//    - the NSIS installer closes the app mid-install (the POSTINSTALL hook
+//      relaunches it) — the page target then disappears.
 await page.evaluate(() => {
     const btn = [...document.querySelectorAll(".modal-actions .btn")]
         .find((b) => /Download & install/i.test(b.textContent));
     btn?.click();
 });
-const installText = await page
-    .waitForFunction(
-        () => /Update installed|Update failed/.test(document.querySelector(".modal")?.textContent || ""),
-        { timeout: 600000, polling: 1000 },
-    )
-    .then(() => page.evaluate(() => document.querySelector(".modal").textContent))
-    .catch(() => "");
-step("update downloaded + installed", /Update installed/.test(installText), installText.slice(0, 200));
-if (!/Update installed/.test(installText)) process.exit(1);
+let installedDialog = false;
+let appVanished = false;
+for (let i = 0; i < 600; i++) {
+    await wait(1000);
+    try {
+        const text = await page.evaluate(() => document.querySelector(".modal")?.textContent || "");
+        if (/Update installed/.test(text)) { installedDialog = true; break; }
+        if (/Update failed/.test(text)) {
+            step("update downloaded + installed", false, text.slice(0, 200));
+            process.exit(1);
+        }
+    } catch {
+        appVanished = true; // target closed — the installer took over
+        break;
+    }
+}
+step("update downloaded + installed", installedDialog || appVanished,
+    installedDialog ? "app survived, restart prompt shown" : "app closed for silent install");
 
-// 4. restart into the new version
-await page.evaluate(() => {
-    const btn = [...document.querySelectorAll(".modal-actions .btn")]
-        .find((b) => /Restart now/i.test(b.textContent));
-    btn?.click();
-});
+// 4. restart into the new version (relaunch() or the POSTINSTALL hook)
+if (installedDialog) {
+    await page.evaluate(() => {
+        const btn = [...document.querySelectorAll(".modal-actions .btn")]
+            .find((b) => /Restart now/i.test(b.textContent));
+        btn?.click();
+    });
+}
 const expected = EXPECTED || (existsSync(resolve(HERE, "../../VERSION"))
     ? (await import("node:fs")).readFileSync(resolve(HERE, "../../VERSION"), "utf8").trim()
     : "");
@@ -84,14 +98,16 @@ for (let i = 0; i < 120; i++) {
     await wait(1000);
     try {
         const res = await fetch("http://127.0.0.1:9229/json/version");
-        if (res.ok) {
-            // webview is back; ask the app itself
-            healthy = await page.evaluate(async () => {
-                const r = await fetch("/api/health");
-                return (await r.json()).appVersion || "";
-            }).catch(() => "");
-            if (healthy) break;
-        }
+        if (!res.ok) continue;
+        // the relaunch creates a NEW webview target — re-attach each pass
+        const pages2 = await browser.pages();
+        const page2 = pages2[0];
+        if (!page2) continue;
+        healthy = await page2.evaluate(async () => {
+            const r = await fetch("/api/health");
+            return (await r.json()).appVersion || "";
+        }).catch(() => "");
+        if (healthy) break;
     } catch { /* relaunching */ }
 }
 step(`app relaunched on v${healthy}`, expected ? healthy === expected : Boolean(healthy),

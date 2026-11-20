@@ -7,10 +7,22 @@
 ; previous instance is still up.
 
 !macro NSIS_HOOK_PREINSTALL
-  DetailPrint "Stopping any running Cyclone IV Studio backend..."
+  DetailPrint "Stopping any running Cyclone IV Studio instance..."
+  nsExec::Exec 'taskkill /F /IM cyclone-iv-studio.exe /T'
   nsExec::Exec 'taskkill /F /IM cyclone-backend.exe /T'
   nsExec::Exec 'taskkill /F /IM ghdl.exe /T'
   Sleep 800
+!macroend
+
+!macro NSIS_HOOK_POSTINSTALL
+  ; After an updater-driven (silent) install the running app has been closed,
+  ; so the JavaScript relaunch() call never fires — bring the new version
+  ; back up here. A manual interactive install already auto-launches via the
+  ; Tauri template, so only relaunch in silent mode.
+  IfSilent 0 +4
+    DetailPrint "Relaunching Cyclone IV Studio after update..."
+    Sleep 800
+    Exec '"$INSTDIR\cyclone-iv-studio.exe"'
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL

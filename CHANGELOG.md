@@ -4,6 +4,11 @@ All notable changes to **Cyclone IV Studio** are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-11-20
+
+### Fixed
+- **Auto-relaunch after update**: the updater-driven (silent) NSIS install closes the running app, so the in-app `relaunch()` never fired and the app stayed closed. A `POSTINSTALL` hook now relaunches the freshly installed build, and `PREINSTALL` also stops the app executable itself.
+
 ## [0.1.1] - 2026-11-20
 
 ### Added
