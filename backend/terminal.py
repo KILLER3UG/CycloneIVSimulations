@@ -1,13 +1,23 @@
 """Interactive terminal bridge for the simulator sidecar.
 
-The terminal is a real OS shell started in the app bundle directory with the
-bundled (or discovered) GHDL executable directory prepended to ``PATH``, so a
-student can type ``ghdl ...`` immediately after opening the terminal.
+The terminal is a real OS shell started in a sensible working directory with
+the bundled (or discovered) GHDL executable directory prepended to ``PATH``,
+so a student can type ``ghdl ...`` immediately after opening the terminal.
+
+Nothing about the machine is hardcoded:
+
+* the shell is the user's default — ``$SHELL`` on POSIX/WSL, ``%COMSPEC%`` on
+  Windows (``cmd.exe``/``/bin/sh`` only as last-resort fallbacks);
+* the environment (including the system ``PATH``) is inherited as-is;
+* the working directory resolves dynamically: an explicit request wins, then
+  the workspace root (development checkout) or the user's projects directory
+  (installed app), then the user's home directory.
 
 On Windows a ConPTY is used when ``winpty`` is available; if it is not, the
-module falls back to a plain pipe-backed ``cmd.exe``.  On POSIX a standard
-``pty.openpty()`` pair is used.  Every shell is tracked so a WebSocket disconnect
-or server shutdown can kill the whole child process tree (no orphan shells).
+module falls back to a plain pipe-backed shell.  On POSIX a standard
+``pty.openpty()`` pair is used.  Every shell is tracked so a WebSocket
+disconnect or server shutdown can kill the whole child process tree (no
+orphan shells).
 """
 
 from __future__ import annotations
@@ -18,13 +28,14 @@ import queue
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 from .ghdl_tool import GhdlNotFoundError, find_ghdl
-from .paths import bundle_root
+from .paths import bundle_root, projects_dir, user_data_dir
 
 _ACTIVE_TERMINALS: set["TerminalSession"] = set()
 _LOCK = threading.Lock()
@@ -44,6 +55,44 @@ def ghdl_on_path() -> bool:
         return False
     augmented = str(Path(binary).resolve().parent) + os.pathsep + os.environ.get("PATH", "")
     return shutil.which("ghdl", path=augmented) is not None
+
+
+def default_shell() -> str:
+    """The user's default shell, detected from the environment.
+
+    POSIX (and WSL) honour ``$SHELL``; Windows honours ``%COMSPEC%``.  The
+    platform's standard shell (``/bin/sh`` / ``cmd.exe``) is only a last
+    resort when the variable is unset — never a hardcoded assumption.
+    """
+    if os.name == "nt":
+        return os.environ.get("COMSPEC") or os.environ.get("SHELL") or "cmd.exe"
+    return os.environ.get("SHELL") or os.environ.get("COMSPEC") or "/bin/sh"
+
+
+def resolve_cwd(explicit: Optional[str] = None) -> str:
+    """Working directory for a new shell, resolved dynamically.
+
+    Order: an explicit request from the caller, then the workspace root (the
+    development checkout, or the user's saved-projects directory for the
+    installed app), then the user's home directory — the first one that
+    exists wins.
+    """
+    candidates: list[Path] = []
+    if explicit and str(explicit).strip():
+        candidates.append(Path(str(explicit).strip()).expanduser())
+    if getattr(sys, "frozen", False):
+        candidates.append(projects_dir(create=False))
+    else:
+        candidates.append(bundle_root())
+    candidates.append(user_data_dir(create=False))
+    candidates.append(Path.home())
+    for candidate in candidates:
+        try:
+            if candidate.is_dir():
+                return str(candidate)
+        except OSError:
+            continue
+    return str(Path.home())
 
 
 def _shell_env() -> dict:
@@ -78,7 +127,7 @@ class TerminalSession:
     ) -> None:
         self.rows = max(1, int(rows))
         self.cols = max(1, int(cols))
-        self.cwd = str(cwd or bundle_root())
+        self.cwd = resolve_cwd(cwd)
         self.on_output = on_output
         self.on_exit = on_exit
         self.ghdl_on_path = ghdl_on_path()
@@ -110,9 +159,10 @@ class TerminalSession:
         return self
 
     def _start_windows(self, env: dict) -> None:
+        shell = default_shell()
         # winpty's ConPTY spawn can stall indefinitely in environments without
         # a usable window station (observed on hosted CI runners).  Run the
-        # spawn under a bounded wait and fall back to a pipe-backed cmd.exe
+        # spawn under a bounded wait and fall back to a pipe-backed shell
         # instead of hanging the caller; a late-completing spawn is discarded.
         outcome: dict = {"proc": None, "error": None, "done": False}
 
@@ -120,7 +170,7 @@ class TerminalSession:
             try:
                 import winpty  # type: ignore
                 outcome["proc"] = winpty.PtyProcess.spawn(
-                    "cmd.exe", cwd=self.cwd, env=env,
+                    shell, cwd=self.cwd, env=env,
                     dimensions=(self.rows, self.cols),
                 )
             except Exception as exc:  # noqa: BLE001 - any winpty failure => fallback
@@ -158,7 +208,7 @@ class TerminalSession:
         if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
             creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
         self._proc = subprocess.Popen(
-            ["cmd.exe"], cwd=self.cwd, env=env,
+            [shell], cwd=self.cwd, env=env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, creationflags=creationflags,
         )
@@ -169,13 +219,14 @@ class TerminalSession:
         import termios
         import struct
 
+        shell = default_shell()
         self._master_fd, self._slave_fd = pty.openpty()
         fcntl.ioctl(
             self._slave_fd, termios.TIOCSWINSZ,
             struct.pack("HHHH", self.rows, self.cols, 0, 0),
         )
         self._proc = subprocess.Popen(
-            ["/bin/sh"], cwd=self.cwd, env=env,
+            [shell], cwd=self.cwd, env=env,
             stdin=self._slave_fd, stdout=self._slave_fd, stderr=self._slave_fd,
             start_new_session=True, close_fds=True,
         )
@@ -387,8 +438,9 @@ def exec_terminal_command(
 ) -> dict:
     """Run one command synchronously with GHDL on PATH."""
     env = _shell_env()
-    target_cwd = str(cwd or bundle_root())
-    argv = ["cmd.exe", "/C", command] if os.name == "nt" else ["/bin/sh", "-c", command]
+    target_cwd = resolve_cwd(cwd)
+    shell = default_shell()
+    argv = [shell, "/C", command] if os.name == "nt" else [shell, "-c", command]
     try:
         # A fresh session lets us kill the entire tree on timeout; a plain
         # subprocess.run(timeout=...) only kills the direct child.
@@ -444,4 +496,6 @@ __all__ = [
     "active_terminals",
     "exec_terminal_command",
     "ghdl_on_path",
+    "default_shell",
+    "resolve_cwd",
 ]

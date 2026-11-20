@@ -175,11 +175,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--blue); margin:
 .tb-step.active .tb-step-dot {
     background: var(--blue);
     box-shadow: 0 0 0 3px var(--blue-soft);
-    animation: step-pulse 1.4s ease-in-out infinite;
-}
-@keyframes step-pulse {
-    0%, 100% { box-shadow: 0 0 0 3px var(--blue-soft); }
-    50% { box-shadow: 0 0 0 5px var(--blue-soft); }
 }
 .tb-step.error { color: var(--red); }
 .tb-step.error .tb-step-dot { background: var(--red); box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12); }

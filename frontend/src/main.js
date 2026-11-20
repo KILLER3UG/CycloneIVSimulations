@@ -275,7 +275,7 @@ function applyStimulusEntry(entry) {
         Number(bz.frequency) || 0,
         Number(bz.duty) || 0.5,
     );
-    // The 3D pulse ring follows the SAME decoded state as the audio — the raw
+    // The 3D buzzer state ring follows the SAME decoded state as the audio — the raw
     // image.buzzer pin level is polarity-blind (active-low buzzers sound at 0).
     safeCall(() => board?.setBuzzerActive?.(sounding));
     S.liveValues = S.finalValues;

@@ -167,3 +167,49 @@ def test_terminal_exec_empty_command_is_rejected(client):
     response = client.post("/api/terminal/exec", json={"command": "   "})
     assert response.status_code == 200
     assert response.json()["ok"] is False
+
+
+# ---------------------------------------------------------------------------
+# Shell + working-directory detection: nothing machine-specific is hardcoded.
+# ---------------------------------------------------------------------------
+
+def test_default_shell_comes_from_the_environment(monkeypatch):
+    if os.name == "nt":
+        monkeypatch.setenv("COMSPEC", r"C:\Windows\System32\cmd.exe")
+        monkeypatch.delenv("SHELL", raising=False)
+        assert terminal_mod.default_shell() == r"C:\Windows\System32\cmd.exe"
+    else:
+        monkeypatch.setenv("SHELL", "/bin/zsh")
+        monkeypatch.delenv("COMSPEC", raising=False)
+        assert terminal_mod.default_shell() == "/bin/zsh"
+
+
+def test_default_shell_falls_back_to_platform_default(monkeypatch):
+    monkeypatch.delenv("COMSPEC", raising=False)
+    monkeypatch.delenv("SHELL", raising=False)
+    expected = "cmd.exe" if os.name == "nt" else "/bin/sh"
+    assert terminal_mod.default_shell() == expected
+
+
+def test_resolve_cwd_prefers_an_existing_explicit_directory(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    assert terminal_mod.resolve_cwd(str(workspace)) == str(workspace)
+
+
+def test_resolve_cwd_skips_missing_explicit_and_uses_workspace_root(tmp_path):
+    missing = tmp_path / "does-not-exist"
+    assert terminal_mod.resolve_cwd(str(missing)) == str(terminal_mod.bundle_root())
+
+
+def test_resolve_cwd_installed_app_uses_the_projects_workspace(monkeypatch, tmp_path):
+    monkeypatch.setattr(terminal_mod.sys, "frozen", True, raising=False)
+    monkeypatch.setenv("CYCLONE_USER_DATA_DIR", str(tmp_path))
+    expected = terminal_mod.projects_dir(create=True)
+    assert terminal_mod.resolve_cwd(None) == str(expected)
+
+
+def test_resolve_cwd_final_fallback_is_the_home_directory(monkeypatch):
+    monkeypatch.setattr(terminal_mod.sys, "frozen", True, raising=False)
+    monkeypatch.setenv("CYCLONE_USER_DATA_DIR", str(__import__("pathlib").Path.home() / "no-such-dir-xyz"))
+    assert terminal_mod.resolve_cwd(None) == str(terminal_mod.Path.home())

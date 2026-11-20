@@ -30,7 +30,7 @@ import { buildPassives } from "./passives.js";
 import { buildConnectors } from "./connectors.js";
 import { buildHeaders } from "./headers.js";
 import { buildIO, LIT_COLOR, DARK_COLOR } from "./io.js";
-import { mulberry32, glowTexture, disposeObject } from "./util.js";
+import { mulberry32, disposeObject } from "./util.js";
 
 const PRESETS = {
     // Viewing DIRECTIONS only — the distance is always computed by
@@ -69,14 +69,13 @@ export class Board3D {
         this._disposed = false;
         this._fps = { frames: 0, last: performance.now(), value: 0 };
         this._tween = null;
-        this._pulse = null;
         this._buzzerRing = null;
         // Auto-fit: presets/Fit keep the whole board framed; a manual zoom
         // (wheel or dolly buttons) or a component focus hands control back
         // to the user until the next preset/fit.
         this._autoFit = true;
         // Demand-driven rendering: the board renders only when something
-        // actually changed (state paint, controls damping, tween/pulse,
+        // actually changed (state paint, controls damping, tween,
         // streaming capture, IO transition). After 1.5 s fully static the
         // rAF loop sleeps entirely — a static board costs zero GPU/CPU —
         // and any mutator or pointer event wakes it via _wake().
@@ -435,7 +434,7 @@ export class Board3D {
         if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
     }
 
-    /** Buzzer visual state; immediate=true paints the pulse ring this turn. */
+    /** Buzzer visual state; immediate=true paints the state ring this turn. */
     _setBuzzerVisual(on, immediate = false) {
         const bz = this.io?.buzzer;
         if (!bz) return;
@@ -461,7 +460,7 @@ export class Board3D {
     }
 
     /**
-     * Drive the SP1 mesh + pulse ring from the DECODED buzzer state (tone /
+     * Drive the SP1 mesh + state ring from the DECODED buzzer state (tone /
      * frequency already account for pin polarity). `immediate` paints the ring
      * on this turn so a <1 ms stimulus flip is visible in the same frame.
      */
@@ -808,46 +807,22 @@ export class Board3D {
             target: pos.toArray(),
             duration: 650,
         });
-        // pulse ring
-        if (this._pulse) {
-            this.scene.remove(this._pulse.mesh);
-            disposeObject(this._pulse.mesh);
-            this._pulse = null;
-        }
-        const ring = new THREE.Mesh(
-            new THREE.RingGeometry(anchor.radius * 0.7, anchor.radius * 0.85, 40),
-            new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }),
-        );
-        ring.rotation.x = -Math.PI / 2;
-        ring.position.copy(pos).y += 0.4;
-        this.scene.add(ring);
-        this._pulse = { mesh: ring, t0: performance.now() };
         return true;
     }
 
+    // Pin highlights used to be a flashing additive sprite; board components
+    // must stay visually stable, so picks no longer paint anything. The API
+    // remains for callers that report a picked pin.
     highlightPin(pinId) {
-        const key = String(pinId || "").toUpperCase().startsWith("PIN_")
-            ? String(pinId).toUpperCase()
-            : String(pinId || "").toUpperCase();
-        const point = this._probeMap?.get(key) || this._probeMap?.get(String(pinId));
-        if (!point) return false;
-        if (!this._highlight) {
-            const mat = new THREE.SpriteMaterial({
-                map: glowTexture(), color: new THREE.Color(1.6, 1.6, 1.6),
-                transparent: true, opacity: 0.95, depthWrite: false, blending: THREE.AdditiveBlending,
-            });
-            this._highlight = new THREE.Sprite(mat);
-            this._highlight.scale.set(6, 6, 1);
-            this.scene.add(this._highlight);
-        }
-        this._highlight.visible = true;
-        this._highlight.position.copy(point.position);
-        return true;
+        // Pin highlights used to be a flashing additive sprite; board
+        // components must stay visually stable, so picks no longer paint
+        // anything. Still reports whether the pin is known (callers toast
+        // unknown pins).
+        const key = String(pinId || "").toUpperCase();
+        return Boolean(this._probeMap?.get(key) || this._probeMap?.get(String(pinId)));
     }
 
-    _hideHighlight() {
-        if (this._highlight) this._highlight.visible = false;
-    }
+    _hideHighlight() {}
 
     probePoints() {
         return (this._probePoints || []).map((p) => ({
@@ -970,7 +945,7 @@ export class Board3D {
     _loop = () => {
         if (this._disposed) return;
         const now = performance.now();
-        const animating = this.running || this._tween || this._pulse;
+        const animating = this.running || this._tween;
         if (!this._dirty && !animating && !this._ioActive) {
             if (now - this._lastActive > 1500) {
                 this._sleeping = true;
@@ -1013,19 +988,6 @@ export class Board3D {
             if (t >= 1) this._tween = null;
         }
 
-        // pulse ring fade
-        if (this._pulse) {
-            const t = (now - this._pulse.t0) / 1200;
-            if (t >= 1) {
-                this.scene.remove(this._pulse.mesh);
-                disposeObject(this._pulse.mesh);
-                this._pulse = null;
-            } else {
-                this._pulse.mesh.material.opacity = 0.9 * (1 - t);
-                this._pulse.mesh.scale.setScalar(1 + t * 0.6);
-            }
-        }
-
         // dust drift removed — Studio Monochrome keeps the void perfectly clean
 
         this.controls.update();
@@ -1065,7 +1027,6 @@ export class Board3D {
         const ps = io.powerSwitch;
         if (Math.abs((ps.on ? ps.baseY : ps.baseY - 2.6) - ps.cap.position.y) > 0.01) return true;
         const bz = io.buzzer;
-        if (bz.on && live) return true; // shiver + ring pulse animate continuously
         if (Math.abs(bz.baseY - bz.body.position.y) > 0.001) return true;
         const ring = this._buzzerRing;
         if (ring && ring.material.opacity > 0.01) return true; // fade-out in flight
@@ -1145,22 +1106,16 @@ export class Board3D {
             const targetY = ps.on ? ps.baseY : ps.baseY - 2.6;
             ps.cap.position.y += (targetY - ps.cap.position.y) * (1 - Math.exp(-dt / 0.06));
         }
-        // buzzer shiver + pulse ring (A3/B4: visible + headless-testable)
+        // buzzer state ring — STEADY while the tone is active (no shiver, no
+        // pulsing: board components must not flash during re-renders)
         {
             const bz = io.buzzer;
             if (bz.on && live) this._ensureBuzzerRing();
-            if (bz.on && live && !this.deterministic) {
-                bz.phase += dt * 60;
-                bz.body.position.y = bz.baseY + Math.sin(bz.phase) * 0.05;
-            } else {
-                bz.body.position.y += (bz.baseY - bz.body.position.y) * k;
-            }
+            bz.body.position.y += (bz.baseY - bz.body.position.y) * k;
             const ring = this._buzzerRing;
             if (ring) {
                 const on = bz.on && live;
-                const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.012);
-                ring.material.opacity += ((on ? 0.85 + 0.15 * pulse : 0) - ring.material.opacity) * (1 - Math.exp(-dt / 0.05));
-                ring.scale.setScalar(1 + (on ? 0.10 * pulse : 0));
+                ring.material.opacity += ((on ? 0.9 : 0) - ring.material.opacity) * (1 - Math.exp(-dt / 0.05));
                 ring.visible = ring.material.opacity > 0.01;
             }
         }
