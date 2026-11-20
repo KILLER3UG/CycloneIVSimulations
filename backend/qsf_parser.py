@@ -11,8 +11,13 @@ the fitted board (board_spec.md / backend.device):
 * ``set_instance_assignment -name IO_STANDARD "..." -to <port>`` -> I/O standard
 * ``set_global_assignment -name RESERVE_ALL_UNUSED_PINS_WEAK_PULLUP ...`` -> unused-pin policy
 
-Invalid pin numbers, pins outside the 144-pin package, duplicate pins and
+Invalid pin numbers, pins outside the fitted package, duplicate pins and
 assignments to ports that do not exist are reported as errors with line numbers.
+
+The legal pin identifiers and DEVICE values are derived from the ACTIVE board
+profile (backend.device): an EQFP-144 package accepts PIN_1..PIN_144, a
+FBGA-256 package accepts PIN_1..PIN_256 plus BGA ball names such as PIN_R8,
+and the accepted DEVICE strings are the manifest's fitted parts.
 """
 
 from __future__ import annotations
@@ -25,10 +30,89 @@ from typing import Dict, List, Optional, Tuple
 _LOCATION_RE = re.compile(r"^\s*set_location_assignment\s+(\S+)\s+-to\s+(\S+)\s*$", re.IGNORECASE)
 _GLOBAL_RE = re.compile(r"^\s*set_global_assignment\s+-name\s+(\w+)\s+(.*\S)\s*$", re.IGNORECASE)
 _INSTANCE_RE = re.compile(r"^\s*set_instance_assignment\s+-name\s+(\w+)\s+(.*\S)\s+-to\s+(\S+)\s*$", re.IGNORECASE)
-_PIN_NUMBER_RE = re.compile(r"^PIN_(\d+)$", re.IGNORECASE)
+# Numeric package pins (PIN_87) and BGA ball names (PIN_R8, PIN_AB12) both
+# occur in real Quartus projects; which of the two is legal depends on the
+# fitted package and is decided by the active board profile, not here.
+_PIN_NUMBER_RE = re.compile(r"^PIN_(\d+|[A-Z]+\d+)$", re.IGNORECASE)
 _PIN_BUS_RE = re.compile(r"^(.*?)\[(\d+)\]$")
 
-_EQFP144_PINS = set(range(1, 145))
+# Fallback when the device layer cannot be consulted (should not happen
+# in-tree): the canonical RZ-EasyFPGA A2.2 EQFP-144 profile.
+_FALLBACK_CONSTRAINTS = {
+    "maxPin": 144,
+    "allowBallNames": False,
+    "devices": ["EP4CE6E22C8", "EP4CE10E22C8"],
+    "family": "Cyclone IV E",
+    "part": "EP4CE6E22C8N",
+    "package": "EQFP-144",
+}
+
+
+def _package_pin_count(package: str) -> int:
+    """144 from 'EQFP-144', 256 from 'FBGA-256' (0 -> fallback 144)."""
+    match = re.search(r"(\d+)\s*$", str(package or ""))
+    count = int(match.group(1)) if match else 0
+    return count if count > 0 else _FALLBACK_CONSTRAINTS["maxPin"]
+
+
+def _package_description(package: str) -> str:
+    """'EQFP-144' -> '144-pin EQFP', 'FBGA-256' -> '256-ball FBGA'."""
+    match = re.search(r"([A-Za-z]+)-?(\d+)", str(package or ""))
+    if match and match.group(2):
+        kind = match.group(1).upper()
+        unit = "ball" if "BGA" in kind else "pin"
+        return f"{match.group(2)}-{unit} {kind}"
+    return _package_description(_FALLBACK_CONSTRAINTS["package"])
+
+
+def _device_alternatives(names: List[str]) -> str:
+    """Build a regex alternation accepting each part with an optional N."""
+    parts: List[str] = []
+    for name in names:
+        base = name[:-1] if name.endswith("N") else name
+        parts.append(re.escape(base) + "N?")
+    return "|".join(parts) or "EP4CE6E22C8N?"
+
+
+def _active_constraints() -> dict:
+    """Pin-range/device constraints from the ACTIVE board profile.
+
+    Resolved lazily (no top-level device import) so the parser stays
+    import-light and board selection is honored at call time.
+    """
+    try:
+        from .device import DEVICE, get_active_board_raw
+
+        device = DEVICE() or {}
+        manifest_devices = (get_active_board_raw() or {}).get("devices") or {}
+    except Exception:  # pragma: no cover - the device layer always loads in-tree
+        device = {}
+        manifest_devices = {}
+
+    names: List[str] = []
+    family = ""
+    for entry in manifest_devices.values():
+        if not isinstance(entry, dict):
+            continue
+        for key in ("quartusDevice", "part"):
+            value = str(entry.get(key) or "").strip().upper()
+            if value:
+                names.append(value)
+        family = family or str(entry.get("family") or "")
+
+    package = str(device.get("package") or "")
+    if not names:
+        names = list(_FALLBACK_CONSTRAINTS["devices"])
+        family = family or _FALLBACK_CONSTRAINTS["family"]
+        package = package or _FALLBACK_CONSTRAINTS["package"]
+    return {
+        "maxPin": _package_pin_count(package),
+        "allowBallNames": "BGA" in package.upper(),
+        "devices": sorted(set(names)),
+        "family": family,
+        "part": str(device.get("part") or _FALLBACK_CONSTRAINTS["part"]),
+        "package": package,
+    }
 
 
 @dataclass
@@ -79,6 +163,10 @@ def _warn(line_no: int, message: str) -> dict:
 
 def parse_qsf(text: str) -> QsfResult:
     result = QsfResult()
+    constraints = _active_constraints()
+    device_pattern = re.compile(
+        "^(?:" + _device_alternatives(constraints["devices"]) + ")$", re.IGNORECASE
+    )
     seen_pins: Dict[Tuple[str, Optional[int]], str] = {}
     seen_slots: Dict[Tuple[str, Optional[int]], int] = {}
     seen_pin_targets: Dict[str, Tuple[str, Optional[int]]] = {}
@@ -93,8 +181,24 @@ def parse_qsf(text: str) -> QsfResult:
             pin, target = loc.group(1).upper(), loc.group(2)
             result.assignments += 1
             number = _PIN_NUMBER_RE.match(pin)
-            if not number or int(number.group(1)) not in _EQFP144_PINS:
-                result.errors.append(_error(line_no, f"invalid pin '{pin}': the EP4CE6E22C8N is a 144-pin EQFP (pins 1..144)"))
+            valid_pin = False
+            if number:
+                token = number.group(1)
+                if token.isdigit():
+                    valid_pin = 1 <= int(token) <= constraints["maxPin"]
+                else:
+                    valid_pin = constraints["allowBallNames"]
+            if not valid_pin:
+                if constraints["allowBallNames"]:
+                    hint = (f"{_package_description(constraints['package'])} "
+                            f"(pins 1..{constraints['maxPin']} or ball names like PIN_R8)")
+                else:
+                    hint = (f"{_package_description(constraints['package'])} "
+                            f"(pins 1..{constraints['maxPin']})")
+                result.errors.append(_error(
+                    line_no,
+                    f"invalid pin '{pin}': the {constraints['part']} is a {hint}",
+                ))
                 continue
             base = _PIN_BUS_RE.match(target)
             bit = None
@@ -159,15 +263,18 @@ def parse_qsf(text: str) -> QsfResult:
         if line.lower().startswith(("set_", "define_global_assignment")):
             result.assignments += 1
 
-    # device / family checks against the fitted board
-    if result.device and not re.match(r"^EP4CE(6|10)E22C8N?$", result.device, re.IGNORECASE):
+    # device / family checks against the fitted board (from the active profile)
+    if result.device and not device_pattern.match(result.device):
         result.errors.append(_error(
             0,
-            f"device '{result.device}' does not match the fitted chip: the trainer carries "
-            "EP4CE6E22C8N (or the drop-in EP4CE10E22C8N)",
+            f"device '{result.device}' does not match the fitted chip: the board carries "
+            + " or ".join(constraints["devices"]),
         ))
-    if result.family and result.family.lower() != "cyclone iv e":
-        result.errors.append(_error(0, f"family '{result.family}' does not match the board (Cyclone IV E)"))
+    if result.family and result.family.lower() != constraints["family"].lower():
+        result.errors.append(_error(
+            0,
+            f"family '{result.family}' does not match the board ({constraints['family']})",
+        ))
 
     result.ok = not result.errors
     return result
