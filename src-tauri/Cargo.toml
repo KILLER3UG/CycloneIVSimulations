@@ -1,6 +1,6 @@
 [package]
 name = "cyclone-iv-studio"
-version = "0.1.0"
+version = "0.1.1"
 description = "Interactive Cyclone IV FPGA & RZ-EasyFPGA A2.2 Devboard Simulator"
 authors = ["Cyclone IV Studio Contributors"]
 edition = "2021"

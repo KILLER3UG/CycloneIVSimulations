@@ -4,6 +4,16 @@ All notable changes to **Cyclone IV Studio** are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-11-20
+
+### Added
+- **Desktop auto-update**: the toolbar gained a **Check for updates** button. The installed app queries this repository's GitHub releases (`latest.json`), downloads the minisign-signed installer with a live progress bar, installs it and relaunches. Release builds are signed (`createUpdaterArtifacts` + `TAURI_SIGNING_PRIVATE_KEY` secret) and every release ships an updater manifest (`latest.json`).
+- `frontend/scripts/updater-e2e.mjs` drives the full update flow against the installed app via CDP.
+
+### Fixed
+- Interactive **terminal bridge** could hang forever: the pipe-backed `cmd.exe` fallback read the pipe with `BufferedReader.read(4096)` (blocks until the buffer fills), and `winpty` was not declared in `requirements.txt`, so CI never exercised the ConPTY path. The fallback now uses `read1()`, the PTY spawn is bounded (15 s) and runs off the event loop, and test WebSocket reads are hard-bounded.
+- Multi-board audit fixes: cancelled GHDL runs return a clean "Simulation cancelled" instead of raising `AttributeError`; I²C device models are skipped on boards without them instead of crashing; the QSF validator follows the selected board (package pin range, BGA ball names, fitted devices); imported boards get real Cyclone IV E resource figures; switch aliases resolve per board; plus smaller pin-resolution, classifier, strictPins and cache fixes.
+
 ## [0.1.0] - 2026-11-16
 
 ### Added
