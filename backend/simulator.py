@@ -1694,6 +1694,9 @@ class Simulator:
                     synth = self.ghdl.synthesize(design_paths, work, prep.entity.name, cwd=workdir, token=cancel_token)
                     synth_warnings = _rewrite_diagnostic_files(_synthesis_warnings(synth), prep.aliases, prep.line_maps)
                     warnings.extend(synth_warnings)
+                if analyze.cancelled:
+                    self.last_cache_outcome = "miss"
+                    return self._failure("Simulation cancelled", [], logs, keep, workdir, warnings)
                 if not analyze.ok:
                     # Do not record failures: the library may hold partial
                     # units.  The duplicate-unit backstop above rebuilds the
@@ -1722,6 +1725,8 @@ class Simulator:
             errors = _rewrite_diagnostic_files(errors, prep.aliases, prep.line_maps)
             warnings = _rewrite_diagnostic_files(warnings, prep.aliases, prep.line_maps)
             logs += "\n" + elaborate.output
+            if elaborate.cancelled:
+                return self._failure("Simulation cancelled", [], logs, keep, workdir, warnings)
             if not elaborate.ok:
                 return self._failure("Elaboration failed", errors, logs, keep, workdir, warnings)
 
@@ -1732,6 +1737,8 @@ class Simulator:
             errors = _rewrite_diagnostic_files(errors, prep.aliases, prep.line_maps)
             warnings = _rewrite_diagnostic_files(warnings, prep.aliases, prep.line_maps)
             logs += "\n" + run.output
+            if run.cancelled:
+                return self._failure("Simulation cancelled", [], logs, keep, workdir, warnings)
             if not run.ok or not vcd_file.exists():
                 return self._failure("Simulation run failed", errors, logs, keep, workdir, warnings)
 
@@ -2008,6 +2015,8 @@ class Simulator:
                 warnings.extend(_synthesis_warnings(synth))
     
             warnings = _rewrite_diagnostic_files(warnings, prep.aliases, prep.line_maps)
+            if analyze.cancelled:
+                return self._failure("Simulation cancelled", [], logs, keep, workdir, warnings)
             if not analyze.ok:
                 return self._failure("VHDL analysis failed", errors, logs, keep, workdir, warnings)
 
@@ -2017,6 +2026,8 @@ class Simulator:
             errors = _rewrite_diagnostic_files(errors, prep.aliases, prep.line_maps)
             warnings = _rewrite_diagnostic_files(warnings, prep.aliases, prep.line_maps)
             logs += "\n" + elaborate.output
+            if elaborate.cancelled:
+                return self._failure("Simulation cancelled", [], logs, keep, workdir, warnings)
             if not elaborate.ok:
                 return self._failure("Elaboration failed", errors, logs, keep, workdir, warnings)
 
@@ -2027,6 +2038,8 @@ class Simulator:
             errors = _rewrite_diagnostic_files(errors, prep.aliases, prep.line_maps)
             warnings = _rewrite_diagnostic_files(warnings, prep.aliases, prep.line_maps)
             logs += "\n" + run.output
+            if run.cancelled:
+                return self._failure("Simulation cancelled", [], logs, keep, workdir, warnings)
             if not run.ok or not vcd_file.exists():
                 return self._failure("Simulation run failed", errors, logs, keep, workdir, warnings)
 

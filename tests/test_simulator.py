@@ -1,3 +1,6 @@
+import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -576,3 +579,60 @@ end architecture rtl;
     )
     assert single_led["ok"], single_led.get("errors")
     assert single_led["waveforms"]["boardImage"]["leds"] == [0, 0, 1, 0]
+
+
+# ---------------------------------------------------------------------------
+# Cancel path (ENG-03): a cancelled run must come back as a clean cancelled
+# result — never as an AttributeError and never as a generic "simulation
+# failed" error (regression: GhdlTool._cancelled_result was called but had
+# never been defined).
+# ---------------------------------------------------------------------------
+
+def test_cancelled_result_method_exists():
+    assert callable(getattr(GhdlTool, "_cancelled_result", None))
+
+
+def test_pre_cancelled_token_returns_cancelled_result_without_spawning():
+    tool = GhdlTool(executable="Z:/no/such/ghdl.exe")
+    token = {"cancelled": True, "proc": None}
+    result = tool._run([tool.executable, "--version"], cwd=None, token=token)
+    assert result.cancelled is True
+    assert result.ok is False
+    assert result.returncode != 0
+    assert "cancel" in result.stderr.lower()
+
+
+def test_midflight_cancel_returns_cancelled_result():
+    tool = GhdlTool(executable=sys.executable)
+    token = {"cancelled": False, "proc": None}
+    holder = {}
+
+    def runner():
+        holder["result"] = tool._run(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            cwd=None,
+            timeout=60,
+            token=token,
+        )
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    time.sleep(0.8)
+    assert tool.cancel_token(token) is True  # a live child was killed
+    thread.join(timeout=15)
+    result = holder.get("result")
+    assert result is not None
+    assert result.cancelled is True
+    assert result.ok is False
+    assert "cancel" in result.stderr.lower()
+
+
+def test_simulate_with_precancelled_token_reports_cancelled(simulator):
+    source = (EXAMPLES / "counter.vhd").read_text(encoding="utf-8")
+    token = {"cancelled": True, "proc": None}
+    result = simulator.simulate(
+        SimulationRequest.from_dict({"vhdl": source, "duration": 200}),
+        cancel_token=token,
+    )
+    assert result["ok"] is False
+    assert any("cancel" in str(e.get("message", "")).lower() for e in result["errors"])

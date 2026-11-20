@@ -322,8 +322,26 @@ class GhdlTool:
         return False
 
     # -- internals --------------------------------------------------------
-    # -- internals --------------------------------------------------------
-    # -- internals --------------------------------------------------------
+    def _cancelled_result(self, args: Sequence[str]) -> CommandResult:
+        """A clean not-ok result for a run aborted by its cancel token.
+
+        Marked ``cancelled=True`` so callers can tell a user-requested stop
+        from a compile/simulation error: the stop path discards the run, and
+        the REST/CLI path reports "Simulation cancelled" instead of treating
+        the killed GHDL child as a failure.
+        """
+        message = "simulation cancelled: the GHDL run was stopped by a cancel request"
+        return CommandResult(
+            ok=False,
+            stderr=message,
+            returncode=-1,
+            cancelled=True,
+            command=list(args),
+            diagnostics=[
+                Diagnostic(file="ghdl", line=0, column=0, severity="error", message=message)
+            ],
+        )
+
     def _run(self, args: Sequence[str], cwd: Optional[Path],
              timeout: Optional[float] = None,
              token: Optional[dict] = None) -> CommandResult:
