@@ -259,11 +259,6 @@ _QSF_RE = re.compile(
 )
 
 
-def _unsupported_source(source: str) -> Optional[dict]:
-    """Legacy hook retained for callers; Verilog is translated before GHDL."""
-    return None
-
-
 def _warnings(diagnostics: List[Any]) -> List[dict]:
     return [d.as_dict() for d in diagnostics if d.severity.lower() == "warning"]
 
@@ -1201,9 +1196,6 @@ class Simulator:
         if v_errors:
             return {"ok": False, "entity": None, "board": {}, "errors": v_errors, "warnings": [], "logs": ""}
         combined = "\n".join(content for _, content in sources)
-        unsupported = _unsupported_source(combined)
-        if unsupported is not None:
-            return {"ok": False, "entity": None, "board": {}, "errors": [unsupported], "warnings": [], "logs": ""}
 
         # Audit N7 / ENG-07 mitigation: same textio path pre-scan as simulate.
         escape_errors = _textio_escape_errors(sources)
@@ -1847,9 +1839,6 @@ class Simulator:
         if v_errors:
             return None, self._failure(v_errors[0]["message"], v_errors)
         combined = "\n".join(content for _, content in sources)
-        unsupported = _unsupported_source(combined)
-        if unsupported is not None:
-            return None, self._failure(unsupported["message"], [unsupported])
 
         # Audit N7 / ENG-07 mitigation: reject literal absolute host paths in
         # textio before GHDL ever runs (RB-05 wrote to %TEMP% with process

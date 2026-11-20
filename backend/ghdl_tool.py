@@ -58,13 +58,6 @@ class CommandResult:
     def output(self) -> str:
         return "\n".join(part for part in (self.stdout, self.stderr) if part).strip()
 
-    def error_lines(self) -> List[str]:
-        return [
-            line
-            for line in (self.stdout + "\n" + self.stderr).splitlines()
-            if "error:" in line.lower() or "warning:" in line.lower()
-        ]
-
 
 _ERROR_RE = re.compile(
     r"^(?P<file>.+?):(?P<line>\d+):(?P<column>\d+):\s*"

@@ -169,7 +169,7 @@
           "dig": "DIG[0]",
           "pin": "PIN_133",
           "resistor": "R49",
-          "transistor": "Q1",
+          "transistor": "Q4",
           "diode": "D4",
           "position": "rightmost"
         },
@@ -177,7 +177,7 @@
           "dig": "DIG[1]",
           "pin": "PIN_135",
           "resistor": "R48",
-          "transistor": "Q2",
+          "transistor": "Q3",
           "diode": "D3",
           "position": ""
         },
@@ -185,7 +185,7 @@
           "dig": "DIG[2]",
           "pin": "PIN_136",
           "resistor": "R47",
-          "transistor": "Q3",
+          "transistor": "Q2",
           "diode": "D2",
           "position": ""
         },
@@ -193,7 +193,7 @@
           "dig": "DIG[3]",
           "pin": "PIN_137",
           "resistor": "R46",
-          "transistor": "Q4",
+          "transistor": "Q1",
           "diode": "D1",
           "position": "leftmost"
         }
