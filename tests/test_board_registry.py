@@ -224,3 +224,50 @@ def test_build_sidecar_packages_boards_and_winpty():
     assert '"boards"' in source
     assert '"--collect-all"' in source
     assert '"winpty"' in source
+
+
+# ---------------------------------------------------------------------------
+# Multi-board regression: board_detect.board_models must SKIP the I²C device
+# models a board does not carry instead of raising KeyError (-> HTTP 500 from
+# /api/simulate).  The DE0-Nano manifest has no eeprom/tempSensor device data.
+# ---------------------------------------------------------------------------
+
+class _FakePort:
+    def __init__(self, name, width=1, direction="in", type_name="std_logic"):
+        self.name = name
+        self.width = width
+        self.direction = direction
+        self.type_name = type_name
+
+
+class _FakeEntity:
+    def __init__(self, names):
+        self.ports = [_FakePort(n) for n in names]
+
+
+def test_board_models_skip_missing_i2c_devices_on_de0_nano():
+    from backend import board_detect
+
+    select_board(SECOND)
+    try:
+        models = board_detect.board_models(_FakeEntity(["I2C_SCL", "I2C_SDA"]))
+        assert models == []  # was: KeyError 'eeprom'
+        models = board_detect.board_models(_FakeEntity(["FPGA_SCL", "FPGA_SDA"]))
+        assert models == []  # was: KeyError 'tempSensor'
+    finally:
+        select_board(DEFAULT)
+
+
+def test_board_models_still_attach_on_the_default_board():
+    from backend import board_detect
+
+    select_board(DEFAULT)
+    models = board_detect.board_models(
+        _FakeEntity(["I2C_SCL", "I2C_SDA", "FPGA_SCL", "FPGA_SDA"])
+    )
+    kinds = sorted(m["kind"] for m in models)
+    assert kinds == ["i2c_eeprom", "i2c_lm75"]
+    eeprom = next(m for m in models if m["kind"] == "i2c_eeprom")
+    assert eeprom["eeprom"]["address"] == 80  # AT24C08 at 0x50 (schematic)
+    lm75 = next(m for m in models if m["kind"] == "i2c_lm75")
+    assert lm75["lm75"]["address"] == 72  # LM75 at 0x48 (schematic)

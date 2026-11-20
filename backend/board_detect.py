@@ -48,25 +48,33 @@ def board_models(entity) -> List[Dict[str, Any]]:
             eeprom_scl = g_scl
         if eeprom_sda is None and g_sda is not None:
             eeprom_sda = g_sda
-    if eeprom_scl and eeprom_sda and eeprom_scl["name"].lower() != eeprom_sda["name"].lower():
+    # The board profile decides which I²C devices exist.  Boards without the
+    # EEPROM/LM75 device data (DE0-Nano, custom imports) simply skip the
+    # model instead of raising KeyError -> HTTP 500 (multi-board audit fix).
+    i2c_profile = BOARD.get("i2c") or {}
+    eeprom_cfg = i2c_profile.get("eeprom") or {}
+    lm75_cfg = i2c_profile.get("tempSensor") or {}
+    if (eeprom_cfg and eeprom_scl and eeprom_sda
+            and eeprom_scl["name"].lower() != eeprom_sda["name"].lower()):
         models.append({
             "kind": "i2c_eeprom",
             "scl": eeprom_scl["name"],
             "sda": eeprom_sda["name"],
-            "eeprom": {"address": BOARD["i2c"]["eeprom"]["address"],
-                       "bytes": BOARD["i2c"]["eeprom"]["bytes"],
-                       "page": BOARD["i2c"]["eeprom"]["pageSize"]},
+            "eeprom": {"address": eeprom_cfg["address"],
+                       "bytes": eeprom_cfg.get("bytes", 1024),
+                       "page": eeprom_cfg.get("pageSize", 16)},
         })
-    if lm75_scl and lm75_sda and lm75_scl["name"].lower() != lm75_sda["name"].lower():
+    if (lm75_cfg and lm75_scl and lm75_sda
+            and lm75_scl["name"].lower() != lm75_sda["name"].lower()):
         models.append({
             "kind": "i2c_lm75",
             "scl": lm75_scl["name"],
             "sda": lm75_sda["name"],
-            "lm75": {"address": BOARD["i2c"]["tempSensor"]["address"],
+            "lm75": {"address": lm75_cfg["address"],
                      # Ambient temperature is a simulation parameter: the
                      # board profile may override it, otherwise 25.0 C is the
                      # documented classroom default (LM75 power-up 0x1900 (9-bit, 0.5 C LSB)).
-                     "temperature": BOARD["i2c"]["tempSensor"].get("temperatureC", 25.0)},
+                     "temperature": lm75_cfg.get("temperatureC", 25.0)},
         })
 
     # PS/2 keyboard.
