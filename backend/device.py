@@ -279,6 +279,22 @@ _SCALAR_ALIASES = {
 _RESET_ALIASES = {"reset", "rst"}
 
 
+def _switch_target_port(kind: Optional[str]) -> str:
+    """Profile port that switch/button bus aliases resolve onto.
+
+    On boards that wire the DIP across the key nets (RZ-EasyFPGA A2.2,
+    ``sharedWithButtons``) both resolve onto KEY; on boards with separate
+    banks (DE0-Nano SW vs KEY) a switch alias resolves onto the board's own
+    switch port.
+    """
+    switches = BOARD.get("switches") or {}
+    if kind == "button":
+        return (BOARD.get("buttons") or {}).get("port", "KEY")
+    if switches.get("sharedWithButtons"):
+        return switches.get("port") or "KEY"
+    return switches.get("port") or (BOARD.get("buttons") or {}).get("port", "KEY")
+
+
 def resolve_port_pins(name: str, kind: Optional[str] = None) -> Optional[List[str]]:
     """Resolve a design port name to board profile pins, aliases included.
 
@@ -303,8 +319,7 @@ def resolve_port_pins(name: str, kind: Optional[str] = None) -> Optional[List[st
         pins = profile.get("DIG")
         return list(pins) if pins else None
     if kind in ("switch", "button") and norm in _SWITCHBUS_ALIASES:
-        # the DIP shares the KEY nets on this board (board_spec §3)
-        pins = profile.get("KEY")
+        pins = profile.get(_switch_target_port(kind))
         return list(pins) if pins else None
     if kind == "led" and norm in {"leds"}:
         pins = profile.get("LED")
@@ -318,6 +333,12 @@ def resolve_port_pins(name: str, kind: Optional[str] = None) -> Optional[List[st
     match = re.fullmatch(r"([a-z]+)(\d+)", norm)
     if match:
         target = _SCALAR_ALIASES.get(match.group(1))
+        if target == "KEY":
+            # switch-ish scalars follow the board's own switch bank
+            prefix = match.group(1)
+            target = _switch_target_port(
+                "button" if prefix in ("key", "btn", "button", "push") else "switch"
+            )
         index = int(match.group(2))
         if target:
             pins = profile.get(target)
@@ -354,6 +375,11 @@ def board_pin_map() -> dict:
 
     for group in ("vga", "ps2", "uart", "buzzer", "infrared", "i2c", "lcd"):
         for name, pins in BOARD[group].items():
+            if name in ("pin", "port"):
+                # scalar metadata keys (buzzer.pin etc.), not port names —
+                # registering them created a spurious "PIN" port that a
+                # design could accidentally bind to.
+                continue
             if is_pin_value(pins):
                 add(name, pins)
     sd = BOARD["sdram"]
