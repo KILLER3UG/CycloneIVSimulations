@@ -16,9 +16,12 @@ entity lm75 is
         TEMPERATURE : real      := 25.0   -- degrees C, set from the UI
     );
     port (
-        scl : in    std_logic;
-        sda : inout std_logic;
-        os  : out   std_logic := '1'
+        scl       : in    std_logic;
+        sda       : inout std_logic;
+        os        : out   std_logic := '1';
+        -- Live ambient control (Cyclone IV Studio live mode): integer °C.
+        -- Unconnected in the batch flow -> falls back to TEMPERATURE.
+        ambient_c : in    integer   := -999
     );
 end entity lm75;
 
@@ -36,8 +39,18 @@ architecture behavioural of lm75 is
     signal sda_out   : std_logic := 'Z';
 begin
     -- LM75 temperature register (9-bit, 0.5 C LSB): value = round(T * 2) in
-    -- bits 15..7, so 25.0 C -> 50 * 2^7 = 0x1900.
-    temp_reg <= std_logic_vector(to_signed(integer(TEMPERATURE * 2.0) * 128, 16));
+    -- bits 15..7, so 25.0 C -> 50 * 2^7 = 0x1900.  The live ambient port
+    -- (integer °C) overrides the generic when the wrapper drives it.
+    temp_proc : process (ambient_c)
+        variable t : integer;
+    begin
+        if ambient_c <= -999 then
+            t := integer(TEMPERATURE * 2.0);
+        else
+            t := ambient_c * 2;
+        end if;
+        temp_reg <= std_logic_vector(to_signed(t * 128, 16));
+    end process;
 
     -- Overtemperature comparator with hysteresis (Tos sets, Thyst clears).
     -- OS polarity is selected by configuration bit B2 (OS_POL):
@@ -71,6 +84,10 @@ begin
         variable ack_pending : boolean := false; -- master ACK slot armed
         variable master_acked : boolean := false;-- master ACK level sampled
         variable byte_out : std_logic_vector(15 downto 0);
+        -- 16-bit register writes (Thyst/Tos): the first data byte is the MSB,
+        -- the second the LSB (classic LM75 2-byte write, not 8-bit zero-ext).
+        variable wr_hi      : std_logic_vector(7 downto 0);
+        variable wr_have_hi : boolean := false;
 
         -- Load the selected register into byte_out (16 bits, MSB first).
         procedure load_byte is
@@ -99,10 +116,11 @@ begin
     begin
         scl_x := to_x01(scl);
         if last_sda = '1' and to_x01(sda) = '0' and last_scl = '1' and scl_x = '1' then
-            state   := ADDR;
-            bits    := 0;
-            shifter := 0;
-            sda_out <= 'Z';
+            state       := ADDR;
+            bits        := 0;
+            shifter     := 0;
+            wr_have_hi  := false;
+            sda_out     <= 'Z';
         elsif last_sda = '0' and to_x01(sda) = '1' and last_scl = '1' and scl_x = '1' then
             state   := IDLE;
             sda_out <= 'Z';
@@ -128,8 +146,26 @@ begin
                             sda_out <= '0';              -- ACK
                             state   := ACK_PTR;
                         else
-                            sda_out <= '0';              -- ACK (data accepted)
-                            state   := ACK_DATA;
+                            -- DATA_W byte complete: config is a 1-byte
+                            -- register; Thyst/Tos take an MSB then an LSB
+                            -- (2-byte write per the LM75 datasheet).
+                            sda_out <= '0';              -- ACK
+                            if regsel = CREG or wr_have_hi then
+                                if regsel = CREG then
+                                    conf_reg <= std_logic_vector(to_unsigned(shifter mod 256, 8));
+                                elsif regsel = THREG then
+                                    thyst_reg <= wr_hi & std_logic_vector(to_unsigned(shifter mod 256, 8));
+                                elsif regsel = TSREG then
+                                    tos_reg <= wr_hi & std_logic_vector(to_unsigned(shifter mod 256, 8));
+                                end if;
+                                wr_have_hi := false;
+                                state      := ACK_DATA;  -- -> POINTER next
+                            else
+                                -- first byte of a 16-bit register: the LSB follows
+                                wr_hi      := std_logic_vector(to_unsigned(shifter mod 256, 8));
+                                wr_have_hi := true;
+                                bits       := 0;         -- keep sampling in DATA_W
+                            end if;
                         end if;
                     end if;
                 when ACK_ADDR =>
@@ -187,16 +223,9 @@ begin
                             shifter := shifter mod 256;
                             if state = POINTER then
                                 regsel := shifter;
-                            elsif state = DATA_W then
-                                if regsel = CREG then
-                                    conf_reg <= std_logic_vector(to_unsigned(shifter, 8));
-                                elsif regsel = THREG then
-                                    thyst_reg <= std_logic_vector(to_unsigned(shifter, 16));
-                                elsif regsel = TSREG then
-                                    tos_reg <= std_logic_vector(to_unsigned(shifter, 16));
-                                end if;
-                                -- the ACK slot is handled on the next falling edge
                             end if;
+                            -- DATA_W commits happen on the falling-edge ACK
+                            -- (1-byte config, 2-byte Thyst/Tos MSB+LSB).
                         end if;
                     end if;
                 when DATA_R =>

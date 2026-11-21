@@ -37,6 +37,9 @@ _CLOCK_NAMES = {
     "mclk",
     "master_clk",
     "master_clock",
+    # Altera/Intel PLL input names (altpll-style designs)
+    "inclk0",
+    "inclk",
 }
 
 _RESET_NAMES = {
@@ -62,6 +65,32 @@ def _normalize(name: str) -> str:
     return name.strip().lower()
 
 
+def detect_clocks(entity: Entity) -> List[Port]:
+    """All input ports that look like clocks, in declaration order.
+
+    Used to drive every clock domain of the design from the auto testbench
+    (a single undriven clock would freeze that whole domain at '0').
+    """
+    found: List[Port] = []
+    seen: set = set()
+    for port in entity.ports:
+        if not port.is_input or port.name.lower() in seen:
+            continue
+        name = _normalize(port.name)
+        if name in _CLOCK_NAMES or re.fullmatch(r"(?:sys_?)?clk\d+[a-z]?", name):
+            found.append(port)
+            seen.add(port.name.lower())
+            continue
+        if (
+            (name.startswith("clk") or name.startswith("clock"))
+            and (port.width or 1) == 1
+            and not name.endswith(("en", "enable", "out", "by", "div", "gate"))
+        ):
+            found.append(port)
+            seen.add(port.name.lower())
+    return found
+
+
 def detect_clock(entity: Entity) -> Optional[Port]:
     """Find the clock port: exact/board names first, then clk*/clock* stems.
 
@@ -69,22 +98,8 @@ def detect_clock(entity: Entity) -> Optional[Port]:
     are not obviously something else (clock enable, clock output, divider...),
     so ``clk_en``/``clk_out`` are never mistaken for the clock (audit m3).
     """
-    for port in entity.ports:
-        if not port.is_input:
-            continue
-        name = _normalize(port.name)
-        if name in _CLOCK_NAMES or re.fullmatch(r"(?:sys_?)?clk\d+[a-z]?", name):
-            return port
-    for port in entity.ports:
-        if not port.is_input:
-            continue
-        name = _normalize(port.name)
-        if not ((name.startswith("clk") or name.startswith("clock")) and (port.width or 1) == 1):
-            continue
-        if name.endswith(("en", "enable", "out", "by", "div", "gate")):
-            continue
-        return port
-    return None
+    clocks = detect_clocks(entity)
+    return clocks[0] if clocks else None
 
 
 def _is_active_low(name: str) -> bool:
@@ -356,13 +371,34 @@ def _generic_literal(generic, values: Dict[str, Any]) -> Optional[str]:
     return f'"{text}"'
 
 
-def generate_testbench(entity: Entity, config: TestbenchConfig) -> str:
-    """Return the VHDL source of an automatically generated testbench."""
+def generate_testbench(entity: Entity, config: TestbenchConfig,
+                       notes: Optional[List[dict]] = None) -> str:
+    """Return the VHDL source of an automatically generated testbench.
+
+    ``notes`` optionally collects user-facing warning dicts produced while
+    generating (e.g. multiple clock inputs driven with the same period).
+    """
     clock = next((p for p in entity.ports if p.name == config.clock_port), None) if config.clock_port else None
     reset = next((p for p in entity.ports if p.name == config.reset_port), None) if config.reset_port else None
 
     if clock is None:
         clock = detect_clock(entity)
+    # Drive EVERY clock input: a design with a second, undriven clock would
+    # simulate with that whole domain frozen at '0' (audit probe K).
+    clocks = detect_clocks(entity)
+    if clock is not None and all(c.name != clock.name for c in clocks):
+        clocks.insert(0, clock)
+    if notes is not None and len(clocks) > 1:
+        names = ", ".join(c.name for c in clocks)
+        notes.append({
+            "file": "testbench", "line": 0, "column": 0, "severity": "warning",
+            "message": (
+                f"{len(clocks)} clock inputs detected ({names}); the auto "
+                f"testbench drives all of them with the same "
+                f"{max(0.1, float(config.clock_period_ns)):g} ns period. Use a "
+                "custom testbench for independent clock domains."
+            ),
+        })
     if reset is None and config.reset_port is None:
         detected = detect_reset(entity)
         if detected:
@@ -386,8 +422,9 @@ def generate_testbench(entity: Entity, config: TestbenchConfig) -> str:
     for name, value in config.constant_inputs.items():
         if name in driven:
             stimuli[name] = Stimulus(port=name, kind="constant", value=value)
+    clock_names = {c.name for c in clocks}
     for port in entity.inputs:
-        if port.name in driven and port.name not in stimuli and port.name != (clock.name if clock else None) and port.name != (reset.name if reset else None):
+        if port.name in driven and port.name not in stimuli and port.name not in clock_names and port.name != (reset.name if reset else None):
             if port.name.lower() in model_ports:
                 continue   # the device model drives this pin
             stimuli[port.name] = Stimulus(port=port.name, kind="constant", value=0)
@@ -449,7 +486,8 @@ def generate_testbench(entity: Entity, config: TestbenchConfig) -> str:
                 f"    {sda_b} <= 'H';",
                 "    u_lm75 : entity work.lm75 generic map (TEMPERATURE => "
                           + str(model["lm75"]["temperature"]) + ") port map (scl => " + scl_b
-                          + ", sda => " + sda_b + ");",
+                          + ", sda => " + sda_b
+                          + ", ambient_c => " + str(int(float(model["lm75"]["temperature"]))) + ");",
             ]
         elif kind == "ps2":
             clk_b = model["clock"] + "_bus"
@@ -544,17 +582,19 @@ def generate_testbench(entity: Entity, config: TestbenchConfig) -> str:
     lines.append("")
 
     # Clock generation ------------------------------------------------------
-    if clock is not None:
-        lines.append("    clk_gen : process")
+    # One independent 50 %-duty process per clock input.
+    for clk_index, clk_port in enumerate(clocks):
+        label = "clk_gen" if clk_index == 0 else f"clk_gen_{clk_index}"
+        lines.append(f"    {label} : process")
         lines.append("    begin")
         lines.append("        while not sim_done loop")
-        lines.append(f"            {clock.name} <= '0';")
+        lines.append(f"            {clk_port.name} <= '0';")
         lines.append("            wait for CLK_PERIOD / 2;")
-        lines.append(f"            {clock.name} <= '1';")
+        lines.append(f"            {clk_port.name} <= '1';")
         lines.append("            wait for CLK_PERIOD / 2;")
         lines.append("        end loop;")
         lines.append("        wait;")
-        lines.append("    end process clk_gen;")
+        lines.append(f"    end process {label};")
         lines.append("")
 
     # Reset generation ------------------------------------------------------
@@ -572,8 +612,8 @@ def generate_testbench(entity: Entity, config: TestbenchConfig) -> str:
 
     # Stimulus processes ----------------------------------------------------
     for port in entity.inputs:
-        if port.name == (clock.name if clock else None):
-            continue
+        if port.name in clock_names:
+            continue  # driven by its own clk_gen process
         if port.name == (reset.name if reset else None):
             continue
         stimulus = stimuli.get(port.name)
@@ -674,6 +714,7 @@ __all__ = [
     "Stimulus",
     "TestbenchConfig",
     "detect_clock",
+    "detect_clocks",
     "detect_reset",
     "detect_top_entity",
     "generate_testbench",

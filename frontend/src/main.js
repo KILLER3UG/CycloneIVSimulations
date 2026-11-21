@@ -10,6 +10,8 @@ import { Board3D } from "./board/index.js";
 import { ApiClient, SimSession } from "./api.js";
 import { createStore } from "./state.js";
 import { createToolbar } from "./ui/toolbar.js";
+import { isEditableTarget } from "./ui/editableGuard.js";
+import { reduceLiveVga, reduceUartBytes } from "./liveFrame.js";
 import { createSidebar } from "./ui/sidebar.js";
 import { createEditorPanel } from "./ui/editorPanel.js";
 import { createBottomPanel } from "./ui/bottomPanel.js";
@@ -40,6 +42,17 @@ S.releaseDeadlineMs = 0;
 S.clockPeriodNs = 20;
 S.finalValues = {};
 S.buzzer = { tone: false, frequency: 0, duty: 0, activeLow: true };
+// Live interactive co-simulation state (persistent GHDL stepping).
+S.liveActive = false;
+S.livePace = "max";
+S.liveCyclesTotal = 0;
+S.liveFrames = 0;
+S.liveSpeedText = "\u2014";
+S.liveResetPending = false;
+S.bounceEnabled = false;
+S.lastPayload = null;
+S.uartLiveBytes = [];
+S.liveVga = null;
 
 let board = null;
 let interactions = null;
@@ -301,6 +314,19 @@ function handleChannelChange(changedKind, idx, newVal, prevVal) {
     updateBoardControlButton(dipVisual);
     safeCall(() => sidebar?.setPeripherals?.(S.lastStimulusEntry || {}));
 
+    // Live co-simulation: the physical pin state (wired-AND of key + DIP on
+    // the shared A2.2 bank) is pushed to the persistent GHDL process and the
+    // batch stimulus-map path is bypassed entirely.
+    if (S.liveActive) {
+        safeCall(() => session?.liveInput?.({
+            keys: (S.keyState || []).map(Boolean),
+            dip: (S.dipState || []).map(Boolean),
+            reset: !!S.liveResetPending,
+            bounce: !!S.bounceEnabled,
+        }));
+        return;
+    }
+
     if (S.releaseTimer) { clearTimeout(S.releaseTimer); S.releaseTimer = null; }
     S.releaseDeadlineMs = 0;
 
@@ -496,6 +522,8 @@ function initComponents() {
         onToggleRight: () => toggleRight(),
         onToggleBottom: () => toggleBottom(),
         onUpdate: () => { void runUpdateFlow(); },
+        onPace: (pace) => setLivePace(pace),
+        onBounce: (on) => { S.bounceEnabled = !!on; log(`Mechanical bounce ${on ? "enabled" : "disabled"}`, "cmd"); },
     });
 
     // The update button only makes sense inside the desktop webview.
@@ -541,6 +569,24 @@ function initComponents() {
     bottom = createBottomPanel($("bottompanel"), {
         onOpenProblem: (p) => editor.openFile(p.file || editor.getActiveFile(), p.line, p.column),
         onValuesAt: (t) => { S.simTimeNs = t; },
+        onLiveUartTx: (bytes) => {
+            if (!S.liveActive) { toast("UART injection needs live mode — run first", { kind: "warn" }); return; }
+            safeCall(() => session?.liveUartTx?.({ bytes, baud: 115200 }));
+        },
+        onLivePs2: (byte) => {
+            if (!S.liveActive) { toast("PS/2 injection needs live mode — run first", { kind: "warn" }); return; }
+            safeCall(() => session?.livePs2?.(byte));
+            log(`PS/2 scancode 0x${byte.toString(16).toUpperCase()} injected`, "cmd");
+        },
+        onLiveIr: (addr, cmd) => {
+            if (!S.liveActive) { toast("IR trigger needs live mode — run first", { kind: "warn" }); return; }
+            safeCall(() => session?.liveIr?.(addr, cmd));
+            log(`NEC IR frame 0x${addr.toString(16)}/0x${cmd.toString(16)} fired`, "cmd");
+        },
+        onLiveTemp: (c) => {
+            if (!S.liveActive) return;
+            safeCall(() => session?.liveTemp?.(c));
+        },
         onExportVcd: exportVcd,
         onTerminalInput: (line) => {
             if (!terminal) return;
@@ -1058,12 +1104,14 @@ async function compileAndProgram() {
     safeCall(() => board?.setDesign?.(S.compileBoard));
     safeCall(() => board?.resetVisual?.());
     const payload = simPayload({ plan });
+    S.lastPayload = payload;
     const gen = ++sessionGen;
     session = makeSession({
         onMessage: (msg) => { if (gen === sessionGen) handleSessionMessage(msg); },
         onSimReady: (msg) => { if (gen === sessionGen) handleSimReady(msg); },
         onClose: (byUser) => {
             if (gen !== sessionGen) return;
+            driveBuzzer(false, 0, 0);  // never leave a tone running on a dead socket
             if (!byUser && (S.running || S.paused)) log("Simulation WebSocket closed unexpectedly", "error");
         },
         onOpen: () => {},
@@ -1099,7 +1147,7 @@ async function refresh() {
     session = makeSession({
         onMessage: (msg) => { if (gen === sessionGen) handleSessionMessage(msg); },
         onSimReady: (msg) => { if (gen === sessionGen) handleSimReady(msg); },
-        onClose: () => {},
+        onClose: () => { driveBuzzer(false, 0, 0); },
         onOpen: () => {},
     });
     try { await session.connect(); }
@@ -1126,6 +1174,7 @@ function handleSimReady(msg) {
         S.compileBoard = { ...(S.compileBoard || {}), ...msg.board };
         syncLivePinBindings();
         safeCall(() => board?.setDesign?.(S.compileBoard));
+        safeCall(() => board?.setLiveMap?.(S.compileBoard));
     }
     if (msg.entity) { S.entity = msg.entity; editor.setEntity(msg.entity); }
     bottom.wave.setSignals(S.signals);
@@ -1185,8 +1234,39 @@ function handleSessionMessage(msg) {
             log(wasRefresh && msg.boardImage ? "Simulation complete — board updated"
                 : `Simulation complete — ${msg.totalCycles ?? S.totalCycles} cycles`, "ok");
             if (refreshPending) { refreshPending = false; refresh(); }
+            // The batch preview is done — hand over to the persistent live
+            // co-simulation so key/DIP/reset interaction continues from the
+            // exact end state instead of re-running from t=0.
+            startLiveMode();
             break;
         }
+        case "live_ready":
+            S.liveActive = true;
+            S.livePace = msg.pace || "max";
+            S.liveCyclesTotal = 0;
+            S.liveFrames = 0;
+            safeCall(() => board?.setRunning?.(true));
+            toolbar.setLive(true, S.livePace, "live");
+            setStatus("live");
+            log("Live co-simulation running — press keys / flip DIPs on the board", "ok");
+            break;
+        case "live_frame":
+            handleLiveFrame(msg);
+            break;
+        case "live_pace":
+            S.livePace = msg.pace || S.livePace;
+            toolbar.setLive(true, S.livePace, S.liveSpeedText);
+            log(`Clock pace: ${paceLabel(S.livePace)}`, "cmd");
+            break;
+        case "live_error":
+            S.liveActive = false;
+            toolbar.setLive(false, S.livePace, "\u2014");
+            log(`Live mode error: ${msg.message || "unknown"}${msg.detail ? " — " + msg.detail : ""}`, "error");
+            break;
+        case "live_stopped":
+            S.liveActive = false;
+            toolbar.setLive(false, S.livePace, "\u2014");
+            break;
         case "sim_paused":
             S.paused = true; S.running = false;
             safeCall(() => board?.setRunning?.(false));
@@ -1248,6 +1328,8 @@ function stopSession() {
     }
     S.running = false;
     S.paused = false;
+    S.liveActive = false;
+    toolbar.setLive(false, S.livePace, "\u2014");
     safeCall(() => board?.setRunning?.(false));
     if (S.releaseTimer) { clearTimeout(S.releaseTimer); S.releaseTimer = null; }
     driveBuzzer(false, 0, 0);
@@ -1270,10 +1352,109 @@ function togglePause() {
 function stopSim() {
     driveBuzzer(false, 0, 0);
     safeCall(() => board?.resetVisual?.());
+    if (S.liveActive) {
+        stopLiveMode();
+        S.running = false; S.paused = false;
+        setStatus("idle");
+        log("Live co-simulation stopped", "cmd");
+        return;
+    }
     if (!session || (!S.running && !S.paused)) { setStatus("idle"); return; }
     safeCall(() => session?.stop?.());
 }
+// --------------------------------------------------- live co-simulation ---
+function paceLabel(pace) {
+    return { single: "Single Cycle", "1hz": "1 Hz", "100hz": "100 Hz",
+             "10khz": "10 kHz", max: "Live Max" }[pace] || pace;
+}
+
+/** Hand over from the finished batch capture to persistent live stepping. */
+function startLiveMode() {
+    if (S.liveActive || !session?.open) return;
+    const payload = S.lastPayload || {};
+    session.liveStart({
+        vhdl: payload.vhdl,
+        files: payload.files,
+        top: payload.top,
+        clockPeriod: payload.clockPeriod || S.clockPeriodNs,
+        resetCycles: payload.resetCycles ?? 2,
+        resetActiveHigh: payload.resetActiveHigh ?? true,
+        resetPort: payload.resetPort,
+        clockPort: payload.clockPort,
+    });
+}
+
+function stopLiveMode() {
+    S.liveActive = false;
+    safeCall(() => session?.liveStop?.());
+    toolbar.setLive(false, S.livePace, "\u2014");
+}
+
+function setLivePace(pace) {
+    S.livePace = pace;
+    safeCall(() => session?.livePace?.(pace));
+    if (!S.liveActive) toolbar.setLive(true, pace, S.liveSpeedText);
+}
+
+function handleLiveFrame(msg) {
+    S.liveActive = true;
+    S.liveFrames += 1;
+    S.liveCyclesTotal += Number(msg.cycles) || 0;
+    S.simTimeNs = Number(msg.timeNs) || S.simTimeNs;
+    if (msg.values) S.liveValues = msg.values;
+    safeCall(() => board?.applyLiveFrame?.(msg));
+    // Live peripheral panels: decoded UART bytes + the VGA framebuffer.
+    if (msg.uartBytes?.length) {
+        S.uartLiveBytes = reduceUartBytes(S.uartLiveBytes, msg.uartBytes);
+        safeCall(() => bottom?.setLiveUart?.(S.uartLiveBytes));
+    }
+    if (msg.vga) {
+        S.liveVga = reduceLiveVga(S.liveVga, msg.vga.lines || {});
+        safeCall(() => bottom?.setLiveVga?.(S.liveVga.fb));
+    }
+    if (msg.lcd) safeCall(() => bottom?.setLcd?.((msg.lcd.lines || []).join("\n")));
+    // Honest live-speed readout: cycles advanced per wall second, sampled
+    // once a second from the accumulated totals (never the nominal pace).
+    const now = performance.now();
+    if (!S._liveSpeedAt) { S._liveSpeedAt = now; S._liveSpeedCycles = S.liveCyclesTotal; }
+    if (now - S._liveSpeedAt >= 1000) {
+        const cps = Math.round((S.liveCyclesTotal - S._liveSpeedCycles) * 1000 / (now - S._liveSpeedAt));
+        S.liveSpeedText = `${cps.toLocaleString()} cyc/s \u00b7 ${(cps / 50e6 * 100).toFixed(2)}% of 50 MHz`;
+        S._liveSpeedAt = now;
+        S._liveSpeedCycles = S.liveCyclesTotal;
+        toolbar.setLive(true, S.livePace, S.liveSpeedText);
+    }
+    // Buzzer: the board speaker is PASSIVE — a tone exists only while the pin
+    // toggles (frequency from the toggle count over the frame); a steady DC
+    // level is silence on this board (no on-board oscillator).
+    const bz = msg.buzzer || null;
+    if (bz && bz.toggles > 1 && canPlayBuzzer()) {
+        const freq = bz.toggles / (2 * Math.max(1, msg.cycles) * ((S.clockPeriodNs || 10) * 1e-9));
+        const duty = Math.min(1, Math.max(0, (bz.activeCycles || 0) / Math.max(1, msg.cycles)));
+        S.buzzer = { tone: true, frequency: Math.round(freq), duty, activeLow: true };
+        driveBuzzer(true, Math.min(20000, Math.max(20, freq)), duty);
+    } else if (S.buzzer?.tone || S.buzzer?.frequency) {
+        S.buzzer = { tone: false, frequency: 0, duty: 0, activeLow: true };
+        driveBuzzer(false, 0, 0);
+    }
+    sidebar.setLiveValues(S.liveValues);
+    stats.update(S);
+}
+
+/** Live reset: assert for resetCycles, then release — state, not restart. */
+function liveResetPulse() {
+    const cycles = Math.max(1, Number(S.lastPayload?.resetCycles) || 2);
+    safeCall(() => session?.liveInput?.({ keys: S.keyState, dip: S.dipState, reset: true }));
+    safeCall(() => session?.liveStep?.(cycles));
+    safeCall(() => session?.liveInput?.({ keys: S.keyState, dip: S.dipState, reset: false }));
+}
+
 function resetSim() {
+    if (S.liveActive) {
+        liveResetPulse();
+        log("Live reset pulse sent", "cmd");
+        return;
+    }
     if (!session || (!S.running && !S.paused)) {
         toast("No simulation session — press Compile first", { kind: "warn" });
         return;
@@ -1283,6 +1464,10 @@ function resetSim() {
     safeCall(() => session?.reset?.());
 }
 function stepSim(n) {
+    if (S.liveActive) {
+        if (n > 0) safeCall(() => session?.liveStep?.(n));
+        return;
+    }
     if (!session || !S.paused) { toast("Stepping requires a paused simulation", { kind: "warn" }); return; }
     if (n > 0) safeCall(() => session?.step?.(n));
     else {
@@ -1360,27 +1545,50 @@ function startLoops() {
 }
 
 function bindShortcuts() {
+    // Keyboard-driven hardware inputs: hold 1–4 for KEY1..4, R for RESET
+    // (live co-simulation and batch stimulus both route through the same
+    // channel funnel).
+    const keyFromCode = (code) => {
+        const i = ["Digit1", "Digit2", "Digit3", "Digit4"].indexOf(code);
+        return i >= 0 ? i : -1;
+    };
     document.addEventListener("keydown", (e) => {
-        const inEditor = e.target.closest?.(".monaco-editor, input, textarea, select");
+        // Never hijack typing inside inputs, textareas, selects,
+        // contenteditable hosts or the Monaco/CodeMirror editor.
+        if (isEditableTarget(e.target)) return;
         if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); compileAndProgram(); return; }
         if ((e.ctrlKey || e.metaKey) && e.key === "\\") { e.preventDefault(); toggleRight(); return; }
         if ((e.ctrlKey || e.metaKey) && e.altKey && e.key.toLowerCase() === "b") {
             e.preventDefault(); toggleBottom(); return;
         }
-        if (inEditor) return;
+        const keyIndex = keyFromCode(e.code);
+        if (keyIndex >= 0 && !e.repeat) { setPhysicalKeyPressed(keyIndex, true); e.preventDefault(); return; }
         switch (e.key) {
             case "Escape": stopSim(); break;
-            case "ArrowRight": if (S.paused) { e.preventDefault(); stepSim(1); } break;
+            case "r": case "R":
+                if (!e.repeat) {
+                    if (S.liveActive) liveResetPulse();
+                    else resetSim();
+                }
+                break;
+            case "ArrowRight": if (S.paused || S.liveActive) { e.preventDefault(); stepSim(1); } break;
             case "ArrowLeft": if (S.paused) { e.preventDefault(); stepSim(-1); } break;
             case "+": case "=": board?.zoomIn?.(); break;
             case "-": case "_": board?.zoomOut?.(); break;
             case "f": case "F": board?.fit?.(); break;
-            case "1": board?.setPreset?.("top"); break;
-            case "2": board?.setPreset?.("front"); break;
-            case "3": board?.setPreset?.("iso"); break;
+            case "5": board?.setPreset?.("top"); break;
+            case "6": board?.setPreset?.("front"); break;
+            case "7": board?.setPreset?.("iso"); break;
+            case "8": board?.setPreset?.("segmacro"); break;
+            case "9": board?.setPreset?.("lcd"); break;
             case "p": case "P": togglePower(); break;
             default: break;
         }
+    });
+    document.addEventListener("keyup", (e) => {
+        if (isEditableTarget(e.target)) return;
+        const keyIndex = keyFromCode(e.code);
+        if (keyIndex >= 0) setPhysicalKeyPressed(keyIndex, false);
     });
 }
 

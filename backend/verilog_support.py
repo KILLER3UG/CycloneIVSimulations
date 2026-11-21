@@ -168,7 +168,13 @@ def _eval_int(expr_tokens: List[_VTok], params: Dict[str, int]) -> Optional[int]
 
 
 def _parse_sized_literal(text: str) -> Optional[Tuple[Optional[int], int, bool, str]]:
-    """Return ``(width_or_None, int_val, has_xz, bits_msb_to_lsb)``."""
+    """Return ``(width_or_None, int_val, has_xz, bits_msb_to_lsb)``.
+
+    ``bits`` is normalized for VHDL emission: X/Z metavalues are upper-cased
+    and ``?`` maps to ``Z`` (its Verilog casez meaning), so literals such as
+    ``4'b1x0z`` compile as ``std_logic_vector'("1X0Z")`` instead of failing
+    GHDL with "type STD_ULOGIC does not define character 'x'".
+    """
     m = re.match(r"^(?:(\d+)\s*)?'[sS]?([bBdDhHoO])([0-9a-fA-F_xXzZ\?]+)$", text.strip())
     if not m:
         return None
@@ -177,37 +183,44 @@ def _parse_sized_literal(text: str) -> Optional[Tuple[Optional[int], int, bool, 
     digits = digits.replace("_", "").lower()
     base = base_ch.lower()
     has_xz = any(c in "xz?" for c in digits)
+
+    def emit(bits: str) -> str:
+        return bits.replace("?", "Z").upper()
+
     if base == "b":
-        bits = "".join("0" if c == "?" else c for c in digits)
-        int_val = int(bits, 2) if not has_xz else 0
-        w = width or len(bits)
-        bits = bits.rjust(w, bits[0] if bits and bits[0] in "xz" else "0")[-w:]
-        return width, int_val, has_xz, bits
+        raw = digits
+        int_val = int(raw.replace("?", "0"), 2) if not has_xz else 0
+        w = width or len(raw)
+        pad = raw[0] if (raw and raw[0] in "xz?") else "0"
+        bits = raw.rjust(w, pad)[-w:]
+        return width, int_val, has_xz, emit(bits)
     if base == "d":
         if has_xz:
             w = width or 32
-            return width, 0, True, (digits[0] * w)[:w]
+            return width, 0, True, emit((digits[0] * w)[:w])
         int_val = int(digits, 10)
         w = width or max(1, int_val.bit_length())
-        return width, int_val, False, format(int_val, f"0{w}b")[-w:]
+        return width, int_val, False, emit(format(int_val, f"0{w}b")[-w:])
     if base == "h":
         bits = "".join(
-            (c * 4) if c in "xz" else ("0000" if c == "?" else format(int(c, 16), "04b"))
+            (c * 4) if c in "xz?" else format(int(c, 16), "04b")
             for c in digits
         )
-        int_val = int(bits, 2) if not has_xz else 0
+        int_val = int(bits.replace("?", "0"), 2) if not has_xz else 0
         w = width or len(bits)
-        bits = bits.rjust(w, bits[0] if bits and bits[0] in "xz" else "0")[-w:]
-        return width, int_val, has_xz, bits
+        pad = bits[0] if (bits and bits[0] in "xz") else "0"
+        bits = bits.rjust(w, pad)[-w:]
+        return width, int_val, has_xz, emit(bits)
     if base == "o":
         bits = "".join(
-            (c * 3) if c in "xz" else ("000" if c == "?" else format(int(c, 8), "03b"))
+            (c * 3) if c in "xz?" else format(int(c, 8), "03b")
             for c in digits
         )
-        int_val = int(bits, 2) if not has_xz else 0
+        int_val = int(bits.replace("?", "0"), 2) if not has_xz else 0
         w = width or len(bits)
-        bits = bits.rjust(w, bits[0] if bits and bits[0] in "xz" else "0")[-w:]
-        return width, int_val, has_xz, bits
+        pad = bits[0] if (bits and bits[0] in "xz") else "0"
+        bits = bits.rjust(w, pad)[-w:]
+        return width, int_val, has_xz, emit(bits)
     return None
 
 
@@ -307,6 +320,7 @@ class _VerilogTranslator:
         self.toks = toks
         self.known_modules = known_modules
         self.errors: List[dict] = []
+        self.warnings: List[dict] = []
         self.params: Dict[str, int] = {}
         self.param_decls: List[Tuple[str, int, int]] = []
         self.ports: List[_DeclInfo] = []
@@ -316,16 +330,35 @@ class _VerilogTranslator:
         self.out_shadows: Dict[str, str] = {}
         self.in_comb_process = False
         self.comb_blocking_targets: set[str] = set()
+        #: Blocking-assignment targets inside the *clocked* process currently
+        #: being emitted; reads of these names resolve to their bv_ variable
+        #: so `a = a + 1; b = a;` sees the updated value in the same cycle,
+        #: exactly like Verilog blocking semantics (probe G divergence).
+        self.seq_blocking_targets: set[str] = set()
+        #: Register seeding collected from simple `initial` blocks
+        #: (name -> VHDL init expression).
+        self.initial_seeds: Dict[str, str] = {}
         self.lines: List[Tuple[str, int]] = []  # (line_text, orig_verilog_line)
         self.assoc_counter = 0
         self.extra_concurrent: List[Tuple[str, int]] = []
         self.extra_signals: List[Tuple[str, int]] = []
+
+    def _warn(self, line: int, message: str) -> None:
+        self.warnings.append({
+            "file": self.filename,
+            "line": max(1, int(line)),
+            "column": 1,
+            "severity": "warning",
+            "message": message,
+        })
 
     def _emit(self, text: str, line: int) -> None:
         self.lines.append((text, max(1, line)))
 
     def _vhdl_ref(self, name: str) -> str:
         if self.in_comb_process and name in self.comb_blocking_targets:
+            return f"bv_{self.sigs[name].vhdl_name}"
+        if self.seq_blocking_targets and name in self.seq_blocking_targets and name in self.sigs:
             return f"bv_{self.sigs[name].vhdl_name}"
         if name in self.out_shadows:
             return self.out_shadows[name]
@@ -407,6 +440,7 @@ class _VerilogTranslator:
         self._split_body(body, items, port_order, ansi_ports)
         if self.errors:
             return None
+        self._collect_initial_seeds(items)
 
         # Order ports per module header if non-ANSI
         if not ansi_ports and port_order:
@@ -487,6 +521,8 @@ class _VerilogTranslator:
                 init_expr = "'0'" if not p.is_vector else "(others => '0')"
                 if p.init_tokens:
                     init_expr = self._target_rhs_expr(p.init_tokens, not p.is_vector, p.width)
+                elif p.name in self.initial_seeds:
+                    init_expr = self.initial_seeds[p.name]
                 self._emit(f"    signal {self.out_shadows[p.name]} : {ep.type_text} := {init_expr};", p.line)
 
         for sig in self.sigs.values():
@@ -500,6 +536,8 @@ class _VerilogTranslator:
             init_expr = "'0'" if not sig.is_vector else "(others => '0')"
             if sig.init_tokens:
                 init_expr = self._target_rhs_expr(sig.init_tokens, not sig.is_vector, sig.width)
+            elif sig.name in self.initial_seeds:
+                init_expr = self.initial_seeds[sig.name]
             self._emit(f"    signal {sig.vhdl_name} : {ttext} := {init_expr};", sig.line)
 
         body_lines_start = len(self.lines)
@@ -518,6 +556,8 @@ class _VerilogTranslator:
                 self._emit_always(stoks)
             elif kind == "inst":
                 self._emit_instantiation(stoks)
+            elif kind == "initial":
+                continue  # consumed by _collect_initial_seeds (signal inits)
 
         for stmt, ln in self.extra_concurrent:
             self._emit(stmt, ln)
@@ -555,6 +595,55 @@ class _VerilogTranslator:
             "    begin if c then return t; else return f; end if; end function;",
             "    function v_mux(c : boolean; t : std_logic; f : std_logic) return std_logic is",
             "    begin if c then return t; else return f; end if; end function;",
+            "    function v_casex_eq(a : std_logic_vector; b : std_logic_vector) return boolean is",
+            "        variable ok : boolean := true;",
+            "        variable ai : integer;",
+            "        variable bi : integer;",
+            "    begin",
+            "        if a'length /= b'length then",
+            "            return false;",
+            "        end if;",
+            "        for i in 0 to a'length - 1 loop",
+            "            -- walk both vectors from the leftmost (MSB) element;",
+            "            -- the string-literal item has an ascending range while",
+            "            -- the selector may be descending, so index by position.",
+            "            if a'ascending then ai := a'left + i; else ai := a'left - i; end if;",
+            "            if b'ascending then bi := b'left + i; else bi := b'left - i; end if;",
+            "            if (b(bi) = 'X' or b(bi) = 'Z' or a(ai) = 'X' or a(ai) = 'Z') then",
+            "                null;  -- casex: X/Z on either side is a don't-care bit",
+            "            elsif a(ai) /= b(bi) then",
+            "                ok := false;",
+            "            end if;",
+            "        end loop;",
+            "        return ok;",
+            "    end function;",
+            "    function v_casex_eq(a : std_logic; b : std_logic) return boolean is",
+            "    begin",
+            "        return (b = 'X' or b = 'Z' or a = 'X' or a = 'Z') or a = b;",
+            "    end function;",
+            "    function v_casez_eq(a : std_logic_vector; b : std_logic_vector) return boolean is",
+            "        variable ok : boolean := true;",
+            "        variable ai : integer;",
+            "        variable bi : integer;",
+            "    begin",
+            "        if a'length /= b'length then",
+            "            return false;",
+            "        end if;",
+            "        for i in 0 to a'length - 1 loop",
+            "            if a'ascending then ai := a'left + i; else ai := a'left - i; end if;",
+            "            if b'ascending then bi := b'left + i; else bi := b'left - i; end if;",
+            "            if (b(bi) = 'Z' or a(ai) = 'Z') then",
+            "                null;  -- casez: Z on either side is a don't-care bit",
+            "            elsif a(ai) /= b(bi) then",
+            "                ok := false;",
+            "            end if;",
+            "        end loop;",
+            "        return ok;",
+            "    end function;",
+            "    function v_casez_eq(a : std_logic; b : std_logic) return boolean is",
+            "    begin",
+            "        return (b = 'Z' or a = 'Z') or a = b;",
+            "    end function;",
         ]
         for h in helpers:
             self._emit(h, line)
@@ -701,7 +790,11 @@ class _VerilogTranslator:
                 continue
             if v == "initial":
                 end_init = self._scan_statement_end(body, i + 1)
-                i = end_init if end_init > i else i + 1
+                if end_init < 0:
+                    self.errors.append(_err(self.filename, tok.line, tok.column, "Unterminated 'initial' block"))
+                    return
+                items.append(("initial", body[i:end_init]))
+                i = end_init
                 continue
             if tok.kind == "ident" and v not in _VERILOG_KEYWORDS:
                 j = self._find_semi(body, i)
@@ -985,10 +1078,31 @@ class _VerilogTranslator:
             i += 1
         return conns
 
+    def _signal_init_expr(self, name: str) -> str:
+        """The VHDL init expression used for a signal/shadow declaration.
+
+        Blocking-shadow variables must start from the SAME value as the
+        Verilog reg (declaration initializer or `initial` seed), otherwise the
+        first clocked execution would read 'U' where ModelSim reads the
+        initialized value.
+        """
+        sig = self.sigs.get(name)
+        if sig is None:
+            return "'0'"
+        if name in self.initial_seeds:
+            return self.initial_seeds[name]
+        if sig.init_tokens:
+            try:
+                return self._target_rhs_expr(sig.init_tokens, not sig.is_vector, sig.width)
+            except Exception:
+                pass
+        return "'0'" if not sig.is_vector else "(others => '0')"
+
     def _emit_always(self, toks: List[_VTok]) -> None:
         line = toks[0].line
         i = 1
         edges: List[Tuple[str, str]] = []  # (posedge|negedge, sig_name)
+        explicit_sens: List[str] = []      # plain signals in an @(a or b) list
         is_comb = False
         if i < len(toks) and toks[i].value == "@":
             i += 1
@@ -1007,6 +1121,9 @@ class _VerilogTranslator:
                         if sens[k].value in ("posedge", "negedge") and k + 1 < len(sens):
                             edges.append((sens[k].value, sens[k + 1].value))
                             k += 2
+                        elif sens[k].kind == "ident":
+                            explicit_sens.append(sens[k].value)
+                            k += 1
                         else:
                             k += 1
                     if not edges:
@@ -1019,6 +1136,29 @@ class _VerilogTranslator:
             self.in_comb_process = True
             self.comb_blocking_targets = self._collect_blocking_targets(stmt_toks)
             self._emit("    process(all)", line)
+            # An explicit sensitivity list that omits read signals is widened
+            # to process(all): this matches Quartus SYNTHESIS, but Verilog
+            # simulation would hold the previous output until a listed signal
+            # changes.  Warn instead of hiding the classic divergence.
+            listed = {s.lower() for s in explicit_sens}
+            if listed:
+                assigned = self._collect_blocking_targets(stmt_toks) | self._collect_nba_targets(stmt_toks)
+                reads = sorted({
+                    t.value for t in stmt_toks
+                    if t.kind == "ident" and t.value in self.sigs
+                    and t.value.lower() not in listed and t.value not in assigned
+                })
+                if reads:
+                    self._warn(
+                        line,
+                        "always @(" + ", ".join(explicit_sens) + ") also reads "
+                        + ", ".join(reads) + "; the sensitivity list was widened to "
+                        "all read signals (process(all)). This matches Quartus "
+                        "synthesis, but Verilog simulation (ModelSim/Questa) would "
+                        "hold the previous output until a listed signal changes — "
+                        "add the missing signals to the sensitivity list to make "
+                        "simulation and synthesis agree.",
+                    )
             for name in sorted(self.comb_blocking_targets):
                 d = self.sigs[name]
                 ttext = (
@@ -1026,7 +1166,7 @@ class _VerilogTranslator:
                     if d.is_vector
                     else "std_logic"
                 )
-                init_v = "'0'" if not d.is_vector else "(others => '0')"
+                init_v = self._signal_init_expr(name)
                 self._emit(f"        variable bv_{d.vhdl_name} : {ttext} := {init_v};", line)
             self._emit("    begin", line)
             self._emit_stmt(stmt_toks, 8, blocking_as_var=True)
@@ -1039,8 +1179,25 @@ class _VerilogTranslator:
             self.in_comb_process = False
         else:
             self.in_comb_process = False
+            # Blocking assignments inside a clocked block update their target
+            # immediately: `a = a + 1; b = a;` must let `b` see the NEW `a` in
+            # the same cycle (ModelSim/Quartus behaviour).  Model each target
+            # with an ordered VHDL process variable, copied back to the signal
+            # at the end of every branch that assigns it.
+            block_targets = sorted(
+                n for n in self._collect_blocking_targets(stmt_toks) if n in self.sigs
+            )
+            self.seq_blocking_targets = set(block_targets)
             sens_list = ", ".join(self._vhdl_ref(sig) for _, sig in edges)
             self._emit(f"    process({sens_list})", line)
+            for name in block_targets:
+                d = self.sigs[name]
+                ttext = (
+                    f"std_logic_vector({d.left} {'downto' if d.left >= d.right else 'to'} {d.right})"
+                    if d.is_vector
+                    else "std_logic"
+                )
+                self._emit(f"        variable bv_{d.vhdl_name} : {ttext} := {self._signal_init_expr(name)};", line)
             self._emit("    begin", line)
             clk_edge, clk_sig = edges[0]
             clk_fn = "rising_edge" if clk_edge == "posedge" else "falling_edge"
@@ -1053,18 +1210,45 @@ class _VerilogTranslator:
                 if inner_if:
                     _, rst_branch, clk_branch = inner_if
                     self._emit_stmt(rst_branch, 12, blocking_as_var=False)
+                    self._emit_seq_copies(rst_branch, 12, line)
                     self._emit(f"        elsif {clk_fn}({self._vhdl_ref(clk_sig)}) then", line)
                     if clk_branch:
                         self._emit_stmt(clk_branch, 12, blocking_as_var=False)
+                        self._emit_seq_copies(clk_branch, 12, line)
                     self._emit("        end if;", line)
                 else:
                     self._emit_stmt(stmt_toks, 12, blocking_as_var=False)
+                    self._emit_seq_copies(stmt_toks, 12, line)
                     self._emit("        end if;", line)
             else:
                 self._emit(f"        if {clk_fn}({self._vhdl_ref(clk_sig)}) then", line)
                 self._emit_stmt(stmt_toks, 12, blocking_as_var=False)
+                self._emit_seq_copies(stmt_toks, 12, line)
                 self._emit("        end if;", line)
             self._emit("    end process;", line)
+            self.seq_blocking_targets = set()
+
+    def _collect_nba_targets(self, toks: List[_VTok]) -> set[str]:
+        """Signals assigned with non-blocking ``<=`` inside ``toks``."""
+        targets: set[str] = set()
+        for k in range(1, len(toks)):
+            if (
+                toks[k].value == "<="
+                and toks[k - 1].kind == "ident"
+                and toks[k - 1].value in self.sigs
+                and (k == 1 or toks[k - 2].value not in ("=", "!", "<", ">"))
+            ):
+                targets.add(toks[k - 1].value)
+        return targets
+
+    def _emit_seq_copies(self, toks: List[_VTok], indent: int, line: int) -> None:
+        """Copy the clocked block's blocking-shadow variables back to signals."""
+        for name in sorted(self._collect_blocking_targets(toks)):
+            if name not in self.sigs:
+                continue
+            d = self.sigs[name]
+            target = self.out_shadows.get(name, d.vhdl_name)
+            self._emit(f"{' ' * indent}{target} <= bv_{d.vhdl_name};", line)
 
     def _extract_async_if(self, toks: List[_VTok]) -> Optional[Tuple[List[_VTok], List[_VTok], List[_VTok]]]:
         t = list(toks)
@@ -1105,6 +1289,66 @@ class _VerilogTranslator:
                 if j >= 0 and toks[j].kind == "ident" and toks[j].value in self.sigs:
                     targets.add(toks[j].value)
         return targets
+
+    def _collect_initial_seeds(self, items: List[Tuple[str, List[_VTok]]]) -> None:
+        """Translate simple ``initial`` register seeding into signal inits.
+
+        Supported: ``initial <reg> = <constant expression>;`` and ``begin/end``
+        blocks of those statements.  Anything with delays, loops, tasks or
+        procedural conditions is reported as a WARNING (never silently
+        dropped), because the design would then simulate differently here
+        than in ModelSim/Questa — and the construct is not synthesizable
+        anyway.
+        """
+        for kind, toks in items:
+            if kind != "initial":
+                continue
+            block_line = toks[0].line if toks else 1
+            supported = True
+            seeds: List[Tuple[str, List[_VTok], int]] = []
+            i = 0
+            n = len(toks)
+            while i < n:
+                t = toks[i]
+                if t.value in ("initial", "begin", "end", ";"):
+                    i += 1
+                    continue
+                if (
+                    t.kind == "ident"
+                    and not t.value.startswith("$")
+                    and i + 1 < n
+                    and toks[i + 1].value == "="
+                ):
+                    name = t.value
+                    j = i + 2
+                    expr: List[_VTok] = []
+                    while j < n and toks[j].value != ";":
+                        expr.append(toks[j])
+                        j += 1
+                    seeds.append((name, expr, t.line))
+                    i = j + 1
+                    continue
+                supported = False
+                break
+            if not supported:
+                self._warn(
+                    block_line,
+                    "complex 'initial' block is not translated by the Verilog "
+                    "front-end (only simple 'reg = constant;' seeding is "
+                    "supported); the design may simulate differently here than "
+                    "in ModelSim/Questa, and 'initial' is not synthesizable",
+                )
+                continue
+            for name, expr, ln in seeds:
+                sig = self.sigs.get(name)
+                if sig is None:
+                    continue
+                if sig.direction == "input":
+                    self._warn(ln, f"'initial' seeds input '{name}'; inputs cannot be initialized — ignored")
+                    continue
+                if name in self.initial_seeds:
+                    continue
+                self.initial_seeds[name] = self._target_rhs_expr(expr, not sig.is_vector, sig.width)
 
     def _emit_stmt(self, toks: List[_VTok], indent: int, blocking_as_var: bool) -> None:
         pad = " " * indent
@@ -1200,7 +1444,14 @@ class _VerilogTranslator:
                             else:
                                 cur_lbl.append(toks[k])
                             k += 1
-                        cond_parts = [f"v_bool(v_eq({sel_res.vhdl}, {self._expr_tokens(lbl).vhdl}))" for lbl in labels]
+                        # casex/casez: X/Z (casez: Z only) bits in the case item
+                        # or the selector are don't-care wildcards (Verilog
+                        # LRM); plain `case` stays with exact v_eq matching.
+                        if v == "case":
+                            cond_parts = [f"v_bool(v_eq({sel_res.vhdl}, {self._expr_tokens(lbl).vhdl}))" for lbl in labels]
+                        else:
+                            eq_fn = "v_casex_eq" if v == "casex" else "v_casez_eq"
+                            cond_parts = [f"{eq_fn}({sel_res.vhdl}, {self._expr_tokens(lbl).vhdl})" for lbl in labels]
                         kw = "if" if first_branch else "elsif"
                         first_branch = False
                         self._emit(f"{pad}{kw} {' or '.join(cond_parts)} then", lbl_line)
@@ -1229,8 +1480,13 @@ class _VerilogTranslator:
             if assign_idx > 0:
                 lhs_t = st[:assign_idx]
                 rhs_t = st[assign_idx + 1 :]
-                use_var = blocking_as_var and is_blocking and lhs_t[0].kind == "ident" and lhs_t[0].value in self.comb_blocking_targets
                 lhs_str, is_scalar, width = self._target_lhs(lhs_t)
+                # Any assignment whose target resolves to a blocking-shadow
+                # variable (combinational or clocked process) must use VHDL
+                # variable assignment (:=); everything else is a signal
+                # assignment (<=).  This is what makes clocked blocking
+                # assignments read-after-write in the same cycle.
+                use_var = lhs_str.startswith("bv_")
                 rhs_str = self._target_rhs_expr(rhs_t, is_scalar, width)
                 op = ":=" if use_var else "<="
                 self._emit(f"{pad}{lhs_str} {op} {rhs_str};", ln)
@@ -1594,21 +1850,104 @@ def _split_verilog_modules(toks: List[_VTok]) -> List[List[_VTok]]:
     return modules
 
 
+_UNSUPPORTED_KEYWORDS = {
+    "wait": "the 'wait' statement",
+    "fork": "the 'fork'/'join' process block",
+    "join": "the 'fork'/'join' process block",
+    "forever": "the 'forever' loop",
+    "repeat": "the 'repeat' loop",
+    "deassign": "procedural 'deassign'",
+    "disable": "the 'disable' statement",
+    "force": "procedural 'force'",
+    "release": "procedural 'release'",
+    "task": "Verilog 'task' declarations",
+    "endtask": "Verilog 'task' declarations",
+    "function": "Verilog 'function' declarations",
+    "endfunction": "Verilog 'function' declarations",
+    "generate": "Verilog 'generate' blocks",
+    "endgenerate": "Verilog 'generate' blocks",
+    "genvar": "Verilog 'generate' blocks",
+    "primitive": "Verilog 'primitive' (UDP) declarations",
+    "specify": "Verilog 'specify' timing blocks",
+    "endspecify": "Verilog 'specify' timing blocks",
+}
+
+
+def _scan_unsupported(toks: List[_VTok], filename: str) -> Tuple[List[dict], List[dict]]:
+    """Plain-language diagnostics for constructs the front-end cannot lower.
+
+    Returns ``(errors, warnings)``.  Errors stop the run before GHDL with a
+    message naming the construct, instead of a cryptic VHDL parse error deep
+    inside the transpiled source.  ``#`` followed by a number is a delay;
+    ``#(`` is a parameter list and stays legal.
+    """
+    errors: List[dict] = []
+    warnings: List[dict] = []
+    seen: set = set()
+    n = len(toks)
+    for i, t in enumerate(toks):
+        nxt = toks[i + 1] if i + 1 < n else None
+        if t.value == "#" and nxt is not None and nxt.kind == "number":
+            key = ("#", t.line)
+            if key not in seen:
+                seen.add(key)
+                errors.append(_err(
+                    filename, t.line, t.column,
+                    "'#' delays are not supported by this Verilog front-end and "
+                    "are not synthesizable — remove the delay, or provide a VHDL "
+                    "testbench for timing behaviour",
+                ))
+            continue
+        if t.kind == "ident":
+            if t.value.startswith("$"):
+                key = (t.value, t.line)
+                if key not in seen:
+                    seen.add(key)
+                    warnings.append({
+                        "file": filename, "line": t.line, "column": t.column,
+                        "severity": "warning",
+                        "message": (
+                            f"system task '{t.value}' is simulation-only and is "
+                            "ignored by this Verilog front-end"
+                        ),
+                    })
+                continue
+            reason = _UNSUPPORTED_KEYWORDS.get(t.value)
+            if reason:
+                key = (t.value, t.line)
+                if key not in seen:
+                    seen.add(key)
+                    errors.append(_err(
+                        filename, t.line, t.column,
+                        f"{reason} cannot be translated by this Verilog front-end "
+                        "— inline the logic or use VHDL",
+                    ))
+    return errors, warnings
+
+
 def translate_verilog_sources(
     sources: List[Tuple[str, str]],
-) -> Tuple[List[Tuple[str, str]], Dict[str, Dict[int, Tuple[str, int]]], List[dict]]:
+) -> Tuple[List[Tuple[str, str]], Dict[str, Dict[int, Tuple[str, int]]], List[dict], List[dict]]:
     """Parse and transpile any Verilog ``.v``/``.sv`` sources into VHDL-2008.
 
-    Returns ``(new_sources, line_maps, errors)`` where ``line_maps`` maps
-    synthetic VHDL filename -> ``{vhdl_line: (orig_file, orig_line)}``.
+    Returns ``(new_sources, line_maps, errors, warnings)`` where ``line_maps``
+    maps synthetic VHDL filename -> ``{vhdl_line: (orig_file, orig_line)}``.
     """
     verilog_items = [(idx, name, content) for idx, (name, content) in enumerate(sources) if is_verilog_source(name, content)]
     if not verilog_items:
-        return sources, {}, []
+        return sources, {}, [], []
 
     known_modules: Dict[str, List[Port]] = {}
     parsed_chunks: List[Tuple[int, str, List[List[_VTok]]]] = []
     errors: List[dict] = []
+    warnings: List[dict] = []
+
+    # Pre-scan: plain-language diagnostics for constructs the front-end
+    # cannot lower, before GHDL ever sees the transpiled output.
+    for _idx, name, content in verilog_items:
+        scan_errors, scan_warnings = _scan_unsupported(_tokenize_verilog(content), name)
+        errors.extend(scan_errors)
+        warnings.extend(scan_warnings)
 
     # First pass: collect module interfaces across all Verilog files so positional instantiations know port widths/names
     for idx, name, content in verilog_items:
@@ -1620,6 +1959,7 @@ def translate_verilog_sources(
         for ch in chunks:
             tr = _VerilogTranslator(name, ch, known_modules)
             res = tr.parse_and_translate()
+            warnings.extend(tr.warnings)
             if res is not None:
                 ent, _, _ = res
                 known_modules[ent.name.lower()] = ent.ports
@@ -1634,6 +1974,7 @@ def translate_verilog_sources(
         for ch in chunks:
             tr = _VerilogTranslator(name, ch, known_modules)
             res = tr.parse_and_translate()
+            warnings.extend(tr.warnings)
             if tr.errors:
                 errors.extend(tr.errors)
             if res is None:
@@ -1647,7 +1988,15 @@ def translate_verilog_sources(
         line_maps[synth_name] = v_map
         out_sources[idx] = (synth_name, "\n".join(vhdl_parts))
 
-    return out_sources, line_maps, errors
+    deduped: List[dict] = []
+    seen_w: set = set()
+    for w in warnings:
+        key = (w.get("file"), w.get("line"), w.get("message"))
+        if key in seen_w:
+            continue
+        seen_w.add(key)
+        deduped.append(w)
+    return out_sources, line_maps, errors, deduped
 
 
 def Path_safe(name: str) -> str:

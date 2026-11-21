@@ -174,6 +174,19 @@ export function createWaveformView(host, { onValuesAt } = {}) {
         return cycles[Math.max(0, i)].values[signal.name];
     }
 
+    // Format a bus value honouring the declared signedness delivered by the
+    // backend (numeric_std.signed / integer ports arrive sign-extended, so
+    // an 8-bit bus holding 0xFD renders as -0x1, not 0xFD).
+    function fmtBusValue(signal, v) {
+        if (typeof v !== "number") return String(v ?? "--").toUpperCase();
+        const width = Math.max(1, signal.width || 1);
+        if (width <= 1) return String(v);
+        if (signal.signed && v < 0) {
+            return "-0x" + ((-v) >>> 0).toString(16).toUpperCase();
+        }
+        return "0x" + (v >>> 0).toString(16).toUpperCase().padStart(Math.max(1, Math.ceil(width / 4)), "0");
+    }
+
     function draw() {
         const dark = document.documentElement.dataset.theme === "dark";
         const bg = dark ? "#12151c" : "#0d1420";
@@ -241,7 +254,7 @@ export function createWaveformView(host, { onValuesAt } = {}) {
             ctx.fillStyle = labelCol;
             ctx.font = "11px ui-monospace, Consolas, monospace";
             let label = signal.name;
-            if (signal.width > 1) label += ` [${signal.width}]`;
+            if (signal.width > 1) label += ` [${signal.width}${signal.signed ? "s" : ""}]`;
             ctx.fillText(label, 20, yMid, LABEL_W - 26);
 
             if ((signal.width || 1) === 1) {
@@ -294,9 +307,7 @@ export function createWaveformView(host, { onValuesAt } = {}) {
                     ctx.stroke();
                     if (x - lastTextX > 40) {
                         ctx.fillStyle = color;
-                        const text = typeof v === "number"
-                            ? "0x" + (v >>> 0).toString(16).toUpperCase().padStart(Math.max(1, Math.ceil((signal.width || 4) / 4)), "0")
-                            : String(v ?? "--").toUpperCase();
+                        const text = fmtBusValue(signal, v);
                         ctx.fillText(text, Math.min(x + 4, canvasW - RIGHT - 40), yMid);
                         lastTextX = x;
                     }
@@ -304,10 +315,7 @@ export function createWaveformView(host, { onValuesAt } = {}) {
                 }
                 if (lastTextX < LABEL_W) {
                     ctx.fillStyle = color;
-                    const v = prevVal;
-                    const text = typeof v === "number"
-                        ? "0x" + (v >>> 0).toString(16).toUpperCase().padStart(Math.max(1, Math.ceil((signal.width || 4) / 4)), "0")
-                        : String(v ?? "--").toUpperCase();
+                    const text = fmtBusValue(signal, prevVal);
                     ctx.fillText(text, LABEL_W + 4, yMid);
                 }
             }
@@ -419,9 +427,7 @@ export function createWaveformView(host, { onValuesAt } = {}) {
         const sigs = visibleSignals().slice(0, 10);
         tooltip.innerHTML = `<div class="wt-time">t = ${fmtTime(t)}</div>` + sigs.map((s) => {
             const v = valueAt(s, t);
-            const text = typeof v === "number" && s.width > 1
-                ? "0x" + (v >>> 0).toString(16).toUpperCase()
-                : String(v ?? "--");
+            const text = fmtBusValue(s, v);
             return `<div><span class="wt-dot" style="background:${COLORS[signals.indexOf(s) % COLORS.length]}"></span>${s.name} = ${text}</div>`;
         }).join("");
         const wrapRect = host.querySelector(".wave-canvas-wrap").getBoundingClientRect();

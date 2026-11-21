@@ -44,6 +44,10 @@ def test_de0_switch_aliases_resolve_onto_the_switch_bank():
     select_board(SECOND)
     pins = board_pin_map()
     sw_bus, key_bus = pins["SW"], pins["KEY"]
+    # DE0-Nano DIP bank (Terasic manual): SW[3:0] = M15/B9/T8/M1, separate
+    # from the debounced key bank KEY[1:0] = E1/J15.
+    assert sw_bus == ["PIN_M1", "PIN_T8", "PIN_B9", "PIN_M15"]
+    assert key_bus == ["PIN_J15", "PIN_E1"]
     assert resolve_port_pins("sw", "switch") == sw_bus
     assert resolve_port_pins("dip", "switch") == sw_bus
     assert resolve_port_pins("sw1") == [sw_bus[0]]

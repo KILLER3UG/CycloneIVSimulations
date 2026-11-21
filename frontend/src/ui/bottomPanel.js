@@ -52,8 +52,8 @@ export function createBottomPanel(root, h) {
                         <header>Serial / UART <span class="baud-badge" id="serial-baud">baud: --</span></header>
                         <div class="serial-out" id="serial-out"><div class="bp-empty">No UART traffic yet.</div></div>
                         <div class="serial-send">
-                            <input type="text" id="serial-tx" placeholder="UART RX injection requires backend support" disabled aria-label="UART send">
-                            <button class="btn" disabled>Send</button>
+                            <input type="text" id="serial-tx" placeholder="hex byte(s) to inject on UART_RXD (live)" aria-label="UART send">
+                            <button class="btn" id="serial-tx-btn" title="Inject 8N1 byte(s) on UART_RXD (live mode)">Send</button>
                             <span class="serial-frames" id="serial-frames">0 frames</span>
                         </div>
                     </section>
@@ -73,6 +73,15 @@ export function createBottomPanel(root, h) {
                             </div>
                             <div class="lcd-note">HD44780 &mdash; LCD_RS/RW/E + LCD_D[7..0]</div>
                         </div>
+                    </section>
+                    <section class="display-card" data-disp="live-peri">
+                        <header>Live peripheral injection</header>
+                        <div class="live-peri-row">
+                            <label>PS/2 <input type="text" id="live-ps2-byte" value="5A" maxlength="2" size="3" aria-label="PS/2 scancode byte (hex)"> <button class="btn" id="live-ps2-send" title="Inject one PS/2 scancode frame">Send</button></label>
+                            <label>IR <input type="text" id="live-ir-addr" value="00" maxlength="2" size="3" aria-label="NEC address (hex)"> <input type="text" id="live-ir-cmd" value="01" maxlength="2" size="3" aria-label="NEC command (hex)"> <button class="btn" id="live-ir-fire" title="Fire one NEC IR frame">Fire</button></label>
+                            <label>LM75 <input type="range" id="live-temp" min="-10" max="80" step="1" value="25" aria-label="LM75 ambient temperature (C)"> <span id="live-temp-val">25 &deg;C</span></label>
+                        </div>
+                        <div class="lcd-note">Live mode only &mdash; PS/2 scancodes, NEC IR frames and the LM75 ambient register update the running simulation.</div>
                     </section>
                 </div>
             </div>
@@ -234,6 +243,74 @@ export function createBottomPanel(root, h) {
     }
     setLcd("");
 
+    // ----------------------------------------------------- live peripherals --
+    const liveBytes = [];
+    function setLiveUart(bytes, baud) {
+        for (const b of bytes || []) {
+            liveBytes.push(b & 0xff);
+            if (liveBytes.length > 4096) liveBytes.shift();
+        }
+        if (baud) baudEl.textContent = `baud: ${baud}`;
+        framesEl.textContent = `${liveBytes.length} byte(s)`;
+        if (liveBytes.length) {
+            serialOut.innerHTML = liveBytes.slice(0, 4096).map((b) =>
+                `<span class="ser-byte">0x${(b & 0xff).toString(16).toUpperCase().padStart(2, "0")}</span>`).join("");
+        }
+    }
+    /** lines: {lineIndex: packed8x3bit} — render the live VGA framebuffer. */
+    function setLiveVga(lines) {
+        if (!lines || !Object.keys(lines).length) return;
+        vgaNoSig.classList.add("hidden");
+        vgaCtx.fillStyle = "#000";
+        vgaCtx.fillRect(0, 0, 640, 480);
+        const lineIdx = Object.keys(lines).map(Number).sort((a, b) => a - b);
+        const bandH = 480 / 525;
+        for (const li of lineIdx) {
+            let v = Number(lines[li]) || 0;
+            for (let s = 0; s < 8; s += 1) {
+                const c = v % 8;
+                v = Math.floor(v / 8);
+                const r = (c & 4) ? 255 : 0;
+                const g = (c & 2) ? 255 : 0;
+                const b = (c & 1) ? 255 : 0;
+                vgaCtx.fillStyle = `rgb(${r},${g},${b})`;
+                // line li, slice (7 - s): the packing is MSB-first
+                const x0 = Math.floor(((7 - s) / 8) * 640);
+                vgaCtx.fillRect(x0, Math.floor(li * bandH), Math.ceil(640 / 8), Math.ceil(bandH) + 1);
+            }
+        }
+    }
+
+    function parseHexByte(text) {
+        const v = parseInt(String(text || "").trim(), 16);
+        return Number.isFinite(v) ? v & 0xff : null;
+    }
+    function wireLivePeripherals() {
+        const ps2In = root.querySelector("#live-ps2-byte");
+        root.querySelector("#live-ps2-send")?.addEventListener("click", () => {
+            const b = parseHexByte(ps2In.value);
+            if (b !== null) h.onLivePs2?.(b);
+        });
+        ps2In?.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") { const b = parseHexByte(ps2In.value); if (b !== null) h.onLivePs2?.(b); }
+        });
+        const irA = root.querySelector("#live-ir-addr");
+        const irC = root.querySelector("#live-ir-cmd");
+        root.querySelector("#live-ir-fire")?.addEventListener("click", () => {
+            const a = parseHexByte(irA.value);
+            const c = parseHexByte(irC.value);
+            if (a !== null && c !== null) h.onLiveIr?.(a, c);
+        });
+        const temp = root.querySelector("#live-temp");
+        const tempVal = root.querySelector("#live-temp-val");
+        temp?.addEventListener("input", () => {
+            const c = Number(temp.value);
+            tempVal.textContent = `${c} \u00b0C`;
+            h.onLiveTemp?.(c);
+        });
+    }
+    wireLivePeripherals();
+
     // ------------------------------------------------------------ probes ---
     const probeBar = root.querySelector("#probe-bar");
     function addProbeChip(probe, onRemove) {
@@ -254,7 +331,8 @@ export function createBottomPanel(root, h) {
     updateBadge();
 
     return {
-        showTab, log, setProblems, setUart, setVga, setLcd, wave, addProbeChip,
+        showTab, log, setProblems, setUart, setVga, setLcd, setLiveUart, setLiveVga,
+        wave, addProbeChip,
         getTerminalHost: () => root.querySelector("#terminal-mount"),
         get active() { return active; },
         root,

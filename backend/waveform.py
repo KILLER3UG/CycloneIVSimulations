@@ -691,6 +691,24 @@ def _decimate_transitions(items: List[Tuple[float, Any]], cap: int) -> List[Tupl
     return kept
 
 
+#: Port type names whose values must be interpreted as two's-complement
+#: signed numbers (IEEE numeric_std signed / VHDL integer).  Everything else
+#: renders unsigned, matching the raw VCD bit pattern.
+_SIGNED_TYPE_NAMES = frozenset({"signed", "integer"})
+
+
+def _to_signed(value: Any, width: int) -> Any:
+    """Reinterpret an unsigned VCD integer as two's-complement of ``width``."""
+    if not isinstance(value, int) or isinstance(value, bool):
+        return value
+    if width <= 0:
+        return value
+    sign_bit = 1 << (width - 1)
+    if value >= sign_bit:
+        return value - (1 << width)
+    return value
+
+
 @dataclass
 class WaveformSignal:
     name: str
@@ -703,6 +721,10 @@ class WaveformSignal:
     transitions: List[Tuple[float, Any]]
     is_port: bool
     is_internal: bool
+    #: True when the declared port type is signed (numeric_std.signed or
+    #: integer); transition values are delivered already sign-extended so the
+    #: UI renders -3 rather than 253 for an 8-bit bus holding 0xFD.
+    signed: bool = False
     # Lazily built bisect index of transition times (audit N2: value_at used
     # to be a linear scan over every transition, per signal per cycle).
     _time_keys: List[float] = field(
@@ -742,6 +764,7 @@ class WaveformSignal:
             "typeName": self.type_name,
             "isPort": self.is_port,
             "isInternal": self.is_internal,
+            "signed": self.signed,
         }
         # Compact (live-refresh) runs never draw a waveform, so the per-signal
         # transition lists (~1.5 s of decimation for a 36-signal design) are
@@ -807,6 +830,7 @@ class WaveformModel:
             signal = selected.get(key)
             port = port_by_lower.get(key)
             display_name = port.name if port else (signal.name if signal else name)
+            is_signed = port is not None and port.type_name in _SIGNED_TYPE_NAMES
 
             if signal is None:
                 # Port exists in the interface but was not dumped; synthesize a
@@ -824,9 +848,21 @@ class WaveformModel:
                         transitions=[(0.0, 0)],
                         is_port=True,
                         is_internal=False,
+                        signed=is_signed,
                     )
                 )
                 continue
+
+            transitions = _clip(signal.transitions, self.duration_cap)
+            if is_signed:
+                # Sign-extend once here so every consumer (cycle samples,
+                # final values, JSON payload, UI labels) shows the declared
+                # signed interpretation of the raw VCD bit pattern.
+                width = signal.width or port.width or 1
+                transitions = [
+                    (timestamp, _to_signed(value, width))
+                    for timestamp, value in transitions
+                ]
 
             signals.append(
                 WaveformSignal(
@@ -837,9 +873,10 @@ class WaveformModel:
                     kind=signal.kind,
                     direction=port.direction if port else "internal",
                     type_name=port.type_name if port else "internal",
-                    transitions=_clip(signal.transitions, self.duration_cap),
+                    transitions=transitions,
                     is_port=port is not None,
                     is_internal=port is None,
+                    signed=is_signed,
                 )
             )
 

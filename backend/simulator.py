@@ -47,7 +47,7 @@ from .vcd_parser import parse_vcd
 from .waveform import build_waveform, map_board, _classify_port
 
 
-# Hard request caps (see BACKEND_AUDIT.md M1): a hostile or accidental huge
+# Hard request caps (security audit M1): a hostile or accidental huge
 # request must not be able to drive GB-scale VCD dumps or Python structures.
 MAX_DURATION_NS = 2_000_000_000.0        # 2 simulated seconds
 MIN_DURATION_NS = 1.0
@@ -1192,9 +1192,9 @@ class Simulator:
         strict_pins: bool = False,
     ) -> Dict[str, Any]:
         raw_sources = _sources(vhdl, files or [])
-        sources, v_line_maps, v_errors = translate_verilog_sources(raw_sources)
+        sources, v_line_maps, v_errors, v_warnings = translate_verilog_sources(raw_sources)
         if v_errors:
-            return {"ok": False, "entity": None, "board": {}, "errors": v_errors, "warnings": [], "logs": ""}
+            return {"ok": False, "entity": None, "board": {}, "errors": v_errors, "warnings": v_warnings, "logs": ""}
         combined = "\n".join(content for _, content in sources)
 
         # Audit N7 / ENG-07 mitigation: same textio path pre-scan as simulate.
@@ -1270,6 +1270,7 @@ class Simulator:
             warnings = (_nonsynth_warnings(combined) + _pin_warnings(entity, qsf_pinned)
                         + _warnings(result.diagnostics) + _io_warnings(entity)
                         + _resource_warnings(combined)
+                        + v_warnings
                         + (qsf_warnings if qsf_text is not None else []))
 
             warnings = _rewrite_diagnostic_files(warnings, file_aliases, v_line_maps)
@@ -1835,9 +1836,9 @@ class Simulator:
         request cannot proceed to GHDL at all.
         """
         raw_sources = _sources(request.vhdl, request.files)
-        sources, v_line_maps, v_errors = translate_verilog_sources(raw_sources)
+        sources, v_line_maps, v_errors, v_warnings = translate_verilog_sources(raw_sources)
         if v_errors:
-            return None, self._failure(v_errors[0]["message"], v_errors)
+            return None, self._failure(v_errors[0]["message"], v_errors, warnings=v_warnings)
         combined = "\n".join(content for _, content in sources)
 
         # Audit N7 / ENG-07 mitigation: reject literal absolute host paths in
@@ -1906,6 +1907,7 @@ class Simulator:
             return None, self._failure("the .qsf contains errors", errors, warnings=qsf_warnings)
 
         # Work out the testbench / top ------------------------------------
+        tb_notes: List[dict] = []
         if request.testbench:
             tb_design = VHDLParser().parse(request.testbench)
             tb_entities = [e for e in tb_design.entities if e.name != entity.name]
@@ -1928,7 +1930,7 @@ class Simulator:
                 generics=dict(request.generics),
                 models=models,
             )
-            tb_source = generate_testbench(entity, config)
+            tb_source = generate_testbench(entity, config, notes=tb_notes)
             root = top
 
         qsf_pinned = set((qsf_info or {}).get("pins", {}))
@@ -1936,6 +1938,8 @@ class Simulator:
                                 + _nonsynth_warnings(combined) + _pin_warnings(entity, qsf_pinned)
                                 + _io_warnings(entity) + _resource_warnings(combined)
                                 + lint_sources(sources)
+                                + v_warnings
+                                + tb_notes
                                 + (qsf_warnings if qsf_text is not None else []))
 
         ghdl_sources, file_aliases = _prepare_sources_for_ghdl(sources)

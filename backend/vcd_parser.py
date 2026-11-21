@@ -37,6 +37,10 @@ class VcdSignal:
     width: int
     kind: str  # reg, wire, integer, ...
     transitions: List[Tuple[float, Any]] = field(default_factory=list)
+    #: Raw $var reference as written in the VCD (e.g. ``led [7]``).  ModelSim
+    #: dumps vectors bit-sliced, so the raw reference is needed to reassemble
+    #: them (the GHDL path emits one var per vector instead).
+    reference: str = ""
 
     @property
     def path(self) -> str:
@@ -119,7 +123,7 @@ def parse_vcd_text(text: str) -> VcdData:
     return _parse_vcd_lines(text.splitlines())
 
 
-_VECTOR_CHANGE_RE = re.compile(r"^([bB])\s*([01xXzZ]+)\s*(\S+)$")
+_VECTOR_CHANGE_RE = re.compile(r"^([bB])\s*([01xXzZhHuUwWlL-]+)\s*(\S+)$")
 _REAL_CHANGE_RE = re.compile(r"^([rRsS])\s*([^\s]+)\s+(\S+)$")
 
 
@@ -166,7 +170,10 @@ def _parse_vcd_lines(lines: Iterable[str]) -> VcdData:
                 kind = parts[1]
                 width = int(parts[2])
                 identifier = parts[3]
-                reference = parts[4]
+                # Reference = everything after the identifier (minus $end).
+                # GHDL writes "q[3:0]" as one token; ModelSim writes
+                # "led [7]" bit-sliced across two tokens — keep both forms.
+                reference = " ".join(parts[4:])
                 if reference.endswith("$end"):
                     reference = reference[:-4].strip()
                 name = reference.split("[")[0].strip()
@@ -176,6 +183,7 @@ def _parse_vcd_lines(lines: Iterable[str]) -> VcdData:
                     scope=".".join(scope_stack),
                     width=max(1, width),
                     kind=kind,
+                    reference=reference,
                 )
                 signals[identifier] = signal
                 order.append(identifier)

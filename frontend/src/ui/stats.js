@@ -27,10 +27,16 @@ function counts(state) {
 
 export function createStatsBlock(container) {
     container.classList.add("stats-block", "stats-pill");
+    // Subtle scope reminder: this is an RTL functional simulation (GHDL).
+    // Gate-level timing (routing delays, setup/hold, Fmax, SDF) requires
+    // Quartus Synthesis + Fitter + TimeQuest STA and is NOT modelled here.
+    container.title =
+        "RTL functional simulation only (GHDL) - no gate-level timing/STA. " +
+        "Quartus Synthesis + TimeQuest are authoritative for timing closure.";
     container.innerHTML = `
         <span class="hud-item hud-live" id="st-status">Live</span>
         <span class="hud-sep">&middot;</span>
-        <span class="hud-item" id="st-target">50 MHz</span>
+        <span class="hud-item" id="st-target" title="simulated clock period (RTL functional only - no gate-level timing)">50 MHz</span>
         <span class="hud-sep">&middot;</span>
         <span class="hud-item hud-latency" id="st-latency">&lt;1ms</span>
         <span class="hud-bar">|</span>
@@ -38,6 +44,8 @@ export function createStatsBlock(container) {
         <span class="hud-item" id="st-sw">SW 1..4</span>
         <span class="hud-sep">&middot;</span>
         <span class="hud-item" id="st-time">Sim: 0 ns</span>
+        <span class="hud-sep">&middot;</span>
+        <span class="hud-item" id="st-scope" title="RTL functional simulation only (GHDL) - no gate-level timing/STA">RTL</span>
     `;
     const el = {
         status: container.querySelector("#st-status"),

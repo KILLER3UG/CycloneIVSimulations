@@ -398,7 +398,9 @@
       "BS1": "PIN_74",
       "LDQM": "PIN_42",
       "UDQM": "PIN_55",
-      "timingModeled": false
+      "timingModeled": false,
+      "pinoutTag": "VERIFIED",
+      "pinoutSource": "board/vendor/Pinos_RZEasyFPGA.txt (SDRAM_A[0..11], SDRAM_DQ[0..15], SDRAM_BS[0..1], CKE/CLK/CS/RAS/CAS/WE, LDQM=42, UDQM=55) — zero guessed pins"
     },
     "config": {
       "flash": "EPCS16 (U7; footprint accepts EPCS4/EPCS16)",
@@ -511,6 +513,11 @@
         "cornerRadius": 3
       },
       "pcbColor": "#111315"
+    },
+    "pcbMm": {
+      "w": 136,
+      "d": 106,
+      "note": "bare PCB outline, measured per board_spec.md §0 (the 'dimensions' field above is the shipping box)"
     }
   },
   "facts": [

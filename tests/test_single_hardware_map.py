@@ -20,7 +20,7 @@ PIN_LITERAL = re.compile(r"""["']PIN_\d+["']""")
 
 # Files allowed to contain pin literals: unit tests build small fixtures, and
 # the legacy (not-built) viewer keeps a documented last-resort geometry map.
-ALLOWED_FRONTEND = {"layout.test.js", "pinPlanner.test.js"}
+ALLOWED_FRONTEND = {"layout.test.js", "pinPlanner.test.js", "liveFrame.test.js"}
 
 
 def _board() -> dict:

@@ -220,8 +220,8 @@ end architecture;
     u = int(value(result, "u"))
     s = int(value(result, "s"))
     check(u == 0, f"unsigned 255+1 = {u}; expected wrap to 0")
-    check(s == 0x80, f"signed 127+1 = {s:#04x}; expected wrap to 10000000 (-128)")
-    return "unsigned 0xFF+1 -> 0x00; signed 0x7F+1 -> 0x80 (two's-complement wrap)"
+    check(s == -128, f"signed 127+1 = {s}; expected wrap to -128 (signed rendering)")
+    return "unsigned 0xFF+1 -> 0x00; signed 0x7F+1 -> -128 (two's-complement wrap)"
 
 
 @case("SEM-06", "20", "Generics change width and behaviour", "VHDL",
@@ -485,15 +485,15 @@ end architecture;
 
 
 @case("CKM-04", "21", "PLL: behavioural model produces c0 and locked", "VHDL",
-      "altpll model: c0 toggles, locked=1; no jitter/lock-time claim")
+      "altpll model: c0 toggles at the requested ratio, locked asserts after 8 input edges")
 def ckm_04() -> str:
     from harness import run
-    result = run("blocks.vhd", top="altpll_top", duration=50, resetCycles=0)
+    result = run("blocks.vhd", top="altpll_top", duration=150, resetCycles=0)
     check(result.get("ok"), f"altpll model failed: {errors_text(result)[:200]}")
     locked = value(result, "locked")
     c0 = value(result, "c0")
-    check(locked == 1, f"locked={locked} (expected 1)")
-    return f"c0={c0}, locked={locked} (behavioural model; no jitter/lock time)"
+    check(locked == 1, f"locked={locked} (expected 1 after the 8-edge acquisition window)")
+    return f"c0={c0}, locked={locked} (behavioural model; no jitter/lock-time modelling)"
 
 
 # ---------------------------------------------------------------------------

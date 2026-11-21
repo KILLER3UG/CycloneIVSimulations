@@ -231,6 +231,9 @@ export function buildIO(mats, {
     group.add(glowPoints);
 
     // --------------------------------------------------------- 7-seg display
+    // Profiles may declare zero displays (e.g. the Terasic DE0-Nano has no
+    // on-board tube): the mesh stays for API compatibility but is hidden.
+    const displayPresent = !(dyn && Number(dyn.display?.count ?? 4) === 0);
     const display = (() => {
         const canonical = LAYOUT.find((r) => r.id === "DISP1");
         const def = dyn?.display || canonical;
@@ -239,6 +242,7 @@ export function buildIO(mats, {
         const body = new THREE.Mesh(new RoundedBoxGeometry(30, 8, 16, 1, 0.6), mats.darkEpoxy);
         body.position.set(x, BOARD_TOP + 4, z);
         body.castShadow = true;
+        body.visible = displayPresent;
         body.userData = { componentId: "DISP1", kind: "display", pinId: null, polarity: null, label: "DISP1 4-digit 7-seg" };
         group.add(body);
 
@@ -281,6 +285,7 @@ export function buildIO(mats, {
         }
         segInst.instanceMatrix.needsUpdate = true;
         segInst.instanceColor.needsUpdate = true;
+        segInst.visible = displayPresent;
         group.add(segInst);
 
         // metal side tabs (vendor photo shows nickel tabs at both ends)
@@ -288,6 +293,7 @@ export function buildIO(mats, {
             const tab = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.7, 4.6), mats.steel);
             tab.position.set(x + side * 15.8, BOARD_TOP + 4.2, z);
             tab.castShadow = true;
+            tab.visible = displayPresent;
             group.add(tab);
         }
 
@@ -302,6 +308,7 @@ export function buildIO(mats, {
             }
         }
         pins.instanceMatrix.needsUpdate = true;
+        pins.visible = displayPresent;
         group.add(pins);
 
         anchors.push({ id: "DISP1", object: body, radius: 17 });
@@ -331,6 +338,7 @@ export function buildIO(mats, {
             segActive: new Uint8Array(8),
             digitOn: [1, 1, 1, 1],
             bitToName,
+            present: displayPresent,
         };
     })();
 

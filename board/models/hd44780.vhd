@@ -75,6 +75,7 @@ begin
         variable last_e : std_logic := '0';
         variable e_high : time := 0 ns;
         variable cmd    : natural := 0;
+        variable na     : natural := 0;
     begin
         if rising_edge(lcd_e) then
             e_high := now;
@@ -97,11 +98,21 @@ begin
                         busy_end <= now + 37 us;
                     elsif cmd = 16#10# or cmd = 16#14# or cmd = 16#18# or cmd = 16#1C# then
                         busy_end <= now + 37 us;   -- shifts
-                    elsif cmd = 16#80# or (cmd >= 16#90# and cmd <= 16#9F#) then
-                        addr <= cmd - 16#80#;
-                        busy_end <= now + 37 us;
-                    elsif (cmd >= 16#A0# and cmd <= 16#AF#) or (cmd >= 16#C0# and cmd <= 16#CF#) then
-                        addr <= cmd;
+                    elsif cmd >= 16#80# then
+                        -- Set DDRAM address: any command 0x80..0xFF carries the
+                        -- 7-bit address in bits 6..0 (0x80+n).  The earlier
+                        -- decode missed 0x81..0x8F/B0..BF/D0..FF entirely and
+                        -- stored 0xC0-style addresses *without* the -0x80
+                        -- offset, which indexed outside the `ddr` string and
+                        -- crashed the simulator on the next data write.
+                        na := cmd - 16#80#;
+                        if na < 40 or (na >= 64 and na < 104) then
+                            addr <= na;          -- line 1 (0..39) / line 2 (64..103)
+                        elsif na < 64 then
+                            addr <= 64;          -- gap between the lines
+                        else
+                            addr <= 0;           -- beyond the modelled DDRAM: wrap
+                        end if;
                         busy_end <= now + 37 us;
                     end if;
                 else

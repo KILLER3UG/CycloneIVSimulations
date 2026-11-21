@@ -27,22 +27,22 @@
     "fpga": "EP4CE22F17C6N",
     "clockHz": 50000000,
     "clockPort": "CLOCK_50",
-    "clockPin": "PIN_23",
+    "clockPin": "PIN_R8",
     "resetPort": "KEY0",
-    "resetPin": "PIN_25",
+    "resetPin": "PIN_J15",
     "resetActiveLow": true,
     "leds": {
       "port": "LED",
       "count": 8,
       "pins": [
-        "PIN_87",
-        "PIN_86",
-        "PIN_85",
-        "PIN_84",
-        "PIN_83",
-        "PIN_80",
-        "PIN_77",
-        "PIN_76"
+        "PIN_A15",
+        "PIN_A13",
+        "PIN_B13",
+        "PIN_A11",
+        "PIN_D1",
+        "PIN_F3",
+        "PIN_B1",
+        "PIN_L3"
       ],
       "activeLow": false,
       "diodes": [
@@ -60,33 +60,33 @@
       "port": "KEY",
       "count": 2,
       "pins": [
-        "PIN_88",
-        "PIN_89"
+        "PIN_J15",
+        "PIN_E1"
       ],
-      "activeLow": true
+      "activeLow": true,
+      "debounced": true
     },
     "switches": {
       "port": "SW",
       "count": 4,
       "pins": [
-        "PIN_90",
-        "PIN_91",
-        "PIN_98",
-        "PIN_99"
+        "PIN_M1",
+        "PIN_T8",
+        "PIN_B9",
+        "PIN_M15"
       ],
       "sharedWithButtons": false,
       "activeLow": false,
       "onValue": 1
     },
     "displays": {
-      "part": "4-digit common-anode seven-segment display",
-      "ports": [
-        "SEG"
-      ],
+      "part": "none: the DE0-Nano has no on-board seven-segment display",
+      "supported": false,
+      "ports": [],
       "digitPort": "DIG",
-      "count": 4,
+      "count": 0,
       "segmentsPerDigit": 8,
-      "multiplexed": true,
+      "multiplexed": false,
       "segmentActiveLow": true,
       "digitActiveLow": true,
       "segBitMap": {
@@ -100,29 +100,16 @@
         "dp": 7
       },
       "pins": {
-        "SEG": [
-          "PIN_128",
-          "PIN_121",
-          "PIN_125",
-          "PIN_129",
-          "PIN_132",
-          "PIN_126",
-          "PIN_124",
-          "PIN_127"
-        ],
-        "DIG": [
-          "PIN_133",
-          "PIN_135",
-          "PIN_136",
-          "PIN_137"
-        ]
+        "SEG": [],
+        "DIG": []
       }
     },
     "buzzer": {
       "port": "FPGA_BUZZER",
-      "pin": "PIN_110",
-      "type": "passive",
-      "activeLow": true
+      "pin": "",
+      "type": "none",
+      "activeLow": true,
+      "note": "the DE0-Nano has no on-board buzzer; the previous profile inherited PIN_110 from the RZ-EasyFPGA A2.2"
     },
     "vga": {
       "pins": {},
@@ -154,7 +141,7 @@
     "headers": {},
     "layout3d": {
       "pcb": {
-        "w": 76,
+        "w": 75.2,
         "d": 49,
         "thickness": 1.6,
         "cornerRadius": 2
@@ -216,14 +203,6 @@
       "dipPos": [
         62,
         24
-      ],
-      "displayPos": [
-        51,
-        11
-      ],
-      "buzzerPos": [
-        14,
-        14
       ]
     }
   },
@@ -239,132 +218,96 @@
     },
     {
       "id": "D02",
-      "statement": "50 MHz clock on CLOCK_50; KEY0 reset active-low",
+      "statement": "50 MHz clock on CLOCK_50 (PIN_R8); KEY0 (PIN_J15) usable as active-low reset; 3.3-V LVTTL banks",
       "tag": "VERIFIED",
       "sources": [
-        "Terasic DE0-Nano user manual"
+        "Terasic DE0-Nano user manual pin table",
+        "User-verified against the physical board"
       ]
     },
     {
       "id": "D03",
-      "statement": "8 active-high user LEDs LED[0..7]",
+      "statement": "8 active-high user LEDs LED[0..7] on PIN_A15/A13/B13/A11/D1/F3/B1/L3",
       "tag": "VERIFIED",
       "sources": [
-        "Terasic DE0-Nano user manual"
+        "Terasic DE0-Nano user manual pin table",
+        "User-verified against the physical board"
       ]
     },
     {
       "id": "D04",
-      "statement": "2 active-low push-buttons KEY[0..1] and 4 active-high DIP switches SW[0..3]",
+      "statement": "2 active-low debounced push-buttons KEY[1..0] on PIN_E1/PIN_J15 and 4 DIP switches SW[3:0] on PIN_M15/PIN_B9/PIN_T8/PIN_M1 (active-high)",
       "tag": "VERIFIED",
       "sources": [
-        "Terasic DE0-Nano user manual"
+        "Terasic DE0-Nano user manual pin table",
+        "User-verified against the physical board"
       ]
     },
     {
       "id": "D05",
-      "statement": "4-digit common-anode seven-segment display, active-low segments and digits",
-      "tag": "INFERRED",
+      "statement": "The DE0-Nano has NO on-board seven-segment display; the previous profile inherited one from the RZ-EasyFPGA A2.2",
+      "tag": "VERIFIED",
       "sources": [
-        "Terasic DE0-Nano user manual (display schematic)"
+        "Terasic DE0-Nano user manual (board contents)"
       ]
     },
     {
       "id": "D06",
-      "statement": "Passive buzzer driven active-low on FPGA_BUZZER",
-      "tag": "INFERRED",
+      "statement": "The DE0-Nano has NO on-board buzzer; the previous profile inherited PIN_110 from the RZ-EasyFPGA A2.2",
+      "tag": "VERIFIED",
       "sources": [
-        "Terasic DE0-Nano user manual"
+        "Terasic DE0-Nano user manual (board contents)"
       ]
     }
   ],
   "pinMap": {
     "CLOCK_50": [
-      "PIN_23"
+      "PIN_R8"
     ],
     "KEY0": [
-      "PIN_25"
+      "PIN_J15"
     ],
     "LED[0]": [
-      "PIN_87"
+      "PIN_A15"
     ],
     "LED[1]": [
-      "PIN_86"
+      "PIN_A13"
     ],
     "LED[2]": [
-      "PIN_85"
+      "PIN_B13"
     ],
     "LED[3]": [
-      "PIN_84"
+      "PIN_A11"
     ],
     "LED[4]": [
-      "PIN_83"
+      "PIN_D1"
     ],
     "LED[5]": [
-      "PIN_80"
+      "PIN_F3"
     ],
     "LED[6]": [
-      "PIN_77"
+      "PIN_B1"
     ],
     "LED[7]": [
-      "PIN_76"
+      "PIN_L3"
     ],
     "KEY[0]": [
-      "PIN_88"
+      "PIN_J15"
     ],
     "KEY[1]": [
-      "PIN_89"
+      "PIN_E1"
     ],
     "SW[0]": [
-      "PIN_90"
+      "PIN_M1"
     ],
     "SW[1]": [
-      "PIN_91"
+      "PIN_T8"
     ],
     "SW[2]": [
-      "PIN_98"
+      "PIN_B9"
     ],
     "SW[3]": [
-      "PIN_99"
-    ],
-    "SEG[0]": [
-      "PIN_128"
-    ],
-    "SEG[1]": [
-      "PIN_121"
-    ],
-    "SEG[2]": [
-      "PIN_125"
-    ],
-    "SEG[3]": [
-      "PIN_129"
-    ],
-    "SEG[4]": [
-      "PIN_132"
-    ],
-    "SEG[5]": [
-      "PIN_126"
-    ],
-    "SEG[6]": [
-      "PIN_124"
-    ],
-    "SEG[7]": [
-      "PIN_127"
-    ],
-    "DIG[0]": [
-      "PIN_133"
-    ],
-    "DIG[1]": [
-      "PIN_135"
-    ],
-    "DIG[2]": [
-      "PIN_136"
-    ],
-    "DIG[3]": [
-      "PIN_137"
-    ],
-    "FPGA_BUZZER": [
-      "PIN_110"
+      "PIN_M15"
     ]
   }
 }

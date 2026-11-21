@@ -7,8 +7,8 @@
 // can unit-test it directly.
 
 export const PCB_OUTLINE = Object.freeze({
-    w: 132,
-    d: 104,
+    w: 136,
+    d: 106,
     thickness: 1.6,
     cornerRadius: 3,
 });

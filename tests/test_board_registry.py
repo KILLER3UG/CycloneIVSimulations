@@ -118,6 +118,7 @@ def test_select_board_switches_every_layer_in_place(client):
     assert BOARD["name"] == "Terasic DE0-Nano (EP4CE22)"
     assert len(BOARD["leds"]["pins"]) == 8
     assert len(BOARD["buttons"]["pins"]) == 2
+    # The DE0-Nano has a 4-position DIP switch bank separate from the keys.
     assert len(BOARD["switches"]["pins"]) == 4
     assert BOARD["switches"]["sharedWithButtons"] is False
     assert DEVICES["ep4ce22"]["part"] == "EP4CE22F17C6N"
@@ -129,9 +130,18 @@ def test_select_board_switches_every_layer_in_place(client):
     assert board["id"] == SECOND
     assert board["name"] == "Terasic DE0-Nano (EP4CE22)"
     assert board["layout3d"]["pcbColor"] == "#0d3b26"
-    assert board["pinMap"]["LED[7]"] == ["PIN_76"]
-    assert board["pinMap"]["SW[0]"] == ["PIN_90"]
-    assert board["pinMap"]["FPGA_BUZZER"] == ["PIN_110"]
+    # FBGA-256 ball names from the Terasic DE0-Nano user-manual pin table
+    # (the old profile carried EQFP-144 numbers copied from the A2.2, which
+    # cannot exist on this package).
+    assert board["pinMap"]["CLOCK_50"] == ["PIN_R8"]
+    assert board["pinMap"]["LED[7]"] == ["PIN_L3"]
+    assert board["pinMap"]["KEY[0]"] == ["PIN_J15"]
+    assert board["pinMap"]["KEY[1]"] == ["PIN_E1"]
+    assert board["pinMap"]["SW[0]"] == ["PIN_M1"]
+    assert board["pinMap"]["SW[3]"] == ["PIN_M15"]
+    # No buzzer / 7-segment on the real DE0-Nano.
+    assert "FPGA_BUZZER" not in board["pinMap"]
+    assert "SEG[0]" not in board["pinMap"]
     assert board["facts"]
 
     # Select accepts the "id" alias too and restores the default cleanly.

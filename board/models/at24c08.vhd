@@ -243,7 +243,8 @@ begin
             file_open(f, DUMP, write_mode);
             write(l, string'("size=") & integer'image(MEM_BYTES));
             writeline(f, l);
-            for i in 0 to 255 loop
+            -- Full 1 KiB array (all four 256-byte blocks), 16 bytes per line.
+            for i in 0 to MEM_BYTES - 1 loop
                 hwrite(l, committed(i));
                 if (i mod 16) = 15 then
                     writeline(f, l);

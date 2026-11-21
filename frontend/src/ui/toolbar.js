@@ -26,6 +26,22 @@ export function createToolbar(root, h) {
                 <button class="icon-btn" data-act="reset" aria-label="Reset simulation" title="Reset">${icon("reset")}</button>
                 <button class="icon-btn" data-act="step" aria-label="Step one cycle" title="Step +1 cycle">${icon("step")}</button>
             </div>
+            <div class="tb-pill tb-live" id="tb-live-pill" hidden role="group" aria-label="Live clock pace">
+                <span class="tb-live-dot" id="tb-live-dot" title="Live co-simulation running"></span>
+                <label class="tb-select" title="Clock pace — simulated clock rate vs. wall time">
+                    <select id="tb-pace" aria-label="Clock pace">
+                        <option value="single">Single Cycle</option>
+                        <option value="1hz">1 Hz</option>
+                        <option value="100hz">100 Hz</option>
+                        <option value="10khz">10 kHz</option>
+                        <option value="max" selected>Live Max</option>
+                    </select>
+                </label>
+                <span class="tb-audio-badge" id="tb-live-speed" aria-live="polite">&mdash;</span>
+                <label class="tb-live-bounce" title="Inject mechanical contact chatter on key/DIP edges (tests debouncers)">
+                    <input type="checkbox" id="tb-bounce"> bounce
+                </label>
+            </div>
             <button type="button" class="btn btn-primary tb-compile" id="tb-compile" data-act="compile" title="Compile &amp; run (Ctrl+Enter)">${icon("play")}<span>Compile &amp; Run</span></button>
         </div>
 
@@ -118,6 +134,21 @@ export function createToolbar(root, h) {
         }
     }
 
+    /** Live co-simulation pill: visibility, pace value, honest speed readout. */
+    function setLive(visible, pace, speedText) {
+        const pill = root.querySelector("#tb-live-pill");
+        if (pill) pill.hidden = !visible;
+        const sel = root.querySelector("#tb-pace");
+        if (sel && pace) sel.value = String(pace);
+        const speed = root.querySelector("#tb-live-speed");
+        if (speed) speed.textContent = speedText || "\u2014";
+    }
+
+    function setLiveSpeed(speedText) {
+        const speed = root.querySelector("#tb-live-speed");
+        if (speed) speed.textContent = speedText || "\u2014";
+    }
+
     root.addEventListener("change", (e) => {
         if (e.target === examplesSel && e.target.value) {
             const id = e.target.value;
@@ -125,6 +156,10 @@ export function createToolbar(root, h) {
             h.onExample?.(id);
         } else if (e.target === boardSel && e.target.value) {
             h.onBoard?.(e.target.value);
+        } else if (e.target.id === "tb-pace") {
+            h.onPace?.(e.target.value);
+        } else if (e.target.id === "tb-bounce") {
+            h.onBounce?.(e.target.checked);
         }
     });
 
@@ -164,6 +199,6 @@ export function createToolbar(root, h) {
 
     return {
         setStatus, setStep, setPower, setRunning, setTheme, setVersion,
-        setExamples, setBoards, setActiveBoard, setAudio, root,
+        setExamples, setBoards, setActiveBoard, setAudio, setLive, setLiveSpeed, root,
     };
 }

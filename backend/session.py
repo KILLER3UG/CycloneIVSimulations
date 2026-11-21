@@ -428,6 +428,7 @@ class SimSession:
                         "name": signal.get("name"),
                         "width": signal.get("width"),
                         "direction": signal.get("direction"),
+                        "signed": signal.get("signed", False),
                     }
                     for signal in waveforms.get("signals") or []
                 ],

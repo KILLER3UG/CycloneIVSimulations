@@ -74,7 +74,7 @@ export function dialog({ title, body, actions = [], wide = false }) {
 
 export function cheatSheet() {
     const rows = [
-        ["Ctrl+Enter", "Compile & load onto board"],
+        ["Ctrl+Enter", "Compile & load onto virtual board"],
         ["Esc", "Stop the running simulation"],
         ["\u2190 / \u2192", "Step \u22121 / +1 cycle (while paused)"],
         ["+ / \u2212", "Zoom the 3D board in / out"],

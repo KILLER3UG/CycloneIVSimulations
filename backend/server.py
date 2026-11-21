@@ -43,10 +43,14 @@ from .device import (
 )
 from .terminal import TerminalSession, cleanup_all_terminals, exec_terminal_command
 from .paths import bundle_root, projects_dir, user_data_dir
+from .device import BOARD
 from .ghdl_tool import GhdlNotFoundError
+from .live_session import LiveController, build_live_controller
 from .session import SimSession
 from .simulator import SimulationRequest, Simulator
+from .testbench_gen import detect_clock, detect_reset
 from .vhdl_parser import VHDLParser
+from .waveform import map_board
 
 FRONTEND_DIR = bundle_root() / "frontend"
 EXAMPLES_DIR = bundle_root() / "examples"
@@ -383,6 +387,178 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     # At most one playback session per connection; sim_start replaces it.
     session: Optional[SimSession] = None
 
+    # Live interactive co-simulation (persistent GHDL stepping).
+    live: Optional[LiveController] = None
+    live_session: Optional[Any] = None  # backend.live_session.LiveSession
+    live_queue: asyncio.Queue = asyncio.Queue()
+    live_tasks: list = []
+    live_loop = asyncio.get_running_loop()
+
+    def _on_live_frame(frame: dict) -> None:
+        # reader thread → event loop
+        live_loop.call_soon_threadsafe(live_queue.put_nowait, dict(frame))
+
+    async def _live_frame_pump() -> None:
+        while True:
+            frame = await live_queue.get()
+            payload = {"type": "live_frame"}
+            payload.update(frame)
+            try:
+                await websocket.send_json(payload)
+            except Exception:
+                return
+
+    async def _live_pace_loop() -> None:
+        interval = 1.0 / 30.0
+        while live is not None and live_session is not None and live_session.alive:
+            if live.pace != "single":
+                cycles = live.cycles_for_tick(interval)
+                if cycles > 0:
+                    live.session.step(cycles)
+            await asyncio.sleep(interval)
+
+    async def _live_stop() -> None:
+        nonlocal live, live_session
+        for task in live_tasks:
+            task.cancel()
+        live_tasks.clear()
+        if live_session is not None:
+            live_session.close()
+        live = None
+        live_session = None
+
+    async def handle_live(kind: str, message: dict) -> None:
+        nonlocal live, live_session
+        if kind == "live_start":
+            await _live_stop()
+            sources_in = []
+            if message.get("files"):
+                for item in message["files"]:
+                    sources_in.append((str(item.get("name") or "design.vhd"),
+                                       str(item.get("content") or "")))
+            else:
+                sources_in.append(("design.vhd", str(message.get("vhdl") or "")))
+            design = VHDLParser().parse("\n".join(c for _n, c in sources_in))
+            top = message.get("top")
+            entity = None
+            for ent in design.entities:
+                if top and ent.name.lower() == str(top).lower():
+                    entity = ent
+                    break
+            if entity is None:
+                candidates = [e for e in design.entities if not e.name.lower().startswith("tb_")]
+                entity = candidates[0] if candidates else (design.entities[0] if design.entities else None)
+            if entity is None:
+                await websocket.send_json({"type": "live_error", "message": "No entity found in source"})
+                return
+            try:
+                nonlocal live_session
+                live_session = None  # re-set below on success
+                clock = detect_clock(entity)
+                if message.get("clockPort"):
+                    clock = next((p for p in entity.ports if p.name == message["clockPort"]), clock)
+                if clock is None:
+                    await websocket.send_json({"type": "live_error",
+                                               "message": "no clock input detected — live mode needs a clock"})
+                    return
+                reset = detect_reset(entity)
+                reset_port = message.get("resetPort") or (reset[0].name if reset else None)
+                reset_active_high = bool(message.get("resetActiveHigh",
+                                                     reset[1] if reset else True))
+                controller, translated = build_live_controller(
+                    simulator.ghdl.executable, entity, sources_in,
+                    map_board(entity), BOARD, clock.name,
+                    float(message.get("clockPeriod", 10.0) or 10.0),
+                    reset_port, int(message.get("resetCycles", 2) or 0),
+                    reset_active_high,
+                )
+                live_session_local = controller.session
+                if not live_session_local.start():
+                    await websocket.send_json({"type": "live_error",
+                                               "message": "GHDL live build failed",
+                                               "detail": (live_session_local.start_error or "")[-2000:]})
+                    return
+                live = controller
+                live_session = live_session_local
+                controller.assert_reset()
+                live_tasks.append(asyncio.create_task(_live_frame_pump()))
+                live_tasks.append(asyncio.create_task(_live_pace_loop()))
+                await websocket.send_json({
+                    "type": "live_ready",
+                    "entity": entity.name,
+                    "clockPort": clock.name,
+                    "clockPeriodNs": controller.clock_period_ns,
+                    "inputs": controller.wrapper["inputs"],
+                    "outputs": controller.wrapper["outputs"],
+                    "pace": controller.pace,
+                })
+            except Exception as exc:
+                logger.exception("live_start failed")
+                await websocket.send_json({"type": "live_error", "message": str(exc)})
+            return
+        if kind == "live_input":
+            if live is None:
+                await websocket.send_json({"type": "live_error", "message": "live_start first"})
+                return
+            keys = message.get("keys") or []
+            dip = message.get("dip") or []
+            live.apply_channel_state([bool(k) for k in keys], [bool(d) for d in dip],
+                                     bool(message.get("reset", False)),
+                                     bounce=bool(message.get("bounce", False)))
+            return
+        if kind == "live_pace":
+            if live is None:
+                await websocket.send_json({"type": "live_error", "message": "live_start first"})
+                return
+            live.set_pace(str(message.get("pace", "max")))
+            await websocket.send_json({"type": "live_pace", "pace": live.pace})
+            return
+        if kind == "live_step":
+            if live is None or live_session is None:
+                await websocket.send_json({"type": "live_error", "message": "live_start first"})
+                return
+            live.session.step(int(message.get("cycles", 1) or 1))
+            return
+        if kind == "live_uart_tx":
+            if live is None:
+                await websocket.send_json({"type": "live_error", "message": "live_start first"})
+                return
+            baud = int(message.get("baud", 115200) or 115200)
+            live.uart_baud = baud
+            sent = []
+            for byte in message.get("bytes") or []:
+                if live.session.uart_tx(int(byte), baud):
+                    sent.append(int(byte) & 0xFF)
+            await websocket.send_json({"type": "live_uart_tx", "bytes": sent, "baud": baud})
+            return
+        if kind == "live_ps2":
+            if live is None:
+                await websocket.send_json({"type": "live_error", "message": "live_start first"})
+                return
+            ok = live.session.ps2_inject(int(message.get("byte", 0) or 0))
+            await websocket.send_json({"type": "live_ps2", "ok": bool(ok)})
+            return
+        if kind == "live_ir":
+            if live is None:
+                await websocket.send_json({"type": "live_error", "message": "live_start first"})
+                return
+            ok = live.session.ir_trigger(int(message.get("address", 0) or 0),
+                                         int(message.get("command", 1) or 1))
+            await websocket.send_json({"type": "live_ir", "ok": bool(ok)})
+            return
+        if kind == "live_temp":
+            if live is None:
+                await websocket.send_json({"type": "live_error", "message": "live_start first"})
+                return
+            ok = live.session.set_temp(int(message.get("celsius", 25) or 25))
+            await websocket.send_json({"type": "live_temp", "celsius": int(message.get("celsius", 25) or 25),
+                                       "ok": bool(ok)})
+            return
+        if kind == "live_stop":
+            await _live_stop()
+            await websocket.send_json({"type": "live_stopped"})
+            return
+
     async def handle_sim(kind: str, message: dict) -> None:
         nonlocal session
         if kind == "sim_start":
@@ -434,6 +610,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     await websocket.send_json({"type": "pong"})
                 elif kind in ("sim_start", "sim_pause", "sim_resume", "sim_step", "sim_stop", "sim_reset"):
                     await handle_sim(kind, message)
+                elif kind in ("live_start", "live_input", "live_pace", "live_step", "live_stop",
+                              "live_uart_tx", "live_ps2", "live_ir", "live_temp"):
+                    await handle_live(kind, message)
                 else:
                     await websocket.send_json(
                         {"type": "error", "message": f"Unknown message type '{kind}'"}
@@ -449,6 +628,13 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
     finally:
+        for task in live_tasks:
+            task.cancel()
+        if live_session is not None:
+            try:
+                live_session.close()
+            except Exception:  # pragma: no cover - defensive teardown
+                pass
         if session is not None:
             try:
                 await session.stop()

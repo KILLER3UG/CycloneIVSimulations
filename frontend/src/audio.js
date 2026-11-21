@@ -136,6 +136,54 @@ export class BuzzerAudio {
         savePrefs({ muted: this.muted, volume: this.volume });
     }
 
+    /** Fourier-synthesized pulse wave for real duty-cycle tones (cached). */
+    _applyDuty(duty) {
+        if (!this.ctx || !this.osc) return;
+        const d = Math.min(0.9, Math.max(0.1, Number(duty) || 0.5));
+        const key = Math.round(d * 20) / 20;
+        if (!this._waves) this._waves = new Map();
+        let wave = this._waves.get(key);
+        if (!wave) {
+            const harmonics = 32;
+            const real = new Float32Array(harmonics);
+            const imag = new Float32Array(harmonics);
+            for (let i = 1; i < harmonics; i += 1) {
+                real[i] = (2 / (i * Math.PI)) * Math.sin(i * Math.PI * key);
+            }
+            try {
+                wave = this.ctx.createPeriodicWave(real, imag, { disableNormalization: false });
+                this._waves.set(key, wave);
+            } catch {
+                return; // PeriodicWave unsupported: the square fallback stays
+            }
+        }
+        try { this.osc.setPeriodicWave(wave); } catch { this.osc.type = "square"; }
+    }
+
+    /** Synchronous frame-path update (no await) for live stepping. */
+    live(freq, duty = 0.5, active = true) {
+        if (!active || !Number.isFinite(Number(freq)) || Number(freq) <= 0) {
+            this.silence();
+            return false;
+        }
+        const ok = this._ensureSync();
+        this.frequency = Number(freq);
+        this.duty = Number(duty) || 0.5;
+        this.active = true;
+        if (ok && this.osc && this.gain) {
+            const targetGain = this.muted ? 0 : this.volume;
+            try {
+                this.osc.frequency.setValueAtTime(this.frequency, this.ctx.currentTime);
+                this._applyDuty(this.duty);
+                this.gain.gain.cancelScheduledValues(this.ctx.currentTime);
+                this.gain.gain.value = targetGain;
+            } catch {
+                this.gain.gain.value = targetGain;
+            }
+        }
+        return ok;
+    }
+
     /**
      * Play a square tone at `freqHz`. All state visible through state() is
      * committed synchronously before the first await, including on the very
@@ -162,6 +210,7 @@ export class BuzzerAudio {
                 if (typeof this.osc.frequency.setValueAtTime === "function") {
                     this.osc.frequency.setValueAtTime(f, t);
                 }
+                this._applyDuty(d);
                 this.gain.gain.cancelScheduledValues(t);
                 this.gain.gain.value = targetGain;
             } catch {

@@ -40,9 +40,9 @@ describe("LAYOUT", () => {
         expect(LAYOUT).toHaveLength(58);
     });
 
-    it("keeps the PCB outline at 132 × 104 mm", () => {
-        expect(PCB_OUTLINE.w).toBe(132);
-        expect(PCB_OUTLINE.d).toBe(104);
+    it("keeps the PCB outline at 136 × 106 mm", () => {
+        expect(PCB_OUTLINE.w).toBe(136);
+        expect(PCB_OUTLINE.d).toBe(106);
     });
 
     it("positions match parts.md (spot checks)", () => {

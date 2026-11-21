@@ -211,10 +211,10 @@ def pr_11() -> str:
     dump = (result.get("peripherals") or {}).get("eeprom", "")
     check("size=1024" in dump, f"no/short EEPROM model dump: {dump[:80]!r}")
     tokens = dump.split("\n", 1)[1].split()
-    # The model dumps the first 256-byte window of the 1 KiB array
-    # (at24c08.vhd dump_proc loops i in 0 to 255).
-    check(len(tokens) == 256 and set(tokens) == {"00"},
+    # The model dumps the FULL 1 KiB array (at24c08.vhd dump_proc loops
+    # i in 0 to MEM_BYTES-1 = 0..1023, 16 bytes per line).
+    check(len(tokens) == 1024 and set(tokens) == {"00"},
           "EEPROM dump is not uniformly 00: the write-protected cell changed "
           f"({len(tokens)} tokens, {sorted(set(tokens))[:4]}...)")
     return ("I2C master sequence clean (65 SCL falls, no hang); write blocked by WP "
-            "(readback 0x00 -> LED=0xF); dump size=1024, first 256 bytes all 00")
+            "(readback 0x00 -> LED=0xF); dump size=1024, all 1024 bytes 00")

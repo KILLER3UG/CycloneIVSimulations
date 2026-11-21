@@ -20,7 +20,7 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 
-import { PCB_OUTLINE, LAYOUT, BOARD_TOP, buildPinIndex, SEG_GLYPHS, buildDynamicBoardModel } from "./layout.js";
+import { PCB_OUTLINE, LAYOUT, BOARD_TOP, worldX, worldZ, buildPinIndex, SEG_GLYPHS, buildDynamicBoardModel } from "./layout.js";
 import { brightness, ghostOverlay, isInstantaneousScan, normalizePov } from "./displayModel.js";
 import { createMaterials, setupEnvironment, setupLights, applyTheme, applyPcbColor } from "./materials.js";
 import { buildPCB } from "./pcb.js";
@@ -30,16 +30,21 @@ import { buildPassives } from "./passives.js";
 import { buildConnectors } from "./connectors.js";
 import { buildHeaders } from "./headers.js";
 import { buildIO, LIT_COLOR, DARK_COLOR } from "./io.js";
+import { createLcd3d } from "./lcd3d.js";
+import { buildRoutes, frameToBoardState } from "../liveFrame.js";
 import { mulberry32, disposeObject } from "./util.js";
 
 const PRESETS = {
     // Viewing DIRECTIONS only — the distance is always computed by
-    // _fitDistance() so the whole 132×104 mm board fits the visible
+    // _fitDistance() so the whole 136×106 mm board fits the visible
     // #board-area with >=15% breathing room on every side.
     top: { pos: [0, 152, 0.02], target: [0, 0, 0], up: [0, 0, -1] },
     front: { pos: [4, 58, -122], target: [0, 0, 0], up: [0, 1, 0] },
     iso: { pos: [84, 96, -82], target: [0, 0, 0], up: [0, 1, 0] },
     ports: { pos: [152, 62, 8], target: [0, 0, 0], up: [0, 1, 0] },
+    // Close-ups: 7-segment / LED bank macro and the LCD glass.
+    segmacro: { pos: [58, 74, -52], target: [22, 0, -30], up: [0, 1, 0] },
+    lcd: { pos: [-58, 88, -66], target: [-34, 0, -18], up: [0, 1, 0] },
 };
 
 const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
@@ -262,6 +267,20 @@ export class Board3D {
             ...headers.probePoints, ...this.io.probePoints,
         );
         this.powerLed = dynamic ? null : (parts.find((p) => p.powerLed)?.powerLed || null);
+        // HD44780 1602 glass (A2.2 only): live dot-matrix over the LCD1 socket.
+        this.lcd3d = null;
+        const lcdPins = this.profile?.board?.lcd?.pins;
+        if (!dynamic && lcdPins?.LCD_E) {
+            const def = LAYOUT.find((r) => r.id === "LCD1");
+            if (def) {
+                const [lx, ly] = def.pos;
+                // Glass sized to the 54.3×8.7 mm socket footprint with a small
+                // realistic module overhang, elevated above the socket rails
+                // (no mesh clipping — verified against the smoke screenshots).
+                this.lcd3d = createLcd3d(this.mats, { x: worldX(lx), z: worldZ(ly) }, { w: 52, d: 12 });
+                this.boardGroup.add(this.lcd3d.group);
+            }
+        }
         this._probeMap = new Map();
         for (const p of this._probePoints) {
             if (p.pinId && !this._probeMap.has(p.pinId)) this._probeMap.set(p.pinId, p);
@@ -411,7 +430,7 @@ export class Board3D {
     _paintDisplay() {
         const d = this.io?.display;
         const inst = d?.segInst;
-        if (!d || !inst) return;
+        if (!d || !inst || d.present === false) return;
         const live = this.power && this.programmed;
         const scratch = this._segColor || (this._segColor = new THREE.Color());
         for (let i = 0; i < d.segCurrent.length; i += 1) {
@@ -625,6 +644,60 @@ export class Board3D {
         // Paint the display segments on this turn too — a live input flip must
         // be visible immediately, not one 10 Hz IO tick later.
         this._paintDisplay();
+    }
+
+    // ------------------------------------------------------------ live mode ----
+    /** Bind the full board map (with pins) used to route live frame signals. */
+    setLiveMap(boardMap) {
+        this._liveMap = boardMap || null;
+        this._liveRoutes = null;
+        this._liveClockNs = 10;
+        return this;
+    }
+
+    /**
+     * Paint one live-stepping frame: LEDs from exact within-frame duty
+     * (perceptual gamma), 7-seg cells from DIG×SEG coincidence duty, U/X/Z
+     * outputs in amber probe flicker, LCD glass from the decoded state.
+     */
+    applyLiveFrame(frame) {
+        if (!this.io || !frame) return null;
+        if (!this._liveRoutes) this._liveRoutes = buildRoutes(this.pinIndex, this._liveMap);
+        const state = frameToBoardState(frame, this._liveRoutes, {
+            digits: 4, segments: 8, clockPeriodNs: this._liveClockNs || 10,
+        });
+        for (const led of state.leds) {
+            const l = this.io.leds[led.index];
+            if (!l) continue;
+            if (led.meta) {
+                // Floating/uninitialized: amber flicker — an obvious hardware
+                // bug indicator that can never be mistaken for a lit LED.
+                l.metaChar = led.meta;
+                this._paintLed(led.index, 0.3 + 0.14 * Math.sin(performance.now() / 90));
+                if (l.material?.emissive?.setHex) l.material.emissive.setHex(0xffb020);
+            } else {
+                if (l.metaChar) {
+                    l.metaChar = null;
+                    if (l.material?.emissive?.setHex) l.material.emissive.setHex(0xff1e1e);
+                }
+                this._paintLed(led.index, led.duty);
+            }
+        }
+        const d = this.io.display;
+        for (let i = 0; i < 32 && i < state.segments.length; i += 1) {
+            d.segHold[i] = state.segments[i];
+            d.segCurrent[i] = state.segments[i];
+        }
+        this._paintDisplay();
+        this._liveMeta = state.metas;
+        this._liveBuzzer = state.buzzer;
+        if (this.lcd3d && frame.lcd) this.lcd3d.update(frame.lcd);
+        return state;
+    }
+
+    /** Live meta-probe list (U/X/Z pins) for hover tooltips. */
+    liveMetas() {
+        return this._liveMeta || [];
     }
 
     // ------------------------------------------------------------ state ----

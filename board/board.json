@@ -53,6 +53,11 @@
     "vendor": "RZRD (www.rzrd.net)",
     "fpga": "EP4CE6E22C8N",
     "dimensions": "21 x 15 x 11 cm",
+    "pcbMm": {
+      "w": 136,
+      "d": 106,
+      "note": "bare PCB outline, measured per board_spec.md \u00a70 (the 'dimensions' field above is the shipping box)"
+    },
     "inputVoltage": "5 V",
     "clockHz": 50000000,
     "clockPort": "CLOCK_50",
@@ -398,7 +403,9 @@
       "BS1": "PIN_74",
       "LDQM": "PIN_42",
       "UDQM": "PIN_55",
-      "timingModeled": false
+      "timingModeled": false,
+      "pinoutTag": "VERIFIED",
+      "pinoutSource": "board/vendor/Pinos_RZEasyFPGA.txt (SDRAM_A[0..11], SDRAM_DQ[0..15], SDRAM_BS[0..1], CKE/CLK/CS/RAS/CAS/WE, LDQM=42, UDQM=55) \u2014 zero guessed pins"
     },
     "config": {
       "flash": "EPCS16 (U7; footprint accepts EPCS4/EPCS16)",

@@ -195,21 +195,21 @@ def hdl_19() -> str:
 def hdl_20() -> str:
     result = must_run("features.vhd", top="record_user", duration=50, resetCycles=2,
                       constantInputs={"a": -3})
-    return check_value(result, "y", 13)
+    return check_value(result, "y", -3)
 
 
-@case("HDL-21", "4", "Signed arithmetic", "VHDL", "-3 + 2 = -1 (15), -3 - 2 = -5 (11)")
+@case("HDL-21", "4", "Signed arithmetic", "VHDL", "-3 + 2 = -1, -3 - 2 = -5 (signed rendering)")
 def hdl_21() -> str:
     result = must_run("features.vhd", top="signed_math", duration=10,
                       constantInputs={"a": -3, "b": 2})
-    return f"{check_value(result, 'sum', 15)} {check_value(result, 'diff', 11)}"
+    return f"{check_value(result, 'sum', -1)} {check_value(result, 'diff', -5)}"
 
 
-@case("HDL-22", "4", "Signed overflow wrap", "VHDL", "7 + 7 wraps to -2 (14) with ovf=1")
+@case("HDL-22", "4", "Signed overflow wrap", "VHDL", "7 + 7 wraps to -2 (0xE) with ovf=1")
 def hdl_22() -> str:
     result = must_run("features.vhd", top="signed_math", duration=10,
                       constantInputs={"a": 7, "b": 7})
-    return f"{check_value(result, 'sum', 14)} {check_value(result, 'ovf', 1)}"
+    return f"{check_value(result, 'sum', -2)} {check_value(result, 'ovf', 1)}"
 
 
 @case("HDL-23", "4", "Tri-state bus and inout port", "VHDL", "oe=1 drives 0xA; oe=0 releases Z")

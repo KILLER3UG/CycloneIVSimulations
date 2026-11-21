@@ -266,6 +266,13 @@ export class SimSession {
     reset() { this.send({ type: "sim_reset" }); }
     step(cycles = 1) { this.send({ type: "sim_step", cycles }); }
 
+    // -- live interactive co-simulation (persistent GHDL stepping) -----------
+    liveStart(params = {}) { this.send({ type: "live_start", ...(params || {}) }); }
+    liveInput(params = {}) { this.send({ type: "live_input", ...(params || {}) }); }
+    livePace(pace) { this.send({ type: "live_pace", pace }); }
+    liveStep(cycles = 1) { this.send({ type: "live_step", cycles }); }
+    liveStop() { this.send({ type: "live_stop" }); }
+
     close() {
         this.closedByUser = true;
         if (this.ws) {

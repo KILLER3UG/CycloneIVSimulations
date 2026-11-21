@@ -139,6 +139,21 @@ def _elem(port_name: str, bit: int, width: int) -> str:
     return signal if width == 1 else f"{signal}({bit})"
 
 
+def _bit_elem(port: Port, bit: int) -> int:
+    """Map a value-bit index (LSB = 0) to the port's VHDL element index.
+
+    The pins lists in ``BoardMap`` are ordered by *value bit* (bit 0 = LSB of
+    the integer the VCD delivers).  For a ``downto`` range the element index
+    equals ``right + bit``; for an ascending ``to`` range the rightmost
+    element is the LSB, so the element index is ``right - bit``.  Using the
+    raw bit as an element index misdrove every non-zero ascending range
+    (``N to M``).
+    """
+    if port.left is None or port.right is None or (port.width or 1) == 1:
+        return bit
+    return (port.right + bit) if port.downto else (port.right - bit)
+
+
 def _driver_literal(port: Port, level: str) -> str:
     """VHDL literal that drives one bit/level of ``port`` (typed scalars too)."""
     t = (port.type_name or "").lower()
@@ -487,7 +502,7 @@ def _gen_sweep_tb(
                             if pname == port.name and b == bit:
                                 ch_for_bit = ch["index"]
                     level = (steady_level(ch_for_bit, k) if k < n_vec else idle_level(ch_for_bit)) if ch_for_bit is not None else default_level(port, bit)
-                    add(f"    p_{sn}({k})({bit}) <= {_driver_literal(port, level)};")
+                    add(f"    p_{sn}({k})({_bit_elem(port, bit)}) <= {_driver_literal(port, level)};")
     if n_rel:
         if reset_cycles:
             add(f"    wait for {reset_cycles} * CLK_PERIOD;")
@@ -495,13 +510,13 @@ def _gen_sweep_tb(
             k = n_vec + r
             ch = bound[r]
             for (pname, bit, width) in chan_targets[ch]:
-                add(f"    p_{_sn(pname)}({k})" + ("" if width == 1 else f"({bit})") + f" <= {_driver_literal(port_by_name[pname], active_level(ch))};")
+                add(f"    p_{_sn(pname)}({k})" + ("" if width == 1 else f"({_bit_elem(port_by_name[pname], bit)})") + f" <= {_driver_literal(port_by_name[pname], active_level(ch))};")
         add(f"    wait for 4 * CLK_PERIOD;")
         for r in range(n_rel):
             k = n_vec + r
             ch = bound[r]
             for (pname, bit, width) in chan_targets[ch]:
-                add(f"    p_{_sn(pname)}({k})" + ("" if width == 1 else f"({bit})") + f" <= {_driver_literal(port_by_name[pname], idle_level(ch))};")
+                add(f"    p_{_sn(pname)}({k})" + ("" if width == 1 else f"({_bit_elem(port_by_name[pname], bit)})") + f" <= {_driver_literal(port_by_name[pname], idle_level(ch))};")
     add("    wait;")
     add("  end process;")
     add("")
@@ -650,7 +665,7 @@ def _gen_release_tb(
                 add(f"    s_{sn} <= '{input_level(port, 0, phase)}';")
             else:
                 for bit in range(port.width or 1):
-                    add(f"    s_{sn}({bit}) <= '{input_level(port, bit, phase)}';")
+                    add(f"    s_{sn}({_bit_elem(port, bit)}) <= '{input_level(port, bit, phase)}';")
         if phase == "active":
             add("    wait for 4 * CLK_PERIOD;")
     add("    wait;")

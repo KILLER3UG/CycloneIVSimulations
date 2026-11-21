@@ -44,6 +44,7 @@ MODULES = [
     "test_qa_protocols",
     "test_qa_scaling",
     "test_qa_determinism",
+    "test_quartus_differential",
     "test_qa_robustness",
     "test_qa_differential",
     "test_qa_qsf",

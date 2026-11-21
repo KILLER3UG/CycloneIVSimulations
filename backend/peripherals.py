@@ -34,14 +34,16 @@ def _as_int(value: Any) -> Optional[int]:
     return None
 
 
-def decode_uart(transitions: List[Tuple[float, Any]], idle_high: bool = True) -> Dict[str, Any]:
+def decode_uart(transitions: List[Tuple[float, Any]], idle_high: bool = True,
+                bit_time_ns: Optional[float] = None) -> Dict[str, Any]:
     """Decode 8N1 frames from a UART TX pin.
 
-    The bit time is auto-detected from the edge spacing.  A first estimate
-    comes from the shortest inter-edge delta; edges closer together than a
-    quarter of the *median* spacing are then treated as glitches (a single
-    glitch pair would otherwise destroy the estimate and every frame after
-    it) and the estimate is recomputed from the debounced edges.
+    The bit time is auto-detected from the edge spacing unless
+    ``bit_time_ns`` is given (the live bridge passes the exact baud it
+    injected, because a capture window can start mid-frame and poison the
+    min-width estimate).  Edges closer together than a quarter of the
+    *median* spacing are then treated as glitches and the estimate is
+    recomputed from the debounced edges.
     """
     levels: List[Tuple[float, int]] = []
     for t, v in transitions:
@@ -73,7 +75,10 @@ def decode_uart(transitions: List[Tuple[float, Any]], idle_high: bool = True) ->
     widths = [b[0] - a[0] for a, b in zip(filtered, filtered[1:]) if b[0] > a[0]]
     if not widths:
         return {"bytes": [], "baud": None, "frames": 0}
-    bit_time = min(widths)
+    if bit_time_ns and bit_time_ns > 0:
+        bit_time = float(bit_time_ns)
+    else:
+        bit_time = min(widths)
     if bit_time <= 0:
         return {"bytes": [], "baud": None, "frames": 0}
 
