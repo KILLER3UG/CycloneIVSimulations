@@ -17,14 +17,19 @@ export function normalizePin(raw) {
         const m = t.match(/^P(?:IN)?[-_ ]?([A-Za-z0-9]+)$/i);
         return `PIN_${m[1].toUpperCase()}`;
     }
+    // Bare BGA ball names (e.g. "R8", "AB12") get the PIN_ prefix too.
+    if (/^[A-Z]{1,2}\d+$/.test(t)) return `PIN_${t}`;
     return t;
 }
 
 export function isValidEqfpPin(pin) {
     const m = /^PIN_(\d+)$/.exec(String(pin || "").trim().toUpperCase());
-    if (!m) return false;
-    const n = Number(m[1]);
-    return n >= 1 && n <= PACKAGE_PIN_MAX;
+    if (m) {
+        const n = Number(m[1]);
+        return n >= 1 && n <= PACKAGE_PIN_MAX;
+    }
+    // Ball names (FBGA packages, e.g. PIN_R8 / PIN_AB12): 1-2 letters + digits.
+    return /^PIN_[A-Z]{1,2}\d{1,3}$/.test(String(pin || "").trim().toUpperCase());
 }
 
 // Build labeled pin catalog strictly from profile (/api/board -> board/board.json).

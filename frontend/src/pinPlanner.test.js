@@ -208,3 +208,33 @@ endmodule`, "p24check.v");
         expect(catalog.byPin.get("PIN_133").label).toContain("rightmost D4");
     });
 });
+
+describe("normalizePin — pin entry expansion", () => {
+    it("expands bare pin numbers to PIN_<n>", () => {
+        expect(normalizePin("23")).toBe("PIN_23");
+        expect(normalizePin(" 7 ")).toBe("PIN_7");
+        expect(normalizePin("144")).toBe("PIN_144");
+    });
+
+    it("accepts the full PIN_ form and stays idempotent", () => {
+        expect(normalizePin("PIN_23")).toBe("PIN_23");
+        expect(normalizePin("pin_23")).toBe("PIN_23");
+        expect(normalizePin("PIN_23")).toBe(normalizePin(normalizePin("PIN_23")));
+    });
+
+    it("accepts P/prefixed shorthand", () => {
+        expect(normalizePin("P23")).toBe("PIN_23");
+        expect(normalizePin("pin-23")).toBe("PIN_23");
+    });
+
+    it("expands bare BGA ball names for FBGA packages", () => {
+        expect(normalizePin("R8")).toBe("PIN_R8");
+        expect(normalizePin("ab12")).toBe("PIN_AB12");
+        expect(normalizePin("PIN_R8")).toBe("PIN_R8");
+    });
+
+    it("leaves unknown text untouched for validation to flag", () => {
+        expect(normalizePin("hello")).toBe("HELLO");
+        expect(normalizePin("")).toBe("");
+    });
+});

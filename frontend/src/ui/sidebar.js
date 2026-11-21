@@ -737,7 +737,8 @@ export function createSidebar(root, h) {
                 persistAndNotify();
             });
             // Enter commits the typed pin (e.g. the top of the filtered
-            // dropdown) and closes the suggestion list.
+            // dropdown) and closes the suggestion list. The displayed value
+            // is normalized to the full pin name ("23" -> "PIN_23").
             locInp.addEventListener("keydown", (e) => {
                 if (e.key !== "Enter") return;
                 e.preventDefault();
@@ -745,8 +746,18 @@ export function createSidebar(root, h) {
                 const norm = normalizePin(raw);
                 tr.dataset.pin = norm;
                 assignments[n.nodeName] = { location: norm || raw, ioStandard: stdSel.value };
+                locInp.value = norm || raw;
                 persistAndNotify();
                 locInp.blur();
+            });
+            locInp.addEventListener("blur", () => {
+                const norm = normalizePin(locInp.value);
+                if (norm && locInp.value !== norm) {
+                    locInp.value = norm;
+                    tr.dataset.pin = norm;
+                    assignments[n.nodeName] = { location: norm, ioStandard: stdSel.value };
+                    persistAndNotify();
+                }
             });
             stdSel.addEventListener("change", () => {
                 assignments[n.nodeName] = { location: locInp.value.trim(), ioStandard: stdSel.value };
