@@ -1221,9 +1221,27 @@ input[type="checkbox"], input[type="radio"] { accent-color: #ffffff; }
     height: 28px; padding: 0 13px; display: inline-flex; align-items: center; gap: 6px;
     background: #ffffff; color: #0a0a0b; border: 1px solid #ffffff;
     border-radius: 7px; font-size: 11px; font-weight: 700; box-shadow: none;
+    position: relative; overflow: hidden;
 }
 .tb-compile:hover { background: #e4e4e7; }
 .tb-compile .icon { width: 12px; height: 12px; }
+/* Compiling: dark spinner + a light sheen sweeping across the button. */
+.tb-compile.running {
+    color: transparent;
+    background: linear-gradient(100deg, #ffffff 0%, #ffffff 38%, #dbe4ff 50%, #ffffff 62%, #ffffff 100%);
+    background-size: 240% 100%;
+    animation: compile-sheen 1.15s linear infinite;
+}
+.tb-compile.running .icon { opacity: 0; }
+.tb-compile.running::after {
+    content: ""; position: absolute; inset: 0; margin: auto; width: 12px; height: 12px;
+    border: 2px solid rgba(10, 10, 11, 0.22); border-top-color: #0a0a0b; border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+}
+@keyframes compile-sheen {
+    0% { background-position: 130% 0; }
+    100% { background-position: -130% 0; }
+}
 .tb-audio-pill {
     position: relative; display: flex; align-items: center; gap: 5px;
     padding: 2px 8px; background: #18181b; border: var(--hair);
@@ -1304,6 +1322,28 @@ input[type="checkbox"], input[type="radio"] { accent-color: #ffffff; }
 #stats.stats-block, #stats.stats-block.stats-pill { pointer-events: none; }
 #stats .hud-item { color: #a1a1aa; white-space: nowrap; }
 #stats .hud-live { color: #ffffff; font-weight: 650; }
+/* Compiling: amber pulse + animated ellipsis on the HUD status. */
+#stats .hud-live.compiling {
+    color: #facc15;
+    animation: hud-compiling-pulse 1.1s ease-in-out infinite;
+}
+#stats .hud-live.compiling::after {
+    content: "";
+    display: inline-block;
+    width: 1.4em;
+    text-align: left;
+    animation: hud-compiling-dots 1.2s steps(4, end) infinite;
+}
+@keyframes hud-compiling-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+}
+@keyframes hud-compiling-dots {
+    0% { content: ""; }
+    25% { content: "."; }
+    50% { content: ".."; }
+    75% { content: "..."; }
+}
 #stats .hud-latency { color: #f4f4f5; }
 #stats .hud-bar, #stats .hud-sep { color: #52525b; }
 .board-controls, #board-controls {

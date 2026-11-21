@@ -61,6 +61,7 @@ export function createStatsBlock(container) {
         el.target.textContent = fmtClock(state.simStats?.targetSpeed || state.clockHz);
         el.time.textContent = `Sim: ${fmtSimTime(state.simTimeNs)}`;
         el.status.textContent = state.status || "Live";
+        el.status.classList.toggle("compiling", state.status === "compiling");
         el.latency.textContent = state.stimulusMap ? "<1ms" : "GHDL";
         el.keys.textContent = keys ? (shared ? `K1..${keys}` : `K0..${keys - 1}`) : "K --";
         el.sw.textContent = switches

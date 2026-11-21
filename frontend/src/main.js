@@ -1011,6 +1011,7 @@ function showCompileFailure(summary, msgs, errCount, step = 1) {
     bottom.setProblems(msgs.filter((m) => m.severity === "error" || m.severity === "warning"));
     editor.setProblems(msgs);
     toolbar.setStep(step, "error");
+    toolbar.setRunning(false, false);
     setStatus("error", "compile failed");
     log(`Compile failed (${errCount} error(s)) — previous board state retained.`, "error");
     for (const e of msgs.slice(0, 12)) log(`${e.message || e} (${e.file || "project"}${e.line ? ":" + e.line : ""})`, "error");
@@ -1046,6 +1047,7 @@ async function compileAndProgram() {
     }
 
     setStatus("compiling");
+    toolbar.setRunning(true, false);   // spinner + sheen on Compile & Run
     log(`Compiling top-level '${plan.topEntity}'…`, "cmd");
     let res;
     try {
@@ -1058,6 +1060,7 @@ async function compileAndProgram() {
         });
     } catch (err) {
         toolbar.setStep(0, "error");
+        toolbar.setRunning(false, false);
         setStatus("error", err.message);
         log(`Compile request failed: ${err.message}`, "error");
         return;
