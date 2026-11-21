@@ -70,21 +70,6 @@ export function chipMarkTexture(lines, size = 256, bg = "#0b0c0f", opts = {}) {
     return canvasTexture(canvas);
 }
 
-/** Radial glow sprite texture (white core → transparent). */
-export function glowTexture() {
-    const size = 128;
-    const canvas = createCanvas(size, size);
-    const ctx = canvas.getContext("2d");
-    const g = ctx.createRadialGradient(size / 2, size / 2, 2, size / 2, size / 2, size / 2);
-    g.addColorStop(0, "rgba(255,255,255,1)");
-    g.addColorStop(0.25, "rgba(255,255,255,0.55)");
-    g.addColorStop(0.6, "rgba(255,255,255,0.14)");
-    g.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, size, size);
-    return canvasTexture(canvas, { srgb: true, anisotropy: 2 });
-}
-
 /** Simple text label texture on transparent background. */
 export function labelTexture(text, {
     font = '600 42px "Segoe UI", Arial, sans-serif',

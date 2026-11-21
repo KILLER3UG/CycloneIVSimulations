@@ -3,7 +3,7 @@
 
 import * as THREE from "three";
 import { LAYOUT, BOARD_TOP, worldX, worldZ } from "./layout.js";
-import { glowTexture, mulberry32 } from "./util.js";
+import { mulberry32 } from "./util.js";
 
 export function buildPassives(mats, seed = 77) {
     const group = new THREE.Group();
@@ -63,7 +63,7 @@ export function buildPassives(mats, seed = 77) {
     tInst.instanceMatrix.needsUpdate = true;
     group.add(rInst, cInst, tInst);
 
-    // ---- power-indicator LED D1 (red 0805 + glow) ---------------------------
+    // ---- power-indicator LED D1 (red 0805, emissive only) -------------------
     let powerLed = null;
     const d1Cluster = clusters.find((c) => c.id === "R1_D1");
     if (d1Cluster) {
@@ -73,15 +73,7 @@ export function buildPassives(mats, seed = 77) {
         mesh.position.set(worldX(d1Cluster.pos[0] + 2.4), BOARD_TOP + 0.35, worldZ(d1Cluster.pos[1]));
         mesh.castShadow = true;
         group.add(mesh);
-        const glowMat = new THREE.SpriteMaterial({
-            map: glowTexture(), color: new THREE.Color(2.2, 0.35, 0.12),
-            transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false,
-        });
-        const glow = new THREE.Sprite(glowMat);
-        glow.scale.set(7, 7, 1);
-        glow.position.copy(mesh.position).y += 0.6;
-        group.add(glow);
-        powerLed = { mesh, material: mat, glow, glowMaterial: glowMat, level: 0 };
+        powerLed = { mesh, material: mat, level: 0 };
     }
 
     // ---- electrolytic cans ---------------------------------------------------

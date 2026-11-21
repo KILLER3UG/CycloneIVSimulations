@@ -17,7 +17,6 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
-import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 
 import { PCB_OUTLINE, LAYOUT, BOARD_TOP, worldX, worldZ, buildPinIndex, SEG_GLYPHS, buildDynamicBoardModel } from "./layout.js";
@@ -418,11 +417,6 @@ export class Board3D {
             if (led.material.emissive?.setHex) led.material.emissive.setHex(0xff1e1e);
             led.material.emissiveIntensity = v * 3.2;
             if (led.material.color?.setRGB) led.material.color.setRGB(1, 1 - v * 0.28, 1 - v * 0.28);
-        }
-        const glowCol = this.io?.glowPoints?.geometry?.getAttribute?.("color");
-        if (glowCol && i < glowCol.count) {
-            glowCol.setXYZ(i, 3.0 * v, 0.4 * v, 0.12 * v);
-            glowCol.needsUpdate = true;
         }
     }
 
@@ -930,20 +924,16 @@ export class Board3D {
 
     _ensureComposer() {
         if (this.composer) return;
-        // Software rasterizers draw every fragment on the CPU — bloom's
-        // extra passes are unaffordable there; keep the plain render path.
+        // Software rasterizers draw every fragment on the CPU — keep the
+        // plain, cheap render path there.
         if (this.gpuIsSoftware || this.quality === "performance") return;
         const size = new THREE.Vector2();
         this.renderer.getSize(size);
+        // Render + output passes only: tone mapping and sRGB conversion stay
+        // identical to the plain path. Bloom was removed — its halos washed
+        // the whole board out (user report).
         this.composer = new EffectComposer(this.renderer);
         this.composer.addPass(new RenderPass(this.scene, this.camera));
-        // Selective bloom: lit 7-seg segments are HDR studio-red (luminance
-        // ≈2.8) and cross the 2.5 threshold; key-lit silkscreen, connector
-        // plastics (env clamped) and the charcoal PCB stay below it, so only
-        // the hardware glows. SSAO was evaluated and produced a black frame
-        // at this millimetre scene scale, so it stays disabled.
-        const bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.32, 0.22, 2.5);
-        this.composer.addPass(bloom);
         this.composer.addPass(new OutputPass());
     }
 
@@ -1128,7 +1118,6 @@ export class Board3D {
             const target = this.power ? 1 : 0;
             this.powerLed.level += (target - this.powerLed.level) * k;
             this.powerLed.material.emissiveIntensity = this.powerLed.level * 3.0;
-            this.powerLed.glowMaterial.opacity = this.powerLed.level * 0.9;
         }
 
         // 7-seg multiplexing (A3): the rendered image is the **time-weighted

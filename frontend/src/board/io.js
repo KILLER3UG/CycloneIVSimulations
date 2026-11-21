@@ -6,7 +6,7 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { PCB_OUTLINE, LAYOUT, BOARD_TOP, SEG_BIT_MAP_FALLBACK } from "./layout.js";
-import { createCanvas, canvasTexture, glowTexture } from "./util.js";
+import { createCanvas, canvasTexture } from "./util.js";
 
 // Segment geometry only — the bit map itself comes from board.json via
 // layout.js (SEG_BIT_MAP_FALLBACK is the single exported fallback).
@@ -182,11 +182,9 @@ export function buildIO(mats, {
     })();
 
     // ------------------------------------------------------------------- LEDs
-    // Lenses are individual meshes; the four glow halos share ONE Points object
-    // (per-vertex HDR colour carries each LED's level — 1 draw call total).
+    // Individual lens meshes with emissive materials — no additive glow
+    // sprites (they washed the whole board out under bloom).
     const leds = [];
-    const glowPos = new Float32Array(ledCount * 3);
-    const glowCol = new Float32Array(ledCount * 3);
     for (let i = 0; i < ledCount; i += 1) {
         const def = defOf(`LED${i + 1}`, dyn?.leds?.[i]);
         if (!def || !Array.isArray(def.pos)) continue;
@@ -209,9 +207,6 @@ export function buildIO(mats, {
             polarity: entry ? entry.polarity : "active-low", label: `LED${i + 1}${dual}`,
         };
         group.add(lens);
-        glowPos[i * 3] = x;
-        glowPos[i * 3 + 1] = BOARD_TOP + 1.7;
-        glowPos[i * 3 + 2] = z;
         pickables.push(lens);
         leds.push({ lens, material, level: 0, target: 0 });
         probePoints.push({
@@ -220,15 +215,6 @@ export function buildIO(mats, {
             label: `LED${i + 1}${dual}`,
         });
     }
-    const glowGeo = new THREE.BufferGeometry();
-    glowGeo.setAttribute("position", new THREE.BufferAttribute(glowPos, 3));
-    glowGeo.setAttribute("color", new THREE.BufferAttribute(glowCol, 3).setUsage(THREE.DynamicDrawUsage));
-    const glowPoints = new THREE.Points(glowGeo, new THREE.PointsMaterial({
-        map: glowTexture(), size: 9, sizeAttenuation: true, vertexColors: true,
-        transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false,
-    }));
-    glowPoints.renderOrder = 5;
-    group.add(glowPoints);
 
     // --------------------------------------------------------- 7-seg display
     // Profiles may declare zero displays (e.g. the Terasic DE0-Nano has no
@@ -381,6 +367,6 @@ export function buildIO(mats, {
 
     return {
         group, pickables, anchors, probePoints,
-        leds, glowPoints, keys, dip, reset, powerSwitch, buzzer, display,
+        leds, keys, dip, reset, powerSwitch, buzzer, display,
     };
 }

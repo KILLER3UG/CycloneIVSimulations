@@ -738,7 +738,8 @@ export function createSidebar(root, h) {
             });
             // Enter commits the typed pin (e.g. the top of the filtered
             // dropdown) and closes the suggestion list. The displayed value
-            // is normalized to the full pin name ("23" -> "PIN_23").
+            // is normalized to the full pin name (a bare number becomes
+            // PIN-prefixed).
             locInp.addEventListener("keydown", (e) => {
                 if (e.key !== "Enter") return;
                 e.preventDefault();
