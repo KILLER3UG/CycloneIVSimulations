@@ -3,6 +3,7 @@
 
 import { icon } from "./icons.js";
 import { dialog, toast } from "./toast.js";
+import { allowedPinOptions } from "./pinOptions.js";
 import { SEG_BIT_MAP_FALLBACK, SEG_GLYPHS } from "../board/layout.js";
 import {
     IO_STANDARDS,
@@ -74,6 +75,7 @@ export function createSidebar(root, h) {
     let entity = null; // top-level entity { name, ports }
     let nodes = [];
     let assignments = {};
+    let lastDatalistSig = "";
     let liveValues = {};
     let examples = [];
 
@@ -583,7 +585,39 @@ export function createSidebar(root, h) {
         }
         refreshPinValidationUI();
         updatePinValues();
+        refreshPinDatalists();
         h.onPinAssignmentsChanged?.(getPinPlan());
+    }
+
+    // Pins taken by ANY assigned port (valid catalog pins only — partial
+    // typing like "PIN_" never excludes anything).
+    function takenPins(excludeNode) {
+        const taken = new Set();
+        for (const n of nodes) {
+            if (excludeNode && n.nodeName === excludeNode) continue;
+            const loc = normalizePin(String(assignments[n.nodeName]?.location || ""));
+            if (loc && catalog.byPin.has(loc)) taken.add(loc);
+        }
+        return taken;
+    }
+
+    // Each row's datalist hides pins already assigned to OTHER ports, so a
+    // taken pin can never be picked again from the dropdown.
+    function refreshPinDatalists() {
+        const sig = nodes.map((n) => normalizePin(String(assignments[n.nodeName]?.location || "")))
+            .sort().join(",") + `|${nodes.length}`;
+        if (sig === lastDatalistSig) return;
+        lastDatalistSig = sig;
+        panes.pinmap.querySelectorAll("tr.pin-row[data-node]").forEach((tr) => {
+            const dl = tr.querySelector("datalist");
+            if (!dl) return;
+            const own = normalizePin(String(assignments[tr.dataset.node]?.location || ""));
+            const taken = takenPins(tr.dataset.node);
+            const options = allowedPinOptions(catalog.list, taken, own);
+            dl.innerHTML = options
+                .map((c) => `<option value="${escHtml(c.pin)}" label="${escHtml(c.pin)} — ${escHtml(c.label)}"></option>`)
+                .join("");
+        });
     }
 
     function renderPinPlanner() {
@@ -606,9 +640,6 @@ export function createSidebar(root, h) {
                 <button type="button" class="btn pp-btn" id="pp-export" title="Export assignments as .qsf">Export .qsf</button>
                 <input type="file" id="pp-qsf-file" accept=".qsf" class="hidden">
             </div>
-            <datalist id="pp-pin-datalist">
-                ${catalog.list.map((c) => `<option value="${escHtml(c.pin)}" label="${escHtml(c.pin)} — ${escHtml(c.label)}"></option>`).join("")}
-            </datalist>
         `;
         p.appendChild(bar);
         const ppFilter = bar.querySelector("#pp-filter");
@@ -666,12 +697,7 @@ export function createSidebar(root, h) {
         table.innerHTML = `<thead><tr><th>Node Name</th><th>Dir</th><th>Location</th><th>I/O Std</th><th>Val</th></tr></thead><tbody></tbody>`;
         const tbody = table.querySelector("tbody");
 
-        const optionsHtml = `<option value="">Unassigned</option>`
-            + catalog.list.map((c) => {
-                const tag = c.priority > 0 ? `${c.pin} — ${c.label}` : c.pin;
-                return `<option value="${escHtml(c.pin)}">${escHtml(tag)}</option>`;
-            }).join("");
-
+        let rowIdx = 0;
         for (const n of nodes) {
             const entry = assignments[n.nodeName] || { location: "", ioStandard: "3.3-V LVTTL" };
             const curLoc = normalizePin(entry.location || "");
@@ -682,12 +708,14 @@ export function createSidebar(root, h) {
             tr.dataset.bitOffset = String(n.bitOffset || 0);
             tr.dataset.pin = curLoc;
             tr.dataset.search = `${n.nodeName} ${n.direction} ${curLoc} ${catalog.byPin.get(curLoc)?.label || ""}`.toLowerCase();
+            const dlId = `pp-pin-dl-${rowIdx++}`;
 
             tr.innerHTML = `
                 <td class="pin-id" title="${escHtml(n.nodeName)}">${escHtml(n.nodeName)}</td>
                 <td class="pin-dir">${escHtml(n.direction === "input" ? "in" : n.direction === "output" ? "out" : "io")}</td>
                 <td class="pp-loc-cell">
-                    <input type="text" class="pp-loc-input" list="pp-pin-datalist" value="${escHtml(entry.location || "")}" placeholder="Unassigned" spellcheck="false" aria-label="Pin location for ${escHtml(n.nodeName)}">
+                    <input type="text" class="pp-loc-input" list="${dlId}" value="${escHtml(entry.location || "")}" placeholder="Unassigned" spellcheck="false" aria-label="Pin location for ${escHtml(n.nodeName)}">
+                    <datalist id="${dlId}"></datalist>
                 </td>
                 <td>
                     <select class="pp-std-select" aria-label="I/O Standard for ${escHtml(n.nodeName)}">
@@ -708,6 +736,18 @@ export function createSidebar(root, h) {
                 tr.dataset.search = `${n.nodeName} ${n.direction} ${norm} ${catalog.byPin.get(norm)?.label || ""}`.toLowerCase();
                 persistAndNotify();
             });
+            // Enter commits the typed pin (e.g. the top of the filtered
+            // dropdown) and closes the suggestion list.
+            locInp.addEventListener("keydown", (e) => {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                const raw = locInp.value.trim();
+                const norm = normalizePin(raw);
+                tr.dataset.pin = norm;
+                assignments[n.nodeName] = { location: norm || raw, ioStandard: stdSel.value };
+                persistAndNotify();
+                locInp.blur();
+            });
             stdSel.addEventListener("change", () => {
                 assignments[n.nodeName] = { location: locInp.value.trim(), ioStandard: stdSel.value };
                 persistAndNotify();
@@ -725,6 +765,7 @@ export function createSidebar(root, h) {
         refreshPinValidationUI();
         updatePinValues();
         applySearch();
+        refreshPinDatalists();
     }
 
     function importQsfText(qsfText, sourceName = "project.qsf") {
