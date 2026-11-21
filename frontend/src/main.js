@@ -11,6 +11,7 @@ import { ApiClient, SimSession } from "./api.js";
 import { createStore } from "./state.js";
 import { createToolbar } from "./ui/toolbar.js";
 import { isEditableTarget } from "./ui/editableGuard.js";
+import { pinCoverageWarning } from "./ui/pinCoverage.js";
 import { reduceLiveVga, reduceUartBytes } from "./liveFrame.js";
 import { createSidebar } from "./ui/sidebar.js";
 import { createEditorPanel } from "./ui/editorPanel.js";
@@ -1100,6 +1101,18 @@ async function compileAndProgram() {
     toolbar.setStep(1, "done");
     toolbar.setStep(2, "done");
     log(`Compiled ${S.entity.name}: ${S.entity.ports.length} ports`, "ok");
+
+    // Pin Planner coverage: a design that compiles but has no pin assignments
+    // is not mapped to any board hardware — nothing will light up or respond.
+    // Make that unmissable and hand the user the one-click fix.
+    const pinWarning = pinCoverageWarning(updatedPinPlan?.validation);
+    if (pinWarning) {
+        log(pinWarning, "warn");
+        toast(pinWarning, {
+            kind: "warn", timeout: 10000,
+            action: { label: "Open Pin Planner", onClick: () => safeCall(() => sidebar?.showTab?.("pinmap")) },
+        });
+    }
 
     safeCall(() => board?.setDesign?.(S.compileBoard));
     safeCall(() => board?.resetVisual?.());

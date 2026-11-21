@@ -18,6 +18,12 @@ test("live 3D board smoke", async ({ page }) => {
     const exampleSelect = page.locator("#tb-examples");
     await exampleSelect.selectOption({ index: 1 }).catch(() => {});
     await page.locator("#tb-compile").click();
+
+    // The Pin Planner ships empty: the app must warn that no port is mapped
+    // to board hardware yet (actionable toast pointing at the Pin Planner).
+    await expect(page.locator(".toast-warn").filter({ hasText: "No pins assigned" }))
+        .toBeVisible({ timeout: 30_000 });
+
     // The live pill appears once the batch capture hands over to live mode.
     await expect(page.locator("#tb-live-pill")).toBeVisible({ timeout: 60_000 });
 
