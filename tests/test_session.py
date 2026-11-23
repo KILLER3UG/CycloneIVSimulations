@@ -632,8 +632,17 @@ def test_index_and_static_serving(client):
     assert "text/html" in response.headers["content-type"]
     assert "<html" in response.text.lower()
 
-    # assets resolve in whatever layout is present (here: the flat one)
-    assert client.get("/static/styles.css").status_code == 200
+    # assets resolve in whatever layout is present: take an asset URL the
+    # served index actually references and fetch it through both routes
+    # (the historical flat/legacy layouts kept styles.css at those paths;
+    # the built Vite layout ships hashed /assets/... bundles instead).
+    import re as _re
+
+    refs = _re.findall(r'(?:src|href)="(/[^"]+\.(?:css|js))"', response.text)
+    assert refs, "served index.html references no assets"
+    for ref in refs[:2]:
+        assert client.get(ref).status_code == 200, ref
+        assert client.get(f"/static{ref}").status_code == 200, ref
 
     # missing assets 404 instead of crashing
     assert client.get("/static/definitely-missing.js").status_code == 404

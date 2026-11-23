@@ -92,7 +92,7 @@ await page.waitForFunction(() => [...document.querySelectorAll("#console-log .lo
 // ------------------------------------------------------------------ step 1 --
 // Code tab + 3D viewport: background, PCB colour, framing, HUD, no duplicates.
 {
-    await page.click('[data-tab="code"]').catch(() => {});
+    await page.click('[data-ctab="sources"]').catch(() => {});
     await wait(500);
     const s = await page.evaluate(() => {
         const b = window.__cyclone.board;
@@ -140,7 +140,7 @@ await page.waitForFunction(() => [...document.querySelectorAll("#console-log .lo
     // apply the board default pin assignments FIRST (same button a student
     // clicks) — without them the stimulus sweep has no pin bindings and the
     // interactive buzzer/POV path stays dead
-    await page.click('[data-tab="pinmap"]');
+    await page.click('[data-ctab="pinmap"]');
     await wait(300);
     await page.evaluate(() => document.querySelector("#pp-defaults")?.click());
     await wait(400);
@@ -221,7 +221,7 @@ await page.waitForFunction(() => [...document.querySelectorAll("#console-log .lo
         sel.dispatchEvent(new Event("change", { bubbles: true }));
     });
     await wait(800);
-    await page.click('[data-tab="pinmap"]');
+    await page.click('[data-ctab="pinmap"]');
     await wait(300);
     await page.evaluate(() => document.querySelector("#pp-defaults")?.click());
     await wait(400);
@@ -267,7 +267,7 @@ await page.waitForFunction(() => [...document.querySelectorAll("#console-log .lo
         sel.dispatchEvent(new Event("change", { bubbles: true }));
     });
     await wait(800);
-    await page.click('[data-tab="pinmap"]');
+    await page.click('[data-ctab="pinmap"]');
     await wait(300);
     await page.evaluate(() => document.querySelector("#pp-defaults")?.click());
     await wait(400);
@@ -299,7 +299,7 @@ await page.waitForFunction(() => [...document.querySelectorAll("#console-log .lo
 // ------------------------------------------------------------------ step 4 --
 // Pin Planner: single-line rows, unclipped names, Diagnostics badge wired.
 {
-    await page.click('[data-tab="pinmap"]');
+    await page.click('[data-ctab="pinmap"]');
     await wait(600);
     const pp = await page.evaluate(() => {
         const rows = [...document.querySelectorAll(".pp-table tr.pin-row")];
@@ -316,7 +316,7 @@ await page.waitForFunction(() => [...document.querySelectorAll("#console-log .lo
 // ------------------------------------------------------------------ step 5 --
 // Peripherals tab cards.
 {
-    await page.click('[data-tab="periph"]');
+    await page.click('[data-rtab="periph"]');
     await wait(600);
     const per = await page.evaluate(() => ({
         cards: document.querySelectorAll(".peri-card").length,
@@ -420,13 +420,13 @@ await page.waitForFunction(() => [...document.querySelectorAll("#console-log .lo
     await page.click('[data-btab="diagnostics"]');
     await wait(500);
     const diag = await page.evaluate(() => ({
-        chips: [...document.querySelectorAll("#bottompanel [data-lf]")].map((c) => c.dataset.lf),
+        chips: [...document.querySelectorAll("#bottompanel .msg-filter")].map((c) => c.dataset.sev),
         badge: document.getElementById("diag-badge")?.textContent ?? null,
         clear: !!document.querySelector('#bottompanel [data-act="clearlog"]'),
         lines: document.querySelectorAll("#console-log .log-line").length,
     }));
     step("09 Diagnostics: INFO/OK/WARN/ERR/CMD chips + badge + Clear",
-        JSON.stringify(diag.chips) === JSON.stringify(["info", "ok", "warn", "error", "cmd"])
+        JSON.stringify(diag.chips) === JSON.stringify(["all", "error", "warning", "info"])
         && diag.badge !== null && diag.clear && diag.lines > 0, JSON.stringify(diag));
     await page.screenshot({ path: join(OUT, "installed-09-diagnostics.png") });
     await page.click('#bottompanel [data-act="clearlog"]');
@@ -486,16 +486,16 @@ await page.waitForFunction(() => [...document.querySelectorAll("#console-log .lo
 // ----------------------------------------------------------------- step 12 --
 // Board tab: hardware summary + custom board import control + pin table.
 {
-    await page.click('.wb-tab[data-tab="board"]');
+    await page.click('[data-rtab="boardimport"]');
     await wait(600);
     const boardTab = await page.evaluate(() => {
-        const pane = document.querySelector('#sidebar-host [data-pane="board"]');
+        const pane = document.querySelector('#rd-boardimport [data-pane="board"]');
         const r = pane?.getBoundingClientRect();
         return {
             visible: !!pane && !pane.classList.contains("hidden") && r.width > 100,
-            specs: document.querySelectorAll("#sidebar-host .bd-spec").length,
+            specs: document.querySelectorAll("#rd-boardimport .bd-spec").length,
             importBtn: !!document.getElementById("btn-load-board-json"),
-            pinRows: document.querySelectorAll("#sidebar-host .bd-table tr").length,
+            pinRows: document.querySelectorAll("#rd-boardimport .bd-table tr").length,
         };
     });
     step("12 Board tab: hardware summary specs + custom .json import + pin table",
@@ -507,9 +507,9 @@ await page.waitForFunction(() => [...document.querySelectorAll("#console-log .lo
 // Splitter drag: the workbench resizes and Monaco tracks the width live
 // (ResizeObserver auto-layout fix).
 {
-    await page.click('.wb-tab[data-tab="code"]');
+    await page.click('[data-ctab="sources"]');
     await wait(500);
-    const resizer = await page.$("#workspace > .ep-resizer");
+    const resizer = await page.$("#right-resizer");
     const before = await page.evaluate(() => ({
         w: Math.round(document.getElementById("right").getBoundingClientRect().width),
         mono: Math.round(document.querySelector("#ep-editor .monaco-editor")?.getBoundingClientRect().width || 0),
