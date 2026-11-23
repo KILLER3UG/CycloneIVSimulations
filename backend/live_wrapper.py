@@ -239,6 +239,11 @@ def build_live_wrapper(
     add("")
     add(f"architecture sim of live_{_sn(entity.name)} is")
     add("    constant CLK_HALF : time := %.4f ns;" % (float(clock_period_ns) / 2.0))
+    # Time-split constants for overflow-free timestamps (see F-line note):
+    # integer(now / 1 ns) overflows the 32-bit VHDL integer at 2^31 ns
+    # (~2.147 s of simulated time) and aborts every long live session.
+    add("    constant ONE_S  : time := 1000000000 ns;")
+    add("    constant ONE_NS : time := 1 ns;")
     add("    signal clk   : std_logic := '0';")
     add("    signal done  : boolean := false;")
     for p in entity.ports:
@@ -578,7 +583,9 @@ def build_live_wrapper(
         add("                            if utx_count <= 512 then")
         add("                                l := null;")
         add("                                write(l, string'(\"X \"));")
-        add("                                write(l, integer(now / 1 ns));")
+        add("                                write(l, integer(now / ONE_S));")
+        add("                                write(l, string'(\" \"));")
+        add("                                write(l, integer((now mod ONE_S) / ONE_NS));")
         add("                                write(l, string'(\" \"));")
         add("                                write(l, std_logic'image(utx_now)(2));")
         add("                                writeline(output, l);")
@@ -590,8 +597,15 @@ def build_live_wrapper(
     # ----- frame emission -----
     add("                l := null;")
     add("                write(l, string'(\"F \"));")
-    add("                nv := integer(now / 1 ns);")
-    add("                write(l, nv);")
+    # Simulated time as TWO integers (seconds, ns-within-second).  A plain
+    # integer(now / 1 ns) overflows the 32-bit VHDL integer once sim time
+    # passes 2^31 ns (~2.147 s) — "ghdl:error: overflow detected" — killing
+    # every long-running live session.  now / 1 ns stays integer-typed in
+    # GHDL even through textio write(), so split it instead; the Python
+    # frame reader reassembles exact nanoseconds as a double.
+    add("                write(l, integer(now / ONE_S));")
+    add("                write(l, string'(\" \"));")
+    add("                write(l, integer((now mod ONE_S) / ONE_NS));")
     add("                writeline(output, l);")
     add("                write(l, string'(\"N \"));")
     add("                write(l, n);")

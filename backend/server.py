@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -392,33 +393,74 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     live_session: Optional[Any] = None  # backend.live_session.LiveSession
     live_queue: asyncio.Queue = asyncio.Queue()
     live_tasks: list = []
+    live_stop_requested = False
     live_loop = asyncio.get_running_loop()
 
     def _on_live_frame(frame: dict) -> None:
         # reader thread → event loop
         live_loop.call_soon_threadsafe(live_queue.put_nowait, dict(frame))
 
+    def _on_live_exit(reason: str) -> None:
+        # The GHDL process ended on its own (crash or clean finish): the pace
+        # loop stops silently, so tell the client explicitly.
+        if live_stop_requested:
+            return
+        detail = ""
+        if live_session is not None:
+            detail = str(getattr(live_session, "reader_error", None) or "")
+        live_loop.call_soon_threadsafe(
+            live_queue.put_nowait,
+            {"type": "live_stopped", "reason": str(reason or "ghdl-exited"),
+             "detail": detail},
+        )
+
     async def _live_frame_pump() -> None:
-        while True:
-            frame = await live_queue.get()
-            payload = {"type": "live_frame"}
-            payload.update(frame)
-            try:
+        sent = 0
+        try:
+            while True:
+                frame = await live_queue.get()
+                payload = dict(frame)
+                # Telemetry frames carry the reader's internal "frame" marker;
+                # the frontend dispatches on "live_frame".
+                if payload.get("type") in (None, "frame"):
+                    payload["type"] = "live_frame"
                 await websocket.send_json(payload)
-            except Exception:
-                return
+                sent += 1
+                if os.environ.get("CYCLESIM_LIVE_DEBUG") and sent % 100 == 0:
+                    logger.info("live pump sent=%d", sent)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("live frame pump ended")
 
     async def _live_pace_loop() -> None:
         interval = 1.0 / 30.0
-        while live is not None and live_session is not None and live_session.alive:
-            if live.pace != "single":
-                cycles = live.cycles_for_tick(interval)
-                if cycles > 0:
-                    live.session.step(cycles)
-            await asyncio.sleep(interval)
+        steps = 0
+        try:
+            while live is not None and live_session is not None and live_session.alive:
+                if live.pace != "single":
+                    cycles = live.cycles_for_tick(interval)
+                    # Flow control: wait for the previous step's frame before
+                    # queueing the next T command.  GHDL consumes steps slower
+                    # than the pace ticks; without this the stdin pipe fills
+                    # and the blocking write freezes the whole event loop.
+                    if cycles > 0 and live.frame_seq >= steps:
+                        live.session.step(cycles)
+                        steps += 1
+                        if os.environ.get("CYCLESIM_LIVE_DEBUG") and steps % 100 == 0:
+                            logger.info("live pace steps=%d", steps)
+                await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("live pace loop crashed")
+            return
+        logger.info("live pace loop ended (alive=%s)",
+                    live_session.alive if live_session is not None else "no-session")
 
     async def _live_stop() -> None:
-        nonlocal live, live_session
+        nonlocal live, live_session, live_stop_requested
+        live_stop_requested = True
         for task in live_tasks:
             task.cancel()
         live_tasks.clear()
@@ -428,9 +470,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         live_session = None
 
     async def handle_live(kind: str, message: dict) -> None:
-        nonlocal live, live_session
+        nonlocal live, live_session, live_stop_requested
         if kind == "live_start":
             await _live_stop()
+            live_stop_requested = False
             sources_in = []
             if message.get("files"):
                 for item in message["files"]:
@@ -471,6 +514,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     float(message.get("clockPeriod", 10.0) or 10.0),
                     reset_port, int(message.get("resetCycles", 2) or 0),
                     reset_active_high,
+                    on_frame=_on_live_frame, on_exit=_on_live_exit,
                 )
                 live_session_local = controller.session
                 if not live_session_local.start():

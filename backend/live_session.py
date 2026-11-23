@@ -37,6 +37,23 @@ def _norm_meta(text: str) -> Any:
     return text.upper()
 
 
+def _parse_time_ns(text: str) -> float:
+    """Parse a wrapper timestamp into nanoseconds (float, exact to 2^53).
+
+    The wrapper emits 'seconds ns_within_second' so the 32-bit VHDL integer
+    can never overflow; a single legacy number is still accepted.
+    """
+    parts = text.split()
+    try:
+        if len(parts) >= 2:
+            return float(int(parts[0])) * 1e9 + float(int(parts[1]))
+        if parts:
+            return float(parts[0])
+    except (ValueError, IndexError):
+        pass
+    return 0.0
+
+
 class LiveSession:
     """One persistent GHDL live-stepping run."""
 
@@ -125,6 +142,7 @@ class LiveSession:
     def _read_loop(self) -> None:
         assert self.proc is not None and self.proc.stdout is not None
         frame: Dict[str, Any] = {}
+        parsed = 0
         try:
             # Event lines (L/X/G) are emitted by the wrapper DURING the step,
             # i.e. BEFORE the frame's own "F" line — buffer them and attach
@@ -135,7 +153,7 @@ class LiveSession:
                 if not line:
                     continue
                 if line.startswith("F "):
-                    frame = {"timeNs": float(line[2:] or 0)}
+                    frame = {"timeNs": _parse_time_ns(line[2:])}
                     for key, events in pending.items():
                         if events:
                             frame[key] = events
@@ -157,7 +175,12 @@ class LiveSession:
                 elif line.startswith("C "):
                     frame["coin"] = [int(x) for x in line[2:].split(",") if x != ""]
                 elif line.startswith("X "):
-                    t_ns, _, lvl = line[2:].partition(" ")
+                    parts = line[2:].split()
+                    if len(parts) >= 3:
+                        t_ns = _parse_time_ns(parts[0] + " " + parts[1])
+                        lvl = parts[2]
+                    else:
+                        t_ns, _, lvl = line[2:].partition(" ")
                     pending.setdefault("uartTransitions", []).append(
                         [float(t_ns or 0), 1 if lvl.strip() == "1" else 0])
                 elif line.startswith("G "):
@@ -172,6 +195,9 @@ class LiveSession:
                     frame["type"] = "frame"
                     self.sim_time_ns = float(frame.get("timeNs", 0) or 0)
                     self.last_frame = frame
+                    parsed += 1
+                    if os.environ.get("CYCLESIM_LIVE_DEBUG") and parsed % 100 == 0:
+                        print(f"[live-frames] {parsed}", flush=True)
                     if self.on_frame:
                         try:
                             self.on_frame(frame)
@@ -314,6 +340,8 @@ class LiveController:
         reset_port: Optional[str],
         reset_cycles: int,
         reset_active_high: bool,
+        on_frame: Optional[Callable[[dict], None]] = None,
+        on_exit: Optional[Callable[[str], None]] = None,
     ) -> None:
         self.entity = entity
         self.board_map = board_map
@@ -419,9 +447,10 @@ class LiveController:
             lcd_ports=lcd_ports, seg_dig_map=seg_dig_map,
             live_peripherals=live_peripherals,
         )
+        self.on_frame = on_frame
         self.session = LiveSession(
             ghdl_exe, entity.name, sources, self.wrapper, clock_period_ns,
-            on_frame=self._on_frame,
+            on_frame=self._on_frame, on_exit=on_exit,
         )
         _SESSIONS.append(self.session)
 
@@ -535,6 +564,11 @@ class LiveController:
         self._decode_uart(frame)
         self._accumulate_vga(frame)
         self._pending_frames.append(frame)
+        if self.on_frame:
+            try:
+                self.on_frame(frame)
+            except Exception:
+                pass
 
     def _decode_uart(self, frame: dict) -> None:
         """Decode 8N1 bytes from THIS frame's TXD transitions.
@@ -681,6 +715,8 @@ def build_live_controller(
     reset_port: Optional[str],
     reset_cycles: int,
     reset_active_high: bool,
+    on_frame: Optional[Callable[[dict], None]] = None,
+    on_exit: Optional[Callable[[str], None]] = None,
 ) -> tuple:
     """Translate sources (Verilog → VHDL), build the wrapper and session."""
     from .verilog_support import translate_verilog_sources
@@ -691,5 +727,6 @@ def build_live_controller(
     controller = LiveController(
         ghdl_exe, entity, sources, board_map, profile, clock_port,
         clock_period_ns, reset_port, reset_cycles, reset_active_high,
+        on_frame=on_frame, on_exit=on_exit,
     )
     return controller, sources

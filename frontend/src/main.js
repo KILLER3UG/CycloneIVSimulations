@@ -24,6 +24,7 @@ import { audio } from "./audio.js";
 import { runUpdateFlow, updatesSupported } from "./updater.js";
 import { buildVcd } from "./vcdExport.js";
 import { createTerminalController } from "./ui/terminal.js";
+import { pinPlanHasAssignments } from "./pinPlanGate.js";
 
 const store = createStore();
 const S = store.state;
@@ -970,6 +971,7 @@ function pressBoardReset() {
 }
 
 // ------------------------------------------------------------------- run ---
+
 function simPayload({ skipSynth = false, compactBoard = false, plan = null } = {}) {
     const cPlan = plan || editor.resolveCompilePlan();
     const pinPlan = sidebar.getPinPlan();
@@ -986,7 +988,7 @@ function simPayload({ skipSynth = false, compactBoard = false, plan = null } = {
         files: hdls,
         top: cPlan.topEntity || undefined,
         qsf: pinPlan.qsfText,
-        strictPins: true,
+        strictPins: pinPlanHasAssignments(pinPlan),
         duration,
         clockPeriod: setup.clockPeriod,
         resetCycles: setup.resetCycles,
@@ -1056,7 +1058,7 @@ async function compileAndProgram() {
             files: plan.includedFiles,
             top: plan.topEntity || undefined,
             qsf: pinPlan.qsfText,
-            strictPins: true,
+            strictPins: pinPlanHasAssignments(pinPlan),
         });
     } catch (err) {
         toolbar.setStep(0, "error");
