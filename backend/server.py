@@ -145,6 +145,7 @@ _DESCRIPTIONS = {
     "uart_tx": "Continuous 8N1 UART transmitter with a simulation-friendly TX_DIV.",
     "debounce": "Synchroniser and edge detector for a mechanical push button.",
     "sevseg_keys": "4-digit display driven by the DIP/keys (s1..s4); close S1 + any of S2..S4 and the lit glyph rotates across the tubes.",
+    "buzzb": "Real 4-tone latched buzzer (btn1..btn4 -> 500/800/1000/1600 Hz) with a 5 s release-hold timer on the passive speaker.",
 }
 
 
