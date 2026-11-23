@@ -25,6 +25,11 @@ import { runUpdateFlow, updatesSupported } from "./updater.js";
 import { buildVcd } from "./vcdExport.js";
 import { createTerminalController } from "./ui/terminal.js";
 import { pinPlanHasAssignments } from "./pinPlanGate.js";
+import {
+    accumulateBuzzerFreq,
+    createBuzzerFreqWindow,
+    resetBuzzerFreqWindow,
+} from "./buzzerFreq.js";
 
 const store = createStore();
 const S = store.state;
@@ -1444,16 +1449,23 @@ function handleLiveFrame(msg) {
     }
     // Buzzer: the board speaker is PASSIVE — a tone exists only while the pin
     // toggles (frequency from the toggle count over the frame); a steady DC
-    // level is silence on this board (no on-board oscillator).
+    // level is silence on this board (no on-board oscillator).  The frequency
+    // is measured over a sliding window of frames: a single 200k-cycle frame
+    // quantizes a 1600 Hz tone to 1500/1625 Hz, the window is exact.
     const bz = msg.buzzer || null;
     if (bz && bz.toggles > 1 && canPlayBuzzer()) {
-        const freq = bz.toggles / (2 * Math.max(1, msg.cycles) * ((S.clockPeriodNs || 10) * 1e-9));
+        if (!S._bzFreqWin) S._bzFreqWin = createBuzzerFreqWindow();
+        const freq = accumulateBuzzerFreq(
+            S._bzFreqWin, bz.toggles, Math.max(1, msg.cycles), S.clockPeriodNs || 10);
         const duty = Math.min(1, Math.max(0, (bz.activeCycles || 0) / Math.max(1, msg.cycles)));
         S.buzzer = { tone: true, frequency: Math.round(freq), duty, activeLow: true };
         driveBuzzer(true, Math.min(20000, Math.max(20, freq)), duty);
-    } else if (S.buzzer?.tone || S.buzzer?.frequency) {
-        S.buzzer = { tone: false, frequency: 0, duty: 0, activeLow: true };
-        driveBuzzer(false, 0, 0);
+    } else {
+        resetBuzzerFreqWindow(S._bzFreqWin);
+        if (S.buzzer?.tone || S.buzzer?.frequency) {
+            S.buzzer = { tone: false, frequency: 0, duty: 0, activeLow: true };
+            driveBuzzer(false, 0, 0);
+        }
     }
     sidebar.setLiveValues(S.liveValues);
     stats.update(S);

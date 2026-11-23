@@ -93,7 +93,7 @@ _VTOK_RE = re.compile(
   | (?P<sized>(?:\d+)?\s*'[sS]?[bBdDhHoO][0-9a-fA-F_xXzZ\?]+)
   | (?P<number>\d[\d_]*)
   | (?P<ident>[A-Za-z_`\$][A-Za-z0-9_\$]*)
-  | (?P<op>===|!==|==|!=|<=|>=|<<|>>|&&|\|\||~&|~\||~\^|\^~|[\+\-\*/%&\|\^~!<>=\?:;\.,\(\)\[\]\{\}@#])
+  | (?P<op>\*\*|===|!==|==|!=|<=|>=|<<|>>|&&|\|\||~&|~\||~\^|\^~|[\+\-\*/%&\|\^~!<>=\?:;\.,\(\)\[\]\{\}@#])
   | (?P<other>.)
     """,
     re.VERBOSE,
@@ -157,8 +157,8 @@ def _eval_int(expr_tokens: List[_VTok], params: Dict[str, int]) -> Optional[int]
                 parts.append(str(params[tok.value]))
             else:
                 return None
-        elif tok.value in ("+", "-", "*", "/", "%", "(", ")"):
-            parts.append("//" if tok.value == "/" else tok.value)
+        elif tok.value in ("+", "-", "*", "**", "/", "%", "(", ")"):
+            parts.append(tok.value)
         else:
             return None
     try:
@@ -1520,9 +1520,10 @@ class _VerilogTranslator:
         if not res.is_scalar and res.width == w:
             return res.vhdl
         if res.is_scalar:
-            if w == 1:
-                return f"std_logic_vector'(0 => {res.vhdl})"
-            return f"(({w - 1} downto 1 => '0') & {res.vhdl})"
+            # Widen a scalar via the v_u() helper: a bare choice-aggregate
+            # like (7 downto 1 => '0') & bit has no determinate type in VHDL
+            # and GHDL rejects it.
+            return f"std_logic_vector(resize(v_u({res.vhdl}), {w}))"
         return f"std_logic_vector(resize(unsigned({res.vhdl}), {w}))"
 
     def _target_rhs_expr(self, toks: List[_VTok], target_scalar: bool, target_width: int) -> str:
@@ -1657,8 +1658,10 @@ class _VerilogTranslator:
             while peek() and peek().value in ("+", "-"):
                 op = eat().value
                 right = parse_mul()
-                w = max(left.width, right.width, target_width_hint if (left.is_scalar and right.is_scalar) else 1)
-                w = max(left.width, right.width)
+                # Verilog expression width in an assignment context extends to
+                # the LHS: scalar+scalar assigned to a wider target must add at
+                # target width (1+1 into [1:0] is 2, not the truncated 0).
+                w = max(left.width, right.width, target_width_hint)
                 left = _ExprResult(
                     f"std_logic_vector(unsigned({as_vec(left, w)}) {op} unsigned({as_vec(right, w)}))",
                     False,
@@ -1723,34 +1726,54 @@ class _VerilogTranslator:
                 return _ExprResult(f"({inner.vhdl})", inner.is_scalar, inner.width)
             if t.value == "{":
                 eat()
-                # Check replication {count{item...}}
-                # Look ahead for inner '{' before matching '}'
+                # Replication {count{item,...}}: the count is a CONSTANT
+                # expression (number, parameter, or parenthesized constant)
+                # directly followed by the nested '{'.  Detected by lookahead
+                # BEFORE parsing the first item — the count tokens are not
+                # representable once lowered to a VHDL expression.
+                rep_toks: List[_VTok] = []
+                if peek() is not None:
+                    if (
+                        peek().kind in ("number", "sized")
+                        or (peek().kind == "ident" and peek().value in self.params)
+                    ) and pos[0] + 1 < len(toks) and toks[pos[0] + 1].value == "{":
+                        rep_toks.append(eat())
+                    elif peek().value == "(":
+                        end_p = _find_matching(toks, pos[0], "(", ")")
+                        if (
+                            end_p > 0
+                            and end_p + 1 < len(toks)
+                            and toks[end_p + 1].value == "{"
+                        ):
+                            while pos[0] <= end_p:
+                                rep_toks.append(eat())
+                    if rep_toks:
+                        eat()  # the inner '{' of the replication
+                        cnt = _eval_int(rep_toks, self.params)
+                        rep_items: List[_ExprResult] = []
+                        while peek() and peek().value != "}":
+                            rep_items.append(parse_ternary())
+                            if peek() and peek().value == ",":
+                                eat()
+                        if peek() and peek().value == "}":
+                            eat()
+                        if peek() and peek().value == "}":
+                            eat()
+                        combined = rep_items[0]
+                        if len(rep_items) > 1:
+                            cw = sum(x.width for x in rep_items)
+                            combined = _ExprResult(
+                                "(" + " & ".join(as_vec(x, x.width) for x in rep_items) + ")",
+                                False,
+                                cw,
+                            )
+                        c_n = cnt if (cnt and cnt > 0) else 1
+                        if combined.is_scalar:
+                            return _ExprResult(f"({c_n - 1} downto 0 => {combined.vhdl})", False, c_n)
+                        joined_rep = " & ".join([combined.vhdl] * c_n)
+                        return _ExprResult(f"({joined_rep})", False, c_n * combined.width)
                 parts: List[_ExprResult] = []
                 first = parse_ternary()
-                if peek() and peek().value == "{":
-                    # replication! Re-evaluate count as integer if possible
-                    cnt = _eval_int([_VTok("number", first.vhdl, t.line, t.column)], self.params)
-                    if cnt is None and first.vhdl.isdigit():
-                        cnt = int(first.vhdl)
-                    eat()
-                    rep_items: List[_ExprResult] = []
-                    while peek() and peek().value != "}":
-                        rep_items.append(parse_ternary())
-                        if peek() and peek().value == ",":
-                            eat()
-                    if peek() and peek().value == "}":
-                        eat()
-                    if peek() and peek().value == "}":
-                        eat()
-                    combined = rep_items[0]
-                    if len(rep_items) > 1:
-                        cw = sum(x.width for x in rep_items)
-                        combined = _ExprResult("(" + " & ".join(as_vec(x, x.width) for x in rep_items) + ")", False, cw)
-                    c_n = cnt if (cnt and cnt > 0) else 1
-                    if combined.is_scalar:
-                        return _ExprResult(f"({c_n - 1} downto 0 => {combined.vhdl})", False, c_n)
-                    joined_rep = " & ".join([combined.vhdl] * c_n)
-                    return _ExprResult(f"({joined_rep})", False, c_n * combined.width)
                 parts.append(first)
                 while peek() and peek().value == ",":
                     eat()
