@@ -1,18 +1,20 @@
-// statusBar.js — Zone 6: the slim 24px status bar.
-// Ln X, Col Y | VHDL / Verilog | Active Board | compile progress % + elapsed.
+// statusBar.js — Zone 6: Quartus Prime Standard Edition status bar.
+// Left: action status text | Right: Ln X, Col Y | File Type | Progress % | hh:mm:ss
 
 export function createStatusBar(root) {
     root.classList.add("statusbar");
     root.innerHTML = `
-        <span class="st-cell st-cursor" id="st-cursor">Ln 1, Col 1</span>
-        <span class="st-cell st-lang" id="st-lang">VHDL</span>
-        <span class="st-cell st-board" id="st-board">&mdash;</span>
+        <span class="st-cell st-action" id="st-action">Ready</span>
         <span class="st-flex"></span>
-        <span class="st-cell st-progress" id="st-progress"></span>
-        <span class="st-cell st-elapsed" id="st-elapsed"></span>
-        <span class="st-cell st-version" id="st-version"></span>
+        <span class="st-cell st-cursor" id="st-cursor">Ln 1 &nbsp; Col 1</span>
+        <span class="st-cell st-lang" id="st-lang">VHDL File</span>
+        <span class="st-cell st-board hidden" id="st-board">Cyclone IV E: EP4CE6E22C8</span>
+        <span class="st-cell st-progress" id="st-progress">0%</span>
+        <span class="st-cell st-elapsed" id="st-elapsed">00:00:00</span>
+        <span class="st-cell st-version hidden" id="st-version"></span>
     `;
 
+    const actionEl = root.querySelector("#st-action");
     const cursor = root.querySelector("#st-cursor");
     const lang = root.querySelector("#st-lang");
     const board = root.querySelector("#st-board");
@@ -23,11 +25,15 @@ export function createStatusBar(root) {
     let timer = null;
     let startedAt = 0;
 
+    function setAction(text) {
+        if (actionEl) actionEl.textContent = text || "Ready";
+    }
     function setCursor(line, column) {
-        cursor.textContent = `Ln ${line || 1}, Col ${column || 1}`;
+        cursor.textContent = `Ln ${line || 1}   Col ${column || 1}`;
     }
     function setLanguage(text) {
-        lang.textContent = text || "VHDL";
+        const t = String(text || "VHDL");
+        lang.textContent = /file$/i.test(t) ? t : `${t} File`;
     }
     function setBoard(text) {
         board.textContent = text || "\u2014";
@@ -35,20 +41,23 @@ export function createStatusBar(root) {
     function setVersion(text) {
         version.textContent = text || "";
     }
-    /** pct: 0..100 or null for an indeterminate run; label adds the stage. */
     function setProgress(pct, label) {
+        if (label) setAction(label);
         if (pct === null || pct === undefined) {
-            progress.textContent = label ? `${label}` : "";
+            progress.textContent = "\u2026";
             progress.classList.add("indeterminate");
+            progress.style.setProperty("--pct", "15%");
             return;
         }
+        const clamped = Math.max(0, Math.min(100, Math.round(pct)));
         progress.classList.remove("indeterminate");
-        progress.textContent = `${label ? label + " \u00b7 " : ""}${Math.round(pct)}%`;
+        progress.textContent = `${clamped}%`;
+        progress.style.setProperty("--pct", `${clamped}%`);
     }
     function clearProgress() {
-        progress.textContent = "";
+        progress.textContent = "0%";
         progress.classList.remove("indeterminate");
-        elapsed.textContent = "";
+        progress.style.setProperty("--pct", "0%");
         if (timer) { clearInterval(timer); timer = null; }
     }
     function beginElapsed() {
@@ -66,8 +75,11 @@ export function createStatusBar(root) {
     }
     function stopElapsed() {
         if (timer) { clearInterval(timer); timer = null; }
-        elapsed.textContent = formatElapsed(performance.now() - startedAt);
+        if (startedAt) elapsed.textContent = formatElapsed(performance.now() - startedAt);
     }
 
-    return { setCursor, setLanguage, setBoard, setVersion, setProgress, clearProgress, beginElapsed, stopElapsed, root };
+    return {
+        setAction, setCursor, setLanguage, setBoard, setVersion,
+        setProgress, clearProgress, beginElapsed, stopElapsed, root,
+    };
 }

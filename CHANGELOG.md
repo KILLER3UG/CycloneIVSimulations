@@ -4,6 +4,18 @@ All notable changes to **Cyclone IV Studio** are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-11-24
+
+### Added
+- **Quartus Prime Standard Edition Light UI**: Replicated the Quartus layout, menus (`File`..`Help`), colored toolbar, Project Navigator (`Cyclone IV E: EP4CE6E22C8`), Tasks tree with live step spinners and green checkmarks, `Compilation Report` tab, case-insensitive Quartus VHDL/Verilog/QSF syntax highlighting, collapsible 3D Devboard right sidebar, left-rail icon controls for Terminal/Waveform/Serial-VGA-LCD alongside `System`/`Processing` bottom tabs, and status bar progress/elapsed timer.
+- **Real Quartus CLI & ModelSim Netlist Flow**: Added Settings dialog with Quartus/ModelSim path auto-detection and validation, real `quartus_map`/`quartus_fit`/`quartus_asm`/`quartus_sta`/`quartus_eda` compilation generating `.qpf`/`.qsf`/`.vho`/`.sdo`, streaming clickable Messages rows, Stop cancellation, `Open in Quartus`, and ModelSim `.vho` simulation (`vlib`/`vcom`/`vsim`).
+- **Multi-Tab White ConPTY Terminal**: Real PTY terminal (`xterm.js` + Rust `portable-pty` over Tauri IPC, with network terminal endpoints disabled in desktop mode) starting in the user's default profile (`%USERPROFILE%`/`$HOME`), inheriting PATH + configured Quartus/ModelSim/GHDL paths, supporting PowerShell/cmd/Git Bash switching and `cd Project`.
+- **Two-Way Disk Workspace Sync**: Added `/api/workspace/*` and WebSocket `workspace_watch` + `File > Open Folder / Workspace...` so external editors and CLI coding agents (Claude Code, Codex CLI, etc.) editing files on disk live-update Monaco editor tabs, Project Navigator, and Pin Planner.
+
+### Fixed
+- Resolved VCD parser multi-directive header & inline token issues, QSF parser Tcl braced/continuation handling, and VHDL testbench generator generic vector widths, uppercase std_logic literals, and character generic literals uncovered by the `fpga-lab` test suite.
+- Preserved SP1 buzzer pulse ring visual driving in live mode, dock splitter delta drag sizing, `#sidebar-host` Pin Planner relocation, and zero-HTTP live input delivery.
+
 ## [0.1.3] - 2026-11-20
 
 ### Fixed

@@ -69,6 +69,62 @@ def default_shell() -> str:
     return os.environ.get("SHELL") or os.environ.get("COMSPEC") or "/bin/sh"
 
 
+def _find_git_bash() -> Optional[str]:
+    if os.name != "nt":
+        return shutil.which("bash")
+    candidates = [
+        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git" / "bin" / "bash.exe",
+        Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Git" / "bin" / "bash.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Git" / "bin" / "bash.exe",
+    ]
+    for cand in candidates:
+        try:
+            if cand.is_file():
+                return str(cand)
+        except OSError:
+            continue
+    return None
+
+
+def _find_powershell() -> Optional[str]:
+    if os.name != "nt":
+        return shutil.which("pwsh")
+    return shutil.which("pwsh") or shutil.which("powershell.exe") or r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+
+
+def list_available_shells() -> list[dict]:
+    """Return available interactive shells (PowerShell default, cmd, Git Bash if installed)."""
+    if os.name != "nt":
+        sh = default_shell()
+        return [{"id": "default", "label": Path(sh).name, "path": sh, "default": True}]
+
+    shells: list[dict] = []
+    ps = _find_powershell()
+    if ps:
+        shells.append({"id": "powershell", "label": "PowerShell", "path": ps, "default": True})
+    cmd_path = os.environ.get("COMSPEC") or shutil.which("cmd.exe") or "cmd.exe"
+    shells.append({"id": "cmd", "label": "Command Prompt", "path": cmd_path, "default": False})
+    git_bash = _find_git_bash()
+    if git_bash:
+        shells.append({"id": "gitbash", "label": "Git Bash", "path": git_bash, "default": False})
+    return shells
+
+
+def resolve_shell(shell_id: Optional[str] = None) -> str:
+    key = (shell_id or "").strip().lower()
+    if not key:
+        if os.name == "nt":
+            return _find_powershell() or default_shell()
+        return default_shell()
+    if key in ("powershell", "pwsh"):
+        return _find_powershell() or default_shell()
+    if key == "cmd":
+        return os.environ.get("COMSPEC") or shutil.which("cmd.exe") or "cmd.exe"
+    if key in ("gitbash", "git-bash", "bash"):
+        return _find_git_bash() or default_shell()
+    return default_shell()
+
+
 def resolve_cwd(explicit: Optional[str] = None) -> str:
     """Working directory for a new shell, resolved dynamically.
 
@@ -97,10 +153,23 @@ def resolve_cwd(explicit: Optional[str] = None) -> str:
 
 def _shell_env() -> dict:
     env = os.environ.copy()
+    extra_dirs: list[str] = []
+    try:
+        from .settings import load_settings, validate_quartus_path, validate_modelsim_path
+        cfg = load_settings()
+        q_info = validate_quartus_path(cfg.get("quartusPath"))
+        if q_info.get("valid") and q_info.get("path"):
+            extra_dirs.append(q_info["path"])
+        m_info = validate_modelsim_path(cfg.get("modelsimPath"), quartus_bin=q_info.get("path") or None)
+        if m_info.get("valid") and m_info.get("path"):
+            extra_dirs.append(m_info["path"])
+    except Exception:
+        pass
     binary = _ghdl_binary()
     if binary:
-        ghdl_dir = str(Path(binary).resolve().parent)
-        env["PATH"] = ghdl_dir + os.pathsep + env.get("PATH", "")
+        extra_dirs.append(str(Path(binary).resolve().parent))
+    if extra_dirs:
+        env["PATH"] = os.pathsep.join(extra_dirs) + os.pathsep + env.get("PATH", "")
     return env
 
 
@@ -122,12 +191,14 @@ class TerminalSession:
         rows: int = 24,
         cols: int = 80,
         cwd: Optional[str] = None,
+        shell: Optional[str] = None,
         on_output: Optional[Callable[[str], None]] = None,
         on_exit: Optional[Callable[[int], None]] = None,
     ) -> None:
         self.rows = max(1, int(rows))
         self.cols = max(1, int(cols))
         self.cwd = resolve_cwd(cwd)
+        self.shell_id = shell
         self.on_output = on_output
         self.on_exit = on_exit
         self.ghdl_on_path = ghdl_on_path()
@@ -159,7 +230,7 @@ class TerminalSession:
         return self
 
     def _start_windows(self, env: dict) -> None:
-        shell = default_shell()
+        shell = resolve_shell(self.shell_id) if self.shell_id else default_shell()
         # winpty's ConPTY spawn can stall indefinitely in environments without
         # a usable window station (observed on hosted CI runners).  Run the
         # spawn under a bounded wait and fall back to a pipe-backed shell
@@ -497,5 +568,7 @@ __all__ = [
     "exec_terminal_command",
     "ghdl_on_path",
     "default_shell",
+    "list_available_shells",
+    "resolve_shell",
     "resolve_cwd",
 ]

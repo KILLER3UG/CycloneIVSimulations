@@ -177,6 +177,66 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the pty_create command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pty-create",
+          "markdownDescription": "Enables the pty_create command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pty_kill command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pty-kill",
+          "markdownDescription": "Enables the pty_kill command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pty_list_shells command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pty-list-shells",
+          "markdownDescription": "Enables the pty_list_shells command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pty_resize command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pty-resize",
+          "markdownDescription": "Enables the pty_resize command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pty_write command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pty-write",
+          "markdownDescription": "Enables the pty_write command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pty_create command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pty-create",
+          "markdownDescription": "Denies the pty_create command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pty_kill command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pty-kill",
+          "markdownDescription": "Denies the pty_kill command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pty_list_shells command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pty-list-shells",
+          "markdownDescription": "Denies the pty_list_shells command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pty_resize command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pty-resize",
+          "markdownDescription": "Denies the pty_resize command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pty_write command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pty-write",
+          "markdownDescription": "Denies the pty_write command without any pre-configured scope."
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",

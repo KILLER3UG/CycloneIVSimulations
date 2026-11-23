@@ -31,8 +31,12 @@ function wsOrigin() {
 }
 
 /** URL of the interactive PTY terminal (same backend as the simulation). */
-export function terminalWsUrl() {
-    return `${wsOrigin()}/ws/terminal`;
+export function terminalWsUrl(opts = {}) {
+    const params = new URLSearchParams();
+    if (opts.shell) params.set("shell", String(opts.shell));
+    if (opts.cwd) params.set("cwd", String(opts.cwd));
+    const qs = params.toString();
+    return `${wsOrigin()}/ws/terminal${qs ? `?${qs}` : ""}`;
 }
 
 async function probeBackendOrigin() {
@@ -184,6 +188,82 @@ export class ApiClient {
             body: JSON.stringify({ command, cwd }),
         });
     }
+
+    getSettings() {
+        return this._fetch("/api/settings");
+    }
+
+    saveSettings(settings) {
+        return this._fetch("/api/settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(settings || {}),
+        });
+    }
+
+    terminalShells() {
+        return this._fetch("/api/terminal/shells");
+    }
+
+    quartusCompile(payload) {
+        return this._fetch("/api/quartus/compile", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload || {}),
+        });
+    }
+
+    openQuartusGui(payload = {}) {
+        return this._fetch("/api/quartus/open-gui", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        });
+    }
+
+    openQuartusProgrammer(payload = {}) {
+        return this._fetch("/api/quartus/programmer", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        });
+    }
+
+    simulateNetlist(payload) {
+        return this._fetch("/api/quartus/simulate-netlist", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload || {}),
+        });
+    }
+
+    workspaceFiles(dir) {
+        return this._fetch(`/api/workspace/files?dir=${encodeURIComponent(String(dir || ""))}`);
+    }
+
+    workspaceOpen(dir) {
+        return this._fetch("/api/workspace/open", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ dir: String(dir || "") }),
+        });
+    }
+
+    workspaceWrite(dir, files) {
+        return this._fetch("/api/workspace/write", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ dir: String(dir || ""), files: files || [] }),
+        });
+    }
+
+    workspaceDelete(dir, name) {
+        return this._fetch("/api/workspace/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ dir: String(dir || ""), name: String(name || "") }),
+        });
+    }
 }
 
 // Standalone helpers use a shared client; callers may still instantiate their
@@ -272,6 +352,14 @@ export class SimSession {
     livePace(pace) { this.send({ type: "live_pace", pace }); }
     liveStep(cycles = 1) { this.send({ type: "live_step", cycles }); }
     liveStop() { this.send({ type: "live_stop" }); }
+
+    // -- real Quartus compilation over /ws ----------------------------------
+    quartusCompile(params = {}) { this.send({ type: "quartus_compile", ...(params || {}) }); }
+    quartusStop() { this.send({ type: "quartus_stop" }); }
+
+    // -- disk workspace file watcher over /ws -------------------------------
+    workspaceWatch(dir, lastVersion = "") { this.send({ type: "workspace_watch", dir, lastVersion }); }
+    workspaceAck(version) { this.send({ type: "workspace_ack", version }); }
 
     close() {
         this.closedByUser = true;

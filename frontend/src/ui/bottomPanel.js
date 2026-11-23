@@ -1,7 +1,9 @@
-// bottomPanel.js — Zone 5: one collapsible bottom dock with four tabs.
-// Terminal mounts the xterm controller; Messages owns every compiler error,
-// warning and log line (Quartus-style severity filters + jump-to-line);
-// Waveform keeps the VCD export; Displays holds UART/VGA/LCD.
+// bottomPanel.js — Zone 5: Quartus Prime Standard Edition Messages / Terminal dock.
+// Matches the screenshots:
+// - Vertical left "Messages" rail
+// - Toolbar: All | Error | Critical Warning | Warning | Info | <<Filter>> | Find.. | Find Next
+// - Table: Type | ID | Message (with .log-line compat class on every row)
+// - Bottom tab bar: System | Processing (N) | Terminal | Waveform | Serial / VGA / LCD
 
 import { icon } from "./icons.js";
 import { createWaveformView } from "./waveform.js";
@@ -9,83 +11,102 @@ import { createWaveformView } from "./waveform.js";
 export function createBottomPanel(root, h) {
     root.classList.add("bottom-panel");
     root.innerHTML = `
-        <div class="bp-tabs" role="tablist" aria-label="Output dock views">
-            <button class="bp-tab" data-btab="terminal" role="tab" aria-selected="false">${icon("terminal")}<span>Terminal</span></button>
-            <button class="bp-tab active" data-btab="diagnostics" role="tab" aria-selected="true">${icon("activity")}<span>Messages</span></button>
-            <button class="bp-tab" data-btab="waveform" role="tab" aria-selected="false">${icon("activity")}<span>Waveform</span></button>
-            <button class="bp-tab" data-btab="displays" role="tab" aria-selected="false">${icon("monitor")}<span>Serial / VGA / LCD</span></button>
-            <em class="bp-badge" id="diag-badge" title="Messages">0</em>
-            <span class="bp-flex"></span>
-            <button class="icon-btn" data-act="collapse" title="Collapse bottom dock" aria-label="Collapse bottom dock">${icon("chevron")}</button>
-        </div>
-        <div class="bp-body">
-            <div class="bp-pane hidden" data-pane="terminal">
-                <div class="term-wrap" id="terminal-mount" style="flex:1 1 auto;min-height:0;display:flex;flex-direction:column;"></div>
-            </div>
-
-            <div class="bp-pane" data-pane="diagnostics">
-                <div class="msg-tools">
-                    <div class="msg-filters" role="group" aria-label="Severity filter">
-                        <button type="button" class="msg-filter active" data-sev="all">All <em id="mf-all">0</em></button>
-                        <button type="button" class="msg-filter" data-sev="error">Errors <em id="mf-error">0</em></button>
-                        <button type="button" class="msg-filter" data-sev="warning">Warnings <em id="mf-warning">0</em></button>
-                        <button type="button" class="msg-filter" data-sev="info">Info <em id="mf-info">0</em></button>
-                    </div>
-                    <input type="text" class="msg-filter-text" id="msg-filter-text" placeholder="Filter&hellip;" aria-label="Filter messages">
-                    <span class="bp-flex"></span>
-                    <button class="btn" data-act="clearlog">Clear</button>
+        <div class="bp-shell">
+            <div class="bp-rail" title="Output Dock Controls">
+                <button type="button" class="bp-rail-collapse" data-act="collapse" title="Collapse bottom dock" aria-label="Collapse bottom dock">&#9662;</button>
+                <div class="bp-rail-icons" role="tablist" aria-label="Dock tools">
+                    <button type="button" class="bp-rail-ico" data-rail="terminal" role="tab" aria-selected="false" title="Terminal (ConPTY)" aria-label="Terminal">${icon("terminal")}</button>
+                    <button type="button" class="bp-rail-ico" data-rail="waveform" role="tab" aria-selected="false" title="Waveform Viewer" aria-label="Waveform">${icon("activity")}</button>
+                    <button type="button" class="bp-rail-ico" data-rail="displays" role="tab" aria-selected="false" title="Serial / VGA / LCD" aria-label="Serial / VGA / LCD">${icon("monitor")}</button>
                 </div>
-                <div class="msg-table" id="console-log" role="log">
-                    <div class="msg-head"><span>Type</span><span>ID</span><span>Message</span></div>
+                <div class="bp-rail-tabs" role="tablist" aria-label="Messages">
+                    <button type="button" class="bp-rail-tab active" data-rail="messages" role="tab" aria-selected="true" title="Messages (System / Processing)">Messages</button>
                 </div>
             </div>
-
-            <div class="bp-pane hidden" data-pane="waveform">
-                <div class="probe-bar" id="probe-bar">
-                    <span class="probe-hint">Click a pin on the 3D board to probe it.</span>
-                    <span class="bp-flex"></span>
-                    <button type="button" class="btn bp-btn" id="bp-export-vcd" title="Download the captured waveform as VCD">${icon("download")}<span>Export VCD</span></button>
-                </div>
-                <div class="wave-wrap" id="wave-wrap"></div>
-            </div>
-
-            <div class="bp-pane hidden" data-pane="displays">
-                <div class="display-cards">
-                    <section class="display-card" data-disp="uart">
-                        <header>Serial / UART <span class="baud-badge" id="serial-baud">baud: --</span></header>
-                        <div class="serial-out" id="serial-out"><div class="bp-empty">No UART traffic yet.</div></div>
-                        <div class="serial-send">
-                            <input type="text" id="serial-tx" placeholder="hex byte(s) to inject on UART_RXD (live)" aria-label="UART send">
-                            <button class="btn" id="serial-tx-btn" title="Inject 8N1 byte(s) on UART_RXD (live mode)">Send</button>
-                            <span class="serial-frames" id="serial-frames">0 frames</span>
-                        </div>
-                    </section>
-                    <section class="display-card" data-disp="vga">
-                        <header>VGA</header>
-                        <div class="vga-wrap">
-                            <canvas id="vga-canvas" width="640" height="480"></canvas>
-                            <div class="vga-nosignal" id="vga-nosignal">no signal</div>
-                        </div>
-                    </section>
-                    <section class="display-card" data-disp="lcd">
-                        <header>LCD 1602</header>
-                        <div class="lcd-panel">
-                            <div class="lcd-screen" id="lcd-screen">
-                                <div class="lcd-line" id="lcd-line0">&nbsp;</div>
-                                <div class="lcd-line" id="lcd-line1">&nbsp;</div>
+            <div class="bp-main">
+                <div class="bp-body">
+                    <div class="bp-pane" data-pane="messages">
+                        <div class="msg-tools">
+                            <div class="msg-filters" role="group" aria-label="Severity filter">
+                                <button type="button" class="msg-filter active" data-sev="all" title="Show all messages">All <em id="mf-all">0</em></button>
+                                <button type="button" class="msg-filter" data-sev="error" title="Errors">${icon("qErr")}<em id="mf-error">0</em></button>
+                                <button type="button" class="msg-filter" data-sev="critical_warning" title="Critical Warnings">${icon("qCritWarn")}<em id="mf-crit">0</em></button>
+                                <button type="button" class="msg-filter" data-sev="warning" title="Warnings">${icon("qWarn")}<em id="mf-warning">0</em></button>
+                                <button type="button" class="msg-filter" data-sev="info" title="Info">${icon("qInfo")}<em id="mf-info">0</em></button>
                             </div>
-                            <div class="lcd-note">HD44780 &mdash; LCD_RS/RW/E + LCD_D[7..0]</div>
+                            <span class="msg-sep"></span>
+                            <span class="msg-filter-wrap">
+                                ${icon("qFilter")}
+                                <input type="text" class="msg-filter-text" id="msg-filter-text" placeholder="<<Filter>>" aria-label="Filter messages">
+                            </span>
+                            <button type="button" class="q-mini-btn" id="msg-find-btn" title="Find in Messages">${icon("qFind")}<span>Find..</span></button>
+                            <button type="button" class="q-mini-btn" id="msg-find-next-btn" title="Find Next Match">${icon("qFind")}<span>Find Next</span></button>
+                            <span class="bp-flex"></span>
+                            <button type="button" class="q-mini-btn" data-act="clearlog" title="Clear Messages">Clear</button>
                         </div>
-                    </section>
-                    <section class="display-card" data-disp="live-peri">
-                        <header>Live peripheral injection</header>
-                        <div class="live-peri-row">
-                            <label>PS/2 <input type="text" id="live-ps2-byte" value="5A" maxlength="2" size="3" aria-label="PS/2 scancode byte (hex)"> <button class="btn" id="live-ps2-send" title="Inject one PS/2 scancode frame">Send</button></label>
-                            <label>IR <input type="text" id="live-ir-addr" value="00" maxlength="2" size="3" aria-label="NEC address (hex)"> <input type="text" id="live-ir-cmd" value="01" maxlength="2" size="3" aria-label="NEC command (hex)"> <button class="btn" id="live-ir-fire" title="Fire one NEC IR frame">Fire</button></label>
-                            <label>LM75 <input type="range" id="live-temp" min="-10" max="80" step="1" value="25" aria-label="LM75 ambient temperature (C)"> <span id="live-temp-val">25 &deg;C</span></label>
+                        <div class="msg-table" id="console-log" role="log">
+                            <div class="msg-head"><span>Type</span><span>ID</span><span>Message</span></div>
                         </div>
-                        <div class="lcd-note">Live mode only &mdash; PS/2 scancodes, NEC IR frames and the LM75 ambient register update the running simulation.</div>
-                    </section>
+                    </div>
+
+                    <div class="bp-pane hidden" data-pane="terminal">
+                        <div class="term-wrap" id="terminal-mount" style="flex:1 1 auto;min-height:0;display:flex;flex-direction:column;"></div>
+                    </div>
+
+                    <div class="bp-pane hidden" data-pane="waveform">
+                        <div class="probe-bar" id="probe-bar">
+                            <span class="probe-hint">Click a pin on the 3D board to probe it.</span>
+                            <span class="bp-flex"></span>
+                            <button type="button" class="btn bp-btn" id="bp-export-vcd" title="Download the captured waveform as VCD">${icon("download")}<span>Export VCD</span></button>
+                        </div>
+                        <div class="wave-wrap" id="wave-wrap"></div>
+                    </div>
+
+                    <div class="bp-pane hidden" data-pane="displays">
+                        <div class="display-cards">
+                            <section class="display-card" data-disp="uart">
+                                <header>Serial / UART <span class="baud-badge" id="serial-baud">baud: --</span></header>
+                                <div class="serial-out" id="serial-out"><div class="bp-empty">No UART traffic yet.</div></div>
+                                <div class="serial-send">
+                                    <input type="text" id="serial-tx" placeholder="hex byte(s) to inject on UART_RXD (live)" aria-label="UART send">
+                                    <button class="btn" id="serial-tx-btn" title="Inject 8N1 byte(s) on UART_RXD (live mode)">Send</button>
+                                    <span class="serial-frames" id="serial-frames">0 frames</span>
+                                </div>
+                            </section>
+                            <section class="display-card" data-disp="vga">
+                                <header>VGA</header>
+                                <div class="vga-wrap">
+                                    <canvas id="vga-canvas" width="640" height="480"></canvas>
+                                    <div class="vga-nosignal" id="vga-nosignal">no signal</div>
+                                </div>
+                            </section>
+                            <section class="display-card" data-disp="lcd">
+                                <header>LCD 1602</header>
+                                <div class="lcd-panel">
+                                    <div class="lcd-screen" id="lcd-screen">
+                                        <div class="lcd-line" id="lcd-line0">&nbsp;</div>
+                                        <div class="lcd-line" id="lcd-line1">&nbsp;</div>
+                                    </div>
+                                    <div class="lcd-note">HD44780 &mdash; LCD_RS/RW/E + LCD_D[7..0]</div>
+                                </div>
+                            </section>
+                            <section class="display-card" data-disp="live-peri">
+                                <header>Live peripheral injection</header>
+                                <div class="live-peri-row">
+                                    <label>PS/2 <input type="text" id="live-ps2-byte" value="5A" maxlength="2" size="3" aria-label="PS/2 scancode byte (hex)"> <button class="btn" id="live-ps2-send" title="Inject one PS/2 scancode frame">Send</button></label>
+                                    <label>IR <input type="text" id="live-ir-addr" value="00" maxlength="2" size="3" aria-label="NEC address (hex)"> <input type="text" id="live-ir-cmd" value="01" maxlength="2" size="3" aria-label="NEC command (hex)"> <button class="btn" id="live-ir-fire" title="Fire one NEC IR frame">Fire</button></label>
+                                    <label>LM75 <input type="range" id="live-temp" min="-10" max="80" step="1" value="25" aria-label="LM75 ambient temperature (C)"> <span id="live-temp-val">25 &deg;C</span></label>
+                                </div>
+                                <div class="lcd-note">Live mode only &mdash; PS/2 scancodes, NEC IR frames and the LM75 ambient register update the running simulation.</div>
+                            </section>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bp-tabs" role="tablist" aria-label="Output dock views">
+                    <button type="button" class="bp-tab active" data-btab="system" role="tab" aria-selected="true"><span>System</span></button>
+                    <button type="button" class="bp-tab" data-btab="processing" role="tab" aria-selected="false"><span>Processing (<em id="proc-count">0</em>)</span></button>
+                    <em class="bp-badge hidden" id="diag-badge" title="Messages">0</em>
                 </div>
             </div>
         </div>
@@ -96,27 +117,54 @@ export function createBottomPanel(root, h) {
     const wave = createWaveformView(root.querySelector("#wave-wrap"), { onValuesAt: h.onValuesAt });
     const logEl = root.querySelector("#console-log");
     const badge = root.querySelector("#diag-badge");
-    const messages = [];          // {sev, id, text, file, line, column, el, isProblem}
+    const procCountEl = root.querySelector("#proc-count");
+    const filterInput = root.querySelector("#msg-filter-text");
+
+    const messages = []; // {stream: "system"|"processing", sev, id, text, file, line, column, el, isProblem}
     let activeSev = "all";
     let filterText = "";
-    let active = "diagnostics";
+    let activeTab = "system";
+    let lastMessageStream = "system";
+    let findCursor = -1;
+    let lastFindQuery = "";
 
-    // ------------------------------------------------------------- tabs ----
     function showTab(id) {
-        if (!panes[id]) return;
-        active = id;
+        const normalized = id === "diagnostics" ? "processing" : id;
+        const paneKey = (normalized === "system" || normalized === "processing") ? "messages" : normalized;
+        if (!panes[paneKey]) return;
+        activeTab = normalized;
+        if (paneKey === "messages") lastMessageStream = normalized;
         root.querySelectorAll(".bp-tab").forEach((t) => {
-            const on = t.dataset.btab === id;
+            const on = t.dataset.btab === normalized;
             t.classList.toggle("active", on);
             t.setAttribute("aria-selected", String(on));
         });
-        Object.entries(panes).forEach(([key, pane]) => pane.classList.toggle("hidden", key !== id));
-        if (id === "waveform") setTimeout(() => wave.resize(), 30);
+        root.querySelectorAll(".bp-rail-ico, .bp-rail-tab").forEach((t) => {
+            const on = t.dataset.rail === paneKey;
+            t.classList.toggle("active", on);
+            t.setAttribute("aria-selected", String(on));
+        });
+        Object.entries(panes).forEach(([key, pane]) => pane.classList.toggle("hidden", key !== paneKey));
+        if (paneKey === "messages") {
+            applyMessageFilter();
+            updateCounts();
+        }
+        if (paneKey === "waveform") setTimeout(() => wave.resize(), 30);
+        if (paneKey === "terminal") h.onTerminalShown?.();
     }
-    // Delegated on the whole panel: tab switches happen in .bp-tabs, but the
-    // Diagnostics pane's Clear button ([data-act="clearlog"]) lives OUTSIDE
-    // the tab bar and must reach this handler too.
+
     root.addEventListener("click", (e) => {
+        const railBtn = e.target.closest("[data-rail]");
+        if (railBtn) {
+            const section = root.closest("#bottom") || root.parentElement;
+            if (section?.classList.contains("collapsed")) {
+                section.classList.remove("collapsed");
+                h.onCollapsed?.(false);
+            }
+            const dest = railBtn.dataset.rail === "messages" ? lastMessageStream : railBtn.dataset.rail;
+            showTab(dest);
+            return;
+        }
         const tab = e.target.closest(".bp-tab");
         if (tab) { showTab(tab.dataset.btab); return; }
         const act = e.target.closest("[data-act]");
@@ -129,31 +177,39 @@ export function createBottomPanel(root, h) {
                 setTimeout(() => wave.resize(), 60);
                 break;
             case "clearlog":
-                for (const m of messages) m.el.remove();
-                messages.length = 0;
+                for (let i = messages.length - 1; i >= 0; i -= 1) {
+                    if (messages[i].stream === currentStream()) {
+                        messages[i].el.remove();
+                        messages.splice(i, 1);
+                    }
+                }
                 updateCounts();
                 break;
-            case "term-clear": h.onTerminalClear?.(); break;
-            case "term-restart": h.onTerminalRestart?.(); break;
             default: break;
         }
     });
 
-    // ------------------------------------------------------- messages ------
-    // Quartus-style Messages tab: tabular Type | ID | Message rows, severity
-    // filters with live counts, a text filter and click-to-jump-to-line.
     root.querySelector("#bp-export-vcd")?.addEventListener("click", () => h.onExportVcd?.());
-    root.querySelector("#terminal-input")?.addEventListener("keydown", (e) => {
-        if (e.key !== "Enter") return;
-        const line = e.target.value;
-        e.target.value = "";
-        h.onTerminalInput?.(line);
-    });
 
-    const SEV_OF_LEVEL = { info: "info", ok: "info", cmd: "info", warn: "warning", error: "error" };
-    const TYPE_LABEL = { error: "Error", warning: "Warning", info: "Info" };
+    const SEV_OF_LEVEL = {
+        info: "info", ok: "info", cmd: "info",
+        warn: "warning", warning: "warning",
+        critical_warning: "critical_warning",
+        error: "error",
+    };
+    const TYPE_ICON = {
+        error: () => icon("qErr"),
+        critical_warning: () => icon("qCritWarn"),
+        warning: () => icon("qWarn"),
+        info: () => icon("qInfo"),
+    };
+
+    function currentStream() {
+        return activeTab === "processing" ? "processing" : "system";
+    }
 
     function matchesFilter(m) {
+        if (m.stream !== currentStream()) return false;
         if (activeSev !== "all" && m.sev !== activeSev) return false;
         if (!filterText) return true;
         const hay = `${m.text} ${m.id}`.toLowerCase();
@@ -165,25 +221,34 @@ export function createBottomPanel(root, h) {
     }
 
     function updateCounts() {
-        const counts = { error: 0, warning: 0, info: 0 };
-        for (const m of messages) counts[m.sev] += 1;
-        root.querySelector("#mf-all").textContent = String(messages.length);
+        const stream = currentStream();
+        const counts = { error: 0, critical_warning: 0, warning: 0, info: 0 };
+        let streamTotal = 0;
+        let procTotal = 0;
+        for (const m of messages) {
+            if (m.stream === "processing") procTotal += 1;
+            if (m.stream === stream) {
+                streamTotal += 1;
+                counts[m.sev] = (counts[m.sev] || 0) + 1;
+            }
+        }
+        root.querySelector("#mf-all").textContent = String(streamTotal);
         root.querySelector("#mf-error").textContent = String(counts.error);
+        root.querySelector("#mf-crit").textContent = String(counts.critical_warning);
         root.querySelector("#mf-warning").textContent = String(counts.warning);
         root.querySelector("#mf-info").textContent = String(counts.info);
-        badge.textContent = String(counts.error || messages.length);
-        badge.classList.toggle("has-errors", counts.error > 0);
-        badge.classList.toggle("has-warnings", counts.error === 0 && counts.warning > 0);
+        if (procCountEl) procCountEl.textContent = String(procTotal);
+        badge.textContent = String(counts.error || streamTotal);
     }
 
     function makeMessageRow(m) {
         const row = document.createElement("div");
-        row.className = `msg-row sev-${m.sev}${m.isProblem ? " is-problem" : ""}`;
-        row.innerHTML = `<span class="m-type">${TYPE_LABEL[m.sev]}</span><span class="m-id"></span><span class="m-text"></span>`;
+        row.className = `msg-row log-line sev-${m.sev}${m.isProblem ? " is-problem" : ""}`;
+        row.innerHTML = `<span class="m-type">${(TYPE_ICON[m.sev] || TYPE_ICON.info)()}</span><span class="m-id"></span><span class="m-text"></span>`;
         row.querySelector(".m-id").textContent = m.id || "";
         row.querySelector(".m-text").textContent = m.text;
-        if (m.isProblem) {
-            row.title = "Click to jump to the source line";
+        if (m.isProblem || (m.file && m.line)) {
+            row.title = `Click to jump to ${m.file || "source"}${m.line ? ":" + m.line : ""}`;
             row.addEventListener("click", () => h.onOpenProblem?.({
                 file: m.file, line: m.line, column: m.column, severity: m.sev,
                 message: m.text,
@@ -193,18 +258,18 @@ export function createBottomPanel(root, h) {
     }
 
     function appendMessage(m) {
-        const row = makeMessageRow(m);
-        m.el = row;
-        messages.push(m);
+        const stream = m.stream || "system";
+        const entry = { ...m, stream };
+        const row = makeMessageRow(entry);
+        entry.el = row;
+        messages.push(entry);
         logEl.appendChild(row);
-        while (messages.length > 600) {
+        while (messages.length > 1500) {
             const old = messages.shift();
             old.el.remove();
         }
         applyMessageFilter();
         updateCounts();
-        // Defer the scroll: reading scrollHeight forces a full document layout
-        // and would blow the <1 ms stimulus budget.
         requestAnimationFrame(() => { logEl.scrollTop = logEl.scrollHeight; });
     }
 
@@ -215,10 +280,31 @@ export function createBottomPanel(root, h) {
             applyMessageFilter();
         });
     });
-    root.querySelector("#msg-filter-text")?.addEventListener("input", (e) => {
+
+    filterInput?.addEventListener("input", (e) => {
         filterText = e.target.value.trim();
         applyMessageFilter();
     });
+
+    function runMessageFind(advance = false) {
+        const query = (filterInput?.value || "").trim().toLowerCase() || lastFindQuery;
+        if (!query) {
+            filterInput?.focus();
+            return;
+        }
+        lastFindQuery = query;
+        const visible = messages.filter((m) => !m.el.classList.contains("hidden"));
+        messages.forEach((m) => m.el.classList.remove("find-hit"));
+        const matches = visible.filter((m) => `${m.id} ${m.text}`.toLowerCase().includes(query));
+        if (!matches.length) return;
+        findCursor = advance ? (findCursor + 1) % matches.length : 0;
+        const hit = matches[findCursor];
+        hit.el.classList.add("find-hit");
+        hit.el.scrollIntoView({ block: "nearest" });
+    }
+
+    root.querySelector("#msg-find-btn")?.addEventListener("click", () => runMessageFind(false));
+    root.querySelector("#msg-find-next-btn")?.addEventListener("click", () => runMessageFind(true));
 
     function stamp() {
         const d = new Date();
@@ -226,26 +312,51 @@ export function createBottomPanel(root, h) {
         return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
     }
 
-    function log(text, level = "info") {
-        appendMessage({ sev: SEV_OF_LEVEL[level] || "info", id: stamp(), text: String(text) });
+    function log(text, level = "info", stream = "system") {
+        appendMessage({ stream, sev: SEV_OF_LEVEL[level] || "info", id: stamp(), text: String(text) });
     }
 
-    /** Compiler/lint diagnostics: clickable rows that jump to the source. */
-    function setProblems(list = []) {
+    function addQuartusMessage(item) {
+        const sev = SEV_OF_LEVEL[item?.severity] || "info";
+        appendMessage({
+            stream: "processing",
+            sev,
+            id: String(item?.id || ""),
+            text: String(item?.message || item?.raw || ""),
+            file: item?.file || null,
+            line: item?.line || null,
+            column: item?.column || null,
+            isProblem: Boolean(item?.file && item?.line),
+        });
+    }
+
+    function clearProcessing() {
         for (let i = messages.length - 1; i >= 0; i -= 1) {
-            if (messages[i].isProblem) {
+            if (messages[i].stream === "processing") {
+                messages[i].el.remove();
+                messages.splice(i, 1);
+            }
+        }
+        updateCounts();
+    }
+
+    function setProblems(list = [], stream = "processing") {
+        for (let i = messages.length - 1; i >= 0; i -= 1) {
+            if (messages[i].isProblem && messages[i].stream === stream) {
                 messages[i].el.remove();
                 messages.splice(i, 1);
             }
         }
         for (const item of Array.isArray(list) ? list : []) {
             const sev = item.severity === "error" ? "error"
+                : item.severity === "critical_warning" ? "critical_warning"
                 : item.severity === "warning" ? "warning" : "info";
             const file = item.file || "design.vhd";
             const line = item.line ? String(item.line) : "";
             appendMessage({
+                stream,
                 sev,
-                id: line ? `${file}:${line}` : file,
+                id: item.id || (line ? `${file}:${line}` : file),
                 text: item.message || String(item),
                 file, line: item.line, column: item.column,
                 isProblem: true,
@@ -306,7 +417,6 @@ export function createBottomPanel(root, h) {
     }
     setLcd("");
 
-    // ----------------------------------------------------- live peripherals --
     const liveBytes = [];
     function setLiveUart(bytes, baud) {
         for (const b of bytes || []) {
@@ -320,7 +430,7 @@ export function createBottomPanel(root, h) {
                 `<span class="ser-byte">0x${(b & 0xff).toString(16).toUpperCase().padStart(2, "0")}</span>`).join("");
         }
     }
-    /** lines: {lineIndex: packed8x3bit} — render the live VGA framebuffer. */
+
     function setLiveVga(lines) {
         if (!lines || !Object.keys(lines).length) return;
         vgaNoSig.classList.add("hidden");
@@ -337,7 +447,6 @@ export function createBottomPanel(root, h) {
                 const g = (c & 2) ? 255 : 0;
                 const b = (c & 1) ? 255 : 0;
                 vgaCtx.fillStyle = `rgb(${r},${g},${b})`;
-                // line li, slice (7 - s): the packing is MSB-first
                 const x0 = Math.floor(((7 - s) / 8) * 640);
                 vgaCtx.fillRect(x0, Math.floor(li * bandH), Math.ceil(640 / 8), Math.ceil(bandH) + 1);
             }
@@ -374,7 +483,6 @@ export function createBottomPanel(root, h) {
     }
     wireLivePeripherals();
 
-    // ------------------------------------------------------------ probes ---
     const probeBar = root.querySelector("#probe-bar");
     function addProbeChip(probe, onRemove) {
         probeBar.querySelector(".probe-hint")?.remove();
@@ -394,10 +502,11 @@ export function createBottomPanel(root, h) {
     updateCounts();
 
     return {
-        showTab, log, setProblems, setUart, setVga, setLcd, setLiveUart, setLiveVga,
+        showTab, log, addQuartusMessage, clearProcessing, setProblems,
+        setUart, setVga, setLcd, setLiveUart, setLiveVga,
         wave, addProbeChip,
         getTerminalHost: () => root.querySelector("#terminal-mount"),
-        get active() { return active; },
+        get active() { return activeTab; },
         root,
     };
 }

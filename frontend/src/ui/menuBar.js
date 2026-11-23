@@ -1,58 +1,112 @@
-// menuBar.js — Zone 0: the slim Quartus-style IDE menu.
-// File / Edit / View / Assignments / Processing / Tools — calm monochrome
-// dropdowns that route to the existing studio actions (no duplicate logic).
+// menuBar.js — Zone 0: exact Quartus Prime Standard Edition menu bar.
+// File, Edit, View, Project, Assignments, Processing, Tools, Window, Help.
 
 import { icon } from "./icons.js";
 
 const MENUS = [
     {
-        label: "File", items: [
+        label: "File",
+        items: [
             { id: "new-vhd", label: "New VHDL File", hint: ".vhd" },
             { id: "new-v", label: "New Verilog File", hint: ".v" },
-            { id: "examples", label: "Open Example\u2026" },
+            { id: "open-file", label: "Open...", hint: "Ctrl+O" },
+            { id: "open-folder", label: "Open Folder / Workspace..." },
+            { id: "save-file", label: "Save", hint: "Ctrl+S" },
             { sep: true },
+            { id: "examples", label: "Open Example Project..." },
+            { id: "export-zip", label: "Export Project Archive (.zip)" },
             { id: "export-vcd", label: "Export Waveform VCD" },
         ],
     },
     {
-        label: "Edit", items: [
-            { id: "find", label: "Find in File", hint: "Ctrl+F" },
-            { id: "goto", label: "Go to Line\u2026", hint: "Ctrl+G" },
+        label: "Edit",
+        items: [
+            { id: "undo", label: "Undo", hint: "Ctrl+Z" },
+            { id: "redo", label: "Redo", hint: "Ctrl+Y" },
+            { sep: true },
+            { id: "cut", label: "Cut", hint: "Ctrl+X" },
+            { id: "copy", label: "Copy", hint: "Ctrl+C" },
+            { id: "paste", label: "Paste", hint: "Ctrl+V" },
+            { sep: true },
+            { id: "find", label: "Find / Replace...", hint: "Ctrl+F" },
+            { id: "goto", label: "Go to Line...", hint: "Ctrl+G" },
         ],
     },
     {
-        label: "View", items: [
-            { id: "toggle-left", label: "Toggle Project Navigator" },
-            { id: "toggle-right", label: "Toggle Board Dock" },
-            { id: "toggle-bottom", label: "Toggle Messages Dock" },
+        label: "View",
+        items: [
+            { id: "toggle-left", label: "Project Navigator & Tasks" },
+            { id: "toggle-right", label: "3D Devboard Sidebar", hint: "Ctrl+\\" },
+            { id: "toggle-bottom", label: "Messages & Terminal Dock" },
             { sep: true },
-            { id: "cam-top", label: "Camera: Top" },
-            { id: "cam-iso", label: "Camera: 45\u00b0" },
-            { id: "cam-front", label: "Camera: Front" },
-            { id: "cam-fit", label: "Camera: Fit Board" },
+            { id: "cam-top", label: "Devboard Camera: Top" },
+            { id: "cam-iso", label: "Devboard Camera: 45\u00b0" },
+            { id: "cam-front", label: "Devboard Camera: Front" },
+            { id: "cam-fit", label: "Devboard Camera: Fit Board" },
             { sep: true },
             { id: "pin-labels", label: "Toggle Pin Labels" },
         ],
     },
     {
-        label: "Assignments", items: [
+        label: "Project",
+        items: [
+            { id: "add-file", label: "Add/Remove Files in Project..." },
+            { id: "set-top", label: "Set Active File as Top-Level Entity" },
+            { sep: true },
+            { id: "open-quartus", label: "Open in Quartus Prime..." },
+        ],
+    },
+    {
+        label: "Assignments",
+        items: [
             { id: "pin-planner", label: "Pin Planner" },
-            { id: "board-settings", label: "Board / Import Settings" },
+            { id: "device-info", label: "Device (Cyclone IV E: EP4CE6E22C8)" },
+            { sep: true },
+            { id: "settings", label: "Settings..." },
         ],
     },
     {
-        label: "Processing", items: [
-            { id: "compile", label: "Compile & Run", hint: "Ctrl+Enter" },
-            { id: "pause", label: "Pause / Resume" },
-            { id: "stop", label: "Stop", hint: "Esc" },
-            { id: "reset", label: "Reset" },
-            { id: "step", label: "Step One Cycle" },
+        label: "Processing",
+        items: [
+            { id: "compile", label: "Start Compilation", hint: "Ctrl+L" },
+            { id: "stop", label: "Stop Compilation", hint: "Esc" },
+            { sep: true },
+            { id: "stage-analysis", label: "Start Analysis & Synthesis" },
+            { id: "stage-fitter", label: "Start Fitter (Place & Route)" },
+            { id: "stage-assembler", label: "Start Assembler" },
+            { id: "stage-timing", label: "Start Timing Analysis" },
+            { id: "stage-eda", label: "Start EDA Netlist Writer" },
+            { sep: true },
+            { id: "sim-fast", label: "Run Interactive Board Simulation", hint: "Ctrl+Enter" },
+            { id: "comp-report", label: "Compilation Report" },
         ],
     },
     {
-        label: "Tools", items: [
-            { id: "terminal", label: "Open Terminal" },
+        label: "Tools",
+        items: [
+            { id: "programmer", label: "Programmer" },
+            { id: "sim-netlist", label: "Run Simulation Tool (ModelSim / Built-in)" },
+            { sep: true },
+            { id: "terminal", label: "Terminal (ConPTY)" },
+            { id: "settings", label: "Options / Quartus Path..." },
             { id: "update", label: "Check for Updates" },
+        ],
+    },
+    {
+        label: "Window",
+        items: [
+            { id: "win-sources", label: "Source Editor" },
+            { id: "win-report", label: "Compilation Report" },
+            { id: "win-pinmap", label: "Pin Planner" },
+            { id: "win-3d", label: "3D Devboard" },
+            { id: "win-terminal", label: "Terminal" },
+        ],
+    },
+    {
+        label: "Help",
+        items: [
+            { id: "about", label: "About Quartus Prime Standard Edition" },
+            { id: "shortcuts", label: "Keyboard Shortcuts" },
         ],
     },
 ];
@@ -60,7 +114,6 @@ const MENUS = [
 export function createMenuBar(root, h) {
     root.classList.add("menubar");
     root.innerHTML = `
-        <span class="mb-brand">${icon("chip")}<b>Cyclone IV Studio</b></span>
         ${MENUS.map((menu, i) => `
             <div class="mb-item" data-menu="${i}">
                 <button type="button" class="mb-label" aria-haspopup="true" aria-expanded="false">${menu.label}</button>
@@ -73,8 +126,17 @@ export function createMenuBar(root, h) {
                 </div>
             </div>`).join("")}
         <span class="mb-flex"></span>
-        <span class="mb-entity" id="mb-top-entity" title="Top-level entity">&mdash;</span>
+        <span class="mb-entity hidden" id="mb-top-entity" title="Top-level entity">&mdash;</span>
+        <form class="mb-search" id="mb-search-form" role="search">
+            <input type="text" id="mb-search-input" class="mb-search-input" placeholder="Search altera.com" aria-label="Search">
+            <button type="submit" class="mb-search-btn" title="Find in Editor">${icon("search")}</button>
+        </form>
     `;
+
+    root.querySelector("#mb-search-form")?.addEventListener("submit", (e) => {
+        e.preventDefault();
+        h.onAction?.("find");
+    });
 
     let openMenu = null;
     const close = () => {

@@ -15,6 +15,7 @@ from harness import (
     cycle_values,
     errors_text,
     frontend_dir,
+    frontend_src,
     has_error,
     must_run,
     run,
@@ -47,10 +48,13 @@ def current_frontend_text() -> str:
 
 
 def frontend_text() -> str:
-    return "\n".join(
-        (FRONTEND / name).read_text(encoding="utf-8", errors="replace")
-        for name in ("app.js", "board3d.js", "index.html")
-    )
+    """The modern Vite app sources (src/), flattened for QA string checks."""
+    chunks = []
+    for rel in ("index.html", "src/main.js", "src/board/index.js", "src/board/io.js"):
+        path = FRONTEND / rel
+        if path.exists():
+            chunks.append(path.read_text(encoding="utf-8", errors="replace"))
+    return "\n".join(chunks)
 
 
 # ---------------------------------------------------------------------------
@@ -335,16 +339,15 @@ end architecture rtl;"""
       "three.js loads, board3d.js imports it, WebGL fallback exists")
 def eng_08() -> str:
     text = frontend_text()
-    check("three.module.js" in text, "three.js is not referenced")
-    check((FRONTEND / "vendor" / "three.module.js").exists(), "three.module.js missing")
-    check("board3d-fallback" in text, "no WebGL fallback")
+    check('from "three"' in text, "three.js is not referenced")
+    check("webgl-fallback" in text, "no WebGL fallback")
     return "three.js + fallback present (see browser pass for console check)"
 
 
 @case("ENG-09", "6", "All clickable 3D parts respond", "UI",
       "LEDs, switches and keys are pickable in the 3D view")
 def eng_09() -> str:
-    text = (FRONTEND / "board3d.js").read_text(encoding="utf-8")
+    text = frontend_src("src/ui/interactions.js")
     check("raycaster" in text.lower(), "no raycaster/click handling in the 3D board")
     return "3D parts pickable"
 

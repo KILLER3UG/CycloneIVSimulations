@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod pty;
+
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
@@ -225,6 +227,7 @@ fn launch_sidecar(
     .current_dir(&sidecar_dir)
     .env("CYCLONE_BUNDLE_DIR", &sidecar_dir)
     .env("CYCLONE_USER_DATA_DIR", user_data_dir)
+    .env("CYCLONE_DISABLE_NETWORK_TERMINAL", "1")
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
 
@@ -327,6 +330,7 @@ fn launch_sidecar(
 
 fn main() {
     let backend_state = Arc::new(Mutex::new(None::<BackendGuard>));
+    let pty_manager = pty::PtyManager::new();
     // The updater polls this repository's published releases (the latest.json
     // asset uploaded by the release workflow); endpoint + minisign pubkey are
     // configured in tauri.conf.json.
@@ -334,6 +338,14 @@ fn main() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppBackendState(Arc::clone(&backend_state)))
+        .manage(pty_manager)
+        .invoke_handler(tauri::generate_handler![
+            pty::pty_list_shells,
+            pty::pty_create,
+            pty::pty_write,
+            pty::pty_resize,
+            pty::pty_kill,
+        ])
         .setup(move |app| {
             let handle = app.handle().clone();
             let resource_dir = app.path().resource_dir().ok();
@@ -372,6 +384,7 @@ fn main() {
 
     app.run(|app_handle, event| {
         if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
+            app_handle.state::<pty::PtyManager>().kill_all();
             let arc = Arc::clone(&app_handle.state::<AppBackendState>().0);
             if let Ok(mut slot) = arc.lock() {
                 if let Some(mut guard) = slot.take() {

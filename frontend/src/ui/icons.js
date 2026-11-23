@@ -3,6 +3,9 @@
 const I = (paths, viewBox = "0 0 24 24", fill = "none") =>
     `<svg class="icon" viewBox="${viewBox}" fill="${fill}" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
 
+const C = (body, viewBox = "0 0 16 16") =>
+    `<svg class="icon" viewBox="${viewBox}" fill="none" aria-hidden="true">${body}</svg>`;
+
 export const icons = {
     power: I('<path d="M18.4 6.6a9 9 0 1 1-12.8 0"/><path d="M12 2v8"/>'),
     play: I('<polygon points="6 3 21 12 6 21 6 3" fill="currentColor" stroke="none"/>'),
@@ -49,6 +52,44 @@ export const icons = {
     toggle: I('<rect x="2.5" y="7" width="19" height="10" rx="5"/><circle cx="16.5" cy="12" r="2.6"/>'),
     slider: I('<line x1="4" y1="8" x2="20" y2="8"/><line x1="4" y1="16" x2="20" y2="16"/><circle cx="9" cy="8" r="2.2"/><circle cx="15" cy="16" r="2.2"/>'),
     globe: I('<circle cx="12" cy="12" r="9.2"/><line x1="2.8" y1="12" x2="21.2" y2="12"/><path d="M12 2.8a14.5 14.5 0 0 1 0 18.4 14.5 14.5 0 0 1 0-18.4z"/>'),
+    // Quartus Prime Standard Edition colored toolbar & tree icons
+    qNew: C('<path d="M3 1.5h6.8l3.2 3.2v9.8H3V1.5z" fill="#ffffff" stroke="#475569" stroke-width="1.1"/><path d="M9.8 1.5v3.2h3.2" fill="#e2e8f0" stroke="#475569" stroke-width="1"/><path d="M5 7h5M5 9.5h6" stroke="#94a3b8" stroke-width="1"/>'),
+    qOpen: C('<path d="M1.5 4.5h4.8l1.6 1.8h6.6v7.2h-13V4.5z" fill="#f7c85c" stroke="#9e7422" stroke-width="1.1"/><path d="M2.5 7.2h12l-1.3 6.3H1.8z" fill="#fde68a" stroke="#9e7422" stroke-width="1"/>'),
+    qSave: C('<rect x="2" y="2" width="12" height="12" rx="1" fill="#2d72b8" stroke="#1b4d82" stroke-width="1"/><rect x="4" y="2.2" width="7.2" height="4.8" fill="#ffffff"/><rect x="4" y="9" width="8" height="4.8" fill="#e6eef7"/><rect x="8.5" y="3" width="1.5" height="3" fill="#2d72b8"/>'),
+    qCut: C('<circle cx="4.8" cy="12" r="2.1" fill="none" stroke="#334155" stroke-width="1.3"/><circle cx="11.2" cy="12" r="2.1" fill="none" stroke="#334155" stroke-width="1.3"/><path d="M6 10.2L11.2 2.5M10 10.2L4.8 2.5" stroke="#475569" stroke-width="1.3" stroke-linecap="round"/>'),
+    qCopy: C('<rect x="2" y="4.5" width="7.8" height="9.5" fill="#ffffff" stroke="#475569" stroke-width="1.1"/><rect x="6.2" y="2" width="7.8" height="9.5" fill="#eff6ff" stroke="#2563eb" stroke-width="1.1"/><path d="M8 5h4M8 7h4" stroke="#60a5fa" stroke-width="1"/>'),
+    qPaste: C('<rect x="3" y="3" width="10" height="11.2" rx="1" fill="#d9a86c" stroke="#855b26" stroke-width="1.1"/><rect x="5.5" y="1.5" width="5" height="2.2" rx="0.5" fill="#94a3b8" stroke="#475569" stroke-width="0.9"/><rect x="4.8" y="4.8" width="6.4" height="7.6" fill="#ffffff"/>'),
+    qUndo: C('<path d="M4.8 6.5H10.8a3.4 3.4 0 1 1 0 6.8H7.5" stroke="#2563eb" stroke-width="1.8" stroke-linecap="round"/><path d="M6.8 3.6L3.6 6.5l3.2 2.9" stroke="#2563eb" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'),
+    qRedo: C('<path d="M11.2 6.5H5.2a3.4 3.4 0 1 0 0 6.8h3.3" stroke="#9ca3af" stroke-width="1.8" stroke-linecap="round"/><path d="M9.2 3.6l3.2 2.9-3.2 2.9" stroke="#9ca3af" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'),
+    qStop: C('<polygon points="5,1.8 11,1.8 14.2,5 14.2,11 11,14.2 5,14.2 1.8,11 1.8,5" fill="#9ca3af" stroke="#4b5563" stroke-width="1"/><text x="8" y="9.8" text-anchor="middle" font-size="4.8" font-family="Segoe UI,sans-serif" font-weight="700" fill="#ffffff">STOP</text>'),
+    qCompile: C('<polygon points="3.5,2.2 13.5,8 3.5,13.8" fill="#1d85c7" stroke="#0c5c8f" stroke-width="1.1"/>'),
+    qSynth: C('<polygon points="2.5,2.8 10.5,7.8 2.5,12.8" fill="#1d85c7" stroke="#0c5c8f" stroke-width="1"/><circle cx="11.6" cy="11.2" r="3" fill="#38bdf8" stroke="#0c5c8f" stroke-width="1"/>'),
+    qFitter: C('<rect x="2" y="3" width="12" height="10" rx="1" fill="#e6f2fa" stroke="#1d85c7" stroke-width="1.1"/><rect x="3.8" y="4.8" width="3.2" height="3.2" fill="#22c55e"/><rect x="9" y="4.8" width="3.2" height="3.2" fill="#1d85c7"/><rect x="5.5" y="9.2" width="5" height="2" fill="#f59e0b"/>'),
+    qAsm: C('<rect x="3" y="4" width="10" height="8" rx="1" fill="#0e7490" stroke="#164e63" stroke-width="1"/><path d="M5 12v2M8 12v2M11 12v2M5 2v2M8 2v2M11 2v2" stroke="#475569" stroke-width="1.2"/>'),
+    qTiming: C('<circle cx="8" cy="8" r="6" fill="#0284c7" stroke="#0369a1" stroke-width="1.1"/><path d="M8 4.4V8l2.6 1.8" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round"/>'),
+    qEda: C('<rect x="2" y="2.8" width="12" height="10.4" rx="1" fill="#fef3c7" stroke="#b45309" stroke-width="1"/><path d="M4 6.5h8M4 9.8h5.5" stroke="#0369a1" stroke-width="1.4" stroke-linecap="round"/>'),
+    qPgm: C('<rect x="2" y="3.5" width="9.2" height="8.5" rx="1" fill="#334155" stroke="#1e293b" stroke-width="1"/><rect x="3.8" y="5.2" width="5.5" height="3" fill="#bae6fd"/><path d="M11.2 8h2.6v4.2" stroke="#0284c7" stroke-width="1.5"/><circle cx="13.8" cy="13" r="1.6" fill="#22c55e"/>'),
+    qPinPlan: C('<rect x="3.5" y="3.5" width="9" height="9" rx="1" fill="#0284c7" stroke="#075985" stroke-width="1"/><rect x="5.5" y="5.5" width="5" height="5" fill="#bae6fd"/><path d="M5.5 1.2v2.3M8 1.2v2.3M10.5 1.2v2.3M5.5 12.5v2.3M8 12.5v2.3M10.5 12.5v2.3M1.2 5.5h2.3M1.2 8h2.3M1.2 10.5h2.3M12.5 5.5h2.3M12.5 8h2.3M12.5 10.5h2.3" stroke="#334155" stroke-width="1.1"/>'),
+    qHelpBubble: C('<path d="M2.2 7.6c0-3.1 2.6-5.4 5.8-5.4s5.8 2.3 5.8 5.4c0 3-2.6 5.3-5.8 5.3-.9 0-1.8-.2-2.6-.5L2.4 14l1-2.5c-.8-.9-1.2-2.2-1.2-3.9z" fill="#38bdf8" stroke="#0369a1" stroke-width="1.1"/>'),
+    qHierarchy: C('<polygon points="8,2 14,13 2,13" fill="#fde047" stroke="#b45309" stroke-width="1.1"/><text x="8" y="11.5" text-anchor="middle" font-size="7.5" font-weight="700" fill="#78350f">!</text>'),
+    qDeviceChip: C('<rect x="3" y="3" width="10" height="10" rx="1" fill="#facc15" stroke="#a16207" stroke-width="1"/><rect x="5.2" y="5.2" width="5.6" height="5.6" fill="#fef08a" stroke="#a16207" stroke-width="0.7"/><path d="M5 1.2v1.8M8 1.2v1.8M11 1.2v1.8M5 13v1.8M8 13v1.8M11 13v1.8M1.2 5H3M1.2 8H3M1.2 11H3M13 5h1.8M13 8h1.8M13 11h1.8" stroke="#475569" stroke-width="1"/>'),
+    qEntityChip: C('<rect x="2.5" y="3" width="9.5" height="10" rx="1" fill="#60a5fa" stroke="#1d4ed8" stroke-width="1"/><rect x="4.5" y="5" width="5.5" height="6" fill="#dbeafe"/><path d="M4.5 1.2v1.8M7.2 1.2v1.8M10 1.2v1.8M4.5 13v1.8M7.2 13v1.8M10 13v1.8" stroke="#475569" stroke-width="1"/><rect x="10.2" y="8.2" width="4.4" height="4.4" rx="0.6" fill="#dc2626" stroke="#ffffff" stroke-width="0.6"/>'),
+    qChip: C('<rect x="3" y="3" width="10" height="10" fill="#2e3b4e" stroke="#111827" stroke-width="1"/><rect x="5" y="5" width="6" height="6" fill="#475569"/><path d="M5 1v2M8 1v2M11 1v2M5 13v2M8 13v2M11 13v2M1 5h2M1 8h2M1 11h2M13 5h2M13 8h2M13 11h2" stroke="#94a3b8" stroke-width="1"/>'),
+    qCheck: C('<path d="M3 8.5l3.2 3.2L13 4.5" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>'),
+    qErr: C('<circle cx="8" cy="8" r="6.2" fill="#dc2626"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>'),
+    qCritWarn: C('<polygon points="8,1.5 15,14 1,14" fill="#9333ea"/><text x="8" y="12.2" text-anchor="middle" font-size="8.5" font-weight="700" fill="#fff">!</text>'),
+    qWarn: C('<polygon points="8,1.5 15,14 1,14" fill="#facc15" stroke="#ca8a04" stroke-width="0.8"/><text x="8" y="12.2" text-anchor="middle" font-size="8.5" font-weight="700" fill="#111">!</text>'),
+    qInfo: C('<circle cx="8" cy="8" r="6.2" fill="#0284c7"/><rect x="7.2" y="6.8" width="1.6" height="4.8" fill="#fff"/><rect x="7.2" y="4.2" width="1.6" height="1.6" fill="#fff"/>'),
+    qFilter: C('<polygon points="2,3 14,3 9.5,8.5 9.5,13.5 6.5,12 6.5,8.5" fill="#facc15" stroke="#a16207" stroke-width="1"/>'),
+    qFind: C('<circle cx="5.2" cy="9.5" r="3" fill="#dbeafe" stroke="#1e3a8a" stroke-width="1.2"/><circle cx="10.8" cy="9.5" r="3" fill="#dbeafe" stroke="#1e3a8a" stroke-width="1.2"/><path d="M5 6.5L6 4M11 6.5L10 4M7.5 9h1" stroke="#1e3a8a" stroke-width="1.2"/>'),
+    qEdBookmark: C('<path d="M3 2h7l3 3v9H3V2z" fill="#ffffff" stroke="#2563eb" stroke-width="1.1"/><rect x="4.5" y="4" width="4" height="2" fill="#60a5fa"/><path d="M4.5 8h6M4.5 10.5h5" stroke="#64748b" stroke-width="1.1"/>'),
+    qEdBrace: C('<text x="8" y="11.5" text-anchor="middle" font-size="10.5" font-family="Consolas,monospace" font-weight="700" fill="#1d4ed8">{}</text>'),
+    qEdOutdent: C('<path d="M6 4h8M6 8h8M6 12h8" stroke="#2563eb" stroke-width="1.4" stroke-linecap="round"/><polygon points="4.5,5 1.5,8 4.5,11" fill="#1d4ed8"/>'),
+    qEdIndent: C('<path d="M6 4h8M6 8h8M6 12h8" stroke="#2563eb" stroke-width="1.4" stroke-linecap="round"/><polygon points="1.5,5 4.5,8 1.5,11" fill="#1d4ed8"/>'),
+    qEdLineNum: C('<text x="2" y="7" font-size="6.2" font-family="Consolas,monospace" font-weight="700" fill="#1d4ed8">267</text><text x="2" y="13.5" font-size="6.2" font-family="Consolas,monospace" font-weight="700" fill="#1d4ed8">268</text><path d="M11 4.5h3.5M11 11h3.5" stroke="#334155" stroke-width="1.2"/>'),
+    qEdWrap: C('<path d="M2 4h11M2 8h9a2 2 0 1 1 0 4H7" stroke="#2563eb" stroke-width="1.4" fill="none" stroke-linecap="round"/><polygon points="7.5,10.2 5,12 7.5,13.8" fill="#2563eb"/>'),
+    qSettings: C('<rect x="2" y="2" width="12" height="12" rx="1.5" fill="#e2e8f0" stroke="#64748b" stroke-width="1"/><path d="M5 6h6M5 9h6M5 12h4" stroke="#0f172a" stroke-width="1.2"/>'),
+    qQuartus: C('<rect x="2" y="2" width="12" height="12" rx="2" fill="#0071c5"/><text x="8" y="11" text-anchor="middle" font-size="8.5" font-family="Segoe UI,sans-serif" font-weight="700" fill="#fff">Q</text>'),
 };
 
 export function icon(name) {

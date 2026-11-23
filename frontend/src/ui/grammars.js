@@ -4,28 +4,29 @@
 // --------------------------------------------------------------- VHDL ----
 const VHDL_KEYWORDS = [
     "abs", "access", "after", "alias", "all", "and", "architecture", "array",
-    "assert", "attribute", "begin", "block", "body", "buffer", "bus", "case",
-    "component", "configuration", "constant", "disconnect", "downto", "else",
-    "elsif", "end", "entity", "exit", "file", "for", "function", "generate",
-    "generic", "group", "guarded", "if", "impure", "in", "inertial", "inout",
+    "assert", "attribute", "begin", "bit", "bit_vector", "block", "body",
+    "boolean", "buffer", "bus", "case", "character", "component",
+    "configuration", "constant", "disconnect", "downto", "else", "elsif",
+    "end", "entity", "exit", "file", "for", "function", "generate", "generic",
+    "group", "guarded", "if", "impure", "in", "inertial", "inout", "integer",
     "is", "label", "library", "linkage", "literal", "loop", "map", "mod",
-    "nand", "new", "next", "nor", "not", "null", "of", "on", "open", "or",
-    "others", "out", "package", "port", "postponed", "procedure", "process",
-    "pure", "range", "record", "register", "reject", "rem", "report", "return",
-    "rol", "ror", "select", "severity", "signal", "shared", "sla", "sll",
-    "sra", "srl", "subtype", "then", "to", "transport", "type", "unaffected",
-    "units", "until", "use", "variable", "wait", "when", "while", "with",
-    "xnor", "xor",
+    "nand", "natural", "new", "next", "nor", "not", "null", "of", "on",
+    "open", "or", "others", "out", "package", "port", "positive", "postponed",
+    "procedure", "process", "pure", "range", "real", "record", "register",
+    "reject", "rem", "report", "return", "rol", "ror", "select", "severity",
+    "signal", "shared", "sla", "sll", "sra", "srl", "string", "subtype",
+    "then", "time", "to", "transport", "type", "unaffected", "units", "until",
+    "use", "variable", "wait", "when", "while", "with", "xnor", "xor",
 ];
 
 const VHDL_TYPES = [
     "std_logic", "std_logic_vector", "std_ulogic", "std_ulogic_vector",
-    "bit", "bit_vector", "boolean", "integer", "natural", "positive",
-    "signed", "unsigned", "real", "time", "character", "string",
+    "signed", "unsigned", "ieee", "std_logic_1164", "numeric_std",
     "severity_level", "line", "ufixed", "sfixed", "float",
 ];
 
 export const vhdlGrammar = {
+    ignoreCase: true,
     keywords: VHDL_KEYWORDS,
     types: VHDL_TYPES,
     tokenizer: {
@@ -120,24 +121,31 @@ export const qsfGrammar = {
 
 // -------------------------------------------------------------- themes ----
 export function defineThemes(monaco) {
+    // Exact Quartus Prime Standard Edition light editor palette (matches reference screenshots)
     monaco.editor.defineTheme("c4-light", {
         base: "vs",
         inherit: true,
         rules: [
-            { token: "comment", foreground: "8a8f98", fontStyle: "italic" },
-            { token: "keyword", foreground: "0b62c4", fontStyle: "bold" },
-            { token: "type", foreground: "7a3aa8" },
-            { token: "string", foreground: "1a7f37" },
-            { token: "number", foreground: "b25000" },
-            { token: "number.hex", foreground: "b25000" },
-            { token: "number.float", foreground: "b25000" },
-            { token: "operator", foreground: "444c56" },
+            { token: "comment", foreground: "008000", fontStyle: "italic" },
+            { token: "keyword", foreground: "0000ff", fontStyle: "normal" },
+            { token: "type", foreground: "cc3366", fontStyle: "normal" },
+            { token: "string", foreground: "b44010" },
+            { token: "number", foreground: "b44010" },
+            { token: "number.hex", foreground: "b44010" },
+            { token: "number.float", foreground: "b44010" },
+            { token: "operator", foreground: "000000" },
+            { token: "identifier", foreground: "000000" },
         ],
         colors: {
-            "editor.background": "#fbfbfc",
-            "editorLineNumber.foreground": "#9aa0aa",
-            "editor.lineHighlightBackground": "#eef3fb",
-            "editorGutter.background": "#f2f3f5",
+            "editor.background": "#ffffff",
+            "editor.foreground": "#000000",
+            "editorLineNumber.foreground": "#4a4a4a",
+            "editorLineNumber.activeForeground": "#000000",
+            "editor.lineHighlightBackground": "#f3f7fc",
+            "editor.selectionBackground": "#00008b",
+            "editor.selectionForeground": "#ffffff",
+            "editorGutter.background": "#f0f0f0",
+            "editorIndentGuide.background1": "#e5e5e5",
         },
     });
     monaco.editor.defineTheme("c4-dark", {

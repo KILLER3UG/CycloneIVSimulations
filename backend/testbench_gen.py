@@ -264,6 +264,19 @@ def _resolve_type(port: Port, generics: Dict[str, Any]) -> Optional[str]:
     return f"{port.type_name}({left} {parts[1].lower()} {right})"
 
 
+def _resolve_port_width(port: Port, generics: Dict[str, Any]) -> int:
+    if generics and port.type_name in _VECTOR_TYPES:
+        match = re.search(r"\((.*)\)\s*$", port.type_text or "")
+        if match:
+            parts = re.split(r"\s+(downto|to)\s+", match.group(1), maxsplit=1, flags=re.IGNORECASE)
+            if len(parts) == 3:
+                left = _eval_const_expr(parts[0], generics)
+                right = _eval_const_expr(parts[2], generics)
+                if left is not None and right is not None:
+                    return abs(left - right) + 1
+    return port.width or 1
+
+
 def _signal_declaration(port: Port, init: bool = False, type_text: Optional[str] = None) -> str:
     declaration_type = type_text or port.type_text or port.type_name
     if type_text is None and port.type_name == "integer" and port.left is not None and port.right is not None:
@@ -304,15 +317,15 @@ def _bit_literal(value: Any, width: int) -> str:
     return f'"{format(number, f"0{width}b")}"'
 
 
-def _value_literal(port: Port, value: Any) -> str:
-    width = port.width or 1
+def _value_literal(port: Port, value: Any, width_override: Optional[int] = None) -> str:
+    width = width_override if width_override is not None else (port.width or 1)
     if port.type_name in ("integer",):
         return str(int(value))
     if port.type_name in ("boolean",):
         return "true" if str(value).lower() in ("1", "true", "t") else "false"
     if width == 1:
-        text = str(value).strip().lower()
-        if text in ("0", "1", "x", "z", "w", "l", "h", "u"):
+        text = str(value).strip().upper()
+        if text in ("0", "1", "X", "Z", "W", "L", "H", "U", "-"):
             return f"'{text}'"
         try:
             return f"'{int(value) & 1}'"
@@ -361,6 +374,10 @@ def _generic_literal(generic, values: Dict[str, Any]) -> Optional[str]:
         return text
     if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
         return text
+    if re.fullmatch(r"'.'", text):
+        return text
+    if generic.type_name == "character":
+        return f"'{text[:1]}'" if text else "' '"
     if generic.type_name in ("string",):
         return f'"{text}"'
     # time/real/integer-style defaults (e.g. "5 us") must stay unquoted
@@ -527,12 +544,18 @@ def generate_testbench(entity: Entity, config: TestbenchConfig,
 
     # Generics must be visible to the testbench itself because the signal
     # declarations below use the entity's constrained types.
+    effective_generics: Dict[str, Any] = {}
     for generic in entity.generics:
+        if generic.name in config.generics:
+            effective_generics[generic.name] = config.generics[generic.name]
+        elif generic.default is not None:
+            effective_generics[generic.name] = generic.default
         literal = _generic_literal(generic, config.generics)
         if literal is not None:
             lines.append(f"    constant {generic.name} : {generic.type_text} := {literal};")
 
-    type_by_port = {port.name: _resolve_type(port, config.generics) for port in entity.ports}
+    type_by_port = {port.name: _resolve_type(port, effective_generics) for port in entity.ports}
+    width_by_port = {port.name: _resolve_port_width(port, effective_generics) for port in entity.ports}
     for port in entity.ports:
         lines.append("    " + _signal_declaration(port, init=port.name in driven, type_text=type_by_port[port.name]))
 
@@ -549,14 +572,9 @@ def generate_testbench(entity: Entity, config: TestbenchConfig,
         for gen in entity.generics:
             if gen.name not in config.generics:
                 continue
-            value = config.generics[gen.name]
-            if isinstance(value, bool):
-                rendered = "true" if value else "false"
-            elif isinstance(value, str):
-                rendered = value if re.fullmatch(r"[-+]?\d+", value) else f'"{value}"'
-            else:
-                rendered = str(value)
-            entries.append(f"            {gen.name} => {rendered}")
+            rendered = _generic_literal(gen, config.generics)
+            if rendered is not None:
+                entries.append(f"            {gen.name} => {rendered}")
         if entries:
             lines.append("        generic map (")
             lines.append(",\n".join(entries))
@@ -626,9 +644,10 @@ def generate_testbench(entity: Entity, config: TestbenchConfig,
         # driving the original port-named signal would write to a shadow
         # signal connected to nothing (audit M6).
         signal_name = port_overrides.get(port.name.lower(), port.name)
+        port_w = width_by_port.get(port.name, port.width or 1)
 
         if stimulus.kind == "constant":
-            lines.append(f"    {signal_name} <= {_value_literal(port, stimulus.value)};")
+            lines.append(f"    {signal_name} <= {_value_literal(port, stimulus.value, port_w)};")
             continue
 
         lines.append(f"    stim_{port.name} : process")
@@ -647,9 +666,9 @@ def generate_testbench(entity: Entity, config: TestbenchConfig,
             pulse = max(1, stimulus.pulse_cycles)
             period_cycles = max(pulse + 1, stimulus.period_cycles)
             lines.append("        loop")
-            lines.append(f"            {signal_name} <= {_value_literal(port, 1)};")
+            lines.append(f"            {signal_name} <= {_value_literal(port, 1, port_w)};")
             lines.append(f"            wait for {pulse} * CLK_PERIOD;")
-            lines.append(f"            {signal_name} <= {_value_literal(port, 0)};")
+            lines.append(f"            {signal_name} <= {_value_literal(port, 0, port_w)};")
             lines.append(f"            wait for {period_cycles - pulse} * CLK_PERIOD;")
             lines.append("        end loop;")
         elif stimulus.kind == "sequence":
@@ -658,7 +677,7 @@ def generate_testbench(entity: Entity, config: TestbenchConfig,
                 values = [stimulus.value, 0]
             lines.append("        loop")
             for value in values:
-                lines.append(f"            {signal_name} <= {_value_literal(port, value)};")
+                lines.append(f"            {signal_name} <= {_value_literal(port, value, port_w)};")
                 lines.append(f"            {_wait_cycles(max(1, stimulus.period_cycles), clock)}")
             lines.append("        end loop;")
         elif stimulus.kind == "pulse_once":
@@ -668,12 +687,12 @@ def generate_testbench(entity: Entity, config: TestbenchConfig,
             seq = list(stimulus.values) or [stimulus.value, 0]
             first = seq[0]
             second = seq[1] if len(seq) > 1 else 0
-            lines.append(f"        {signal_name} <= {_value_literal(port, first)};")
+            lines.append(f"        {signal_name} <= {_value_literal(port, first, port_w)};")
             lines.append(f"        wait for {max(1, stimulus.hold_cycles)} * CLK_PERIOD;")
-            lines.append(f"        {signal_name} <= {_value_literal(port, second)};")
+            lines.append(f"        {signal_name} <= {_value_literal(port, second, port_w)};")
             lines.append("        wait;")
         else:
-            lines.append(f"        {signal_name} <= {_value_literal(port, stimulus.value)};")
+            lines.append(f"        {signal_name} <= {_value_literal(port, stimulus.value, port_w)};")
             lines.append("        wait;")
 
         lines.append("    end process;")

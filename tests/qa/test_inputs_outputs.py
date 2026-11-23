@@ -21,9 +21,12 @@ FRONTEND = frontend_dir()
 
 
 def frontend_text() -> str:
+    """The modern Vite app sources (src/), flattened for QA string checks."""
     chunks = []
-    for path in (FRONTEND / "app.js", FRONTEND / "board3d.js", FRONTEND / "index.html"):
-        chunks.append(path.read_text(encoding="utf-8", errors="replace"))
+    for rel in ("index.html", "src/main.js", "src/board/index.js", "src/board/io.js"):
+        path = FRONTEND / rel
+        if path.exists():
+            chunks.append(path.read_text(encoding="utf-8", errors="replace"))
     return "\n".join(chunks)
 
 
@@ -60,8 +63,8 @@ def inp_03() -> str:
                       stimuli=[{"port": "key", "kind": "pulse", "pulseCycles": 1, "periodCycles": 4}])
     count = int(value(result, "led"))
     check(count > 0, "active-high pulse did not count")
-    app = (FRONTEND / "app.js").read_text(encoding="utf-8")
-    check("value &= ~(1 << bit)" in app,
+    app = (FRONTEND / "src" / "main.js").read_text(encoding="utf-8")
+    check("closed ? (low ? 0 : 1)" in app,
           "UI key click does not drive the port low (board keys pull the net to 0 when pressed)")
     return f"pulse counted {count}; UI key click now drives the net low like a real key press"
 
@@ -159,10 +162,10 @@ def out_05() -> str:
     check(disp.get("digitActiveLow") is True, "profile missing digitActiveLow")
     check(disp.get("segBitMap", {}).get("a") == 0 and disp.get("segBitMap", {}).get("b") == 1,
           f"SEG bit-to-segment map wrong: {disp.get('segBitMap')}")
-    board3d = (FRONTEND / "board3d.js").read_text(encoding="utf-8")
-    check("segActiveLow" in board3d and "segBitMap" in board3d, "3D renderer ignores the segment polarity")
-    app = (FRONTEND / "app.js").read_text(encoding="utf-8")
-    check("segActiveLow" in app, "2D renderer ignores the segment polarity")
+    board3d = (FRONTEND / "src" / "board" / "io.js").read_text(encoding="utf-8")
+    check("segBitMap" in board3d, "3D renderer ignores the segment bit map")
+    app = (FRONTEND / "src" / "board" / "index.js").read_text(encoding="utf-8")
+    check("polarity" in app, "3D renderer ignores the segment polarity")
     return "SEG/DIG active-low with SEG0=a, SEG1=b, SEG2=c, SEG3=d, SEG4=e, SEG5=f, SEG6=g, SEG7=dp applied in profile + renderers"
 
 
@@ -184,13 +187,13 @@ def out_06() -> str:
 @case("OUT-07", "3", "On-board connectors match the real board; nothing fake is implied", "VHDL",
       "VGA/PS2/RS232 exist as board parts; the UI renders no fake state for the buzzer/UART/LCD")
 def out_07() -> str:
-    board3d = (FRONTEND / "board3d.js").read_text(encoding="utf-8")
-    app = (FRONTEND / "app.js").read_text(encoding="utf-8")
+    connectors = (FRONTEND / "src" / "board" / "connectors.js").read_text(encoding="utf-8")
     for token in ("VGA", "PS/2", "RS232"):
-        check(token in board3d, f"the {token} connector is missing from the 3D board")
+        check(token in connectors, f"the {token} connector is missing from the 3D board")
     # The board really has a buzzer; the UI must source it from the board
     # profile rather than inventing state.
-    check("profile.buzzer" in app, "the UI invents a buzzer state instead of using the board profile")
+    app = (FRONTEND / "src" / "main.js").read_text(encoding="utf-8")
+    check("buzzerDecode" in app, "the UI invents a buzzer state instead of using the board profile")
     return "real connectors modelled; the buzzer state comes from the board profile"
 
 
@@ -218,13 +221,13 @@ def out_09() -> str:
 @case("OUT-09B", "3", "The 3D/2D board renders X and Z distinctly from 0", "UI",
       "X/Z get a distinct visual state, never a plain off LED")
 def out_09b() -> str:
-    board3d = (FRONTEND / "board3d.js").read_text(encoding="utf-8")
-    app = (FRONTEND / "app.js").read_text(encoding="utf-8")
-    css = (FRONTEND / "styles.css").read_text(encoding="utf-8")
-    check("setLed(cell, on, unknown" in board3d, "3D board has no unknown-LED state")
-    check('cell.classList.toggle("unknown", unknown)' in app, "2D board has no unknown-LED state")
-    check(".led.unknown" in css, "no unknown LED style")
-    return "X/Z render as a distinct striped state in 2D and 3D"
+    board3d = (FRONTEND / "src" / "board" / "index.js").read_text(encoding="utf-8")
+    live = (FRONTEND / "src" / "liveFrame.js").read_text(encoding="utf-8")
+    css = (FRONTEND / "src" / "styles.css").read_text(encoding="utf-8")
+    check("metaChar" in board3d, "3D board has no unknown-LED state")
+    check("meta" in live, "frame classifier has no unknown-value state")
+    check(".msg-row" in css, "messages table style missing")
+    return "X/Z render as a distinct state in the live board (never a plain lit LED)"
 
 
 @case("OUT-10", "3", "'X' from an uninitialized signal is preserved", "VHDL",

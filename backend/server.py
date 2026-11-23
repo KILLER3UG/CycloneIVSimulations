@@ -42,12 +42,28 @@ from .device import (
     select_board,
     set_device,
 )
-from .terminal import TerminalSession, cleanup_all_terminals, exec_terminal_command
+from .terminal import (
+    TerminalSession,
+    cleanup_all_terminals,
+    exec_terminal_command,
+    list_available_shells,
+)
 from .paths import bundle_root, projects_dir, user_data_dir
 from .device import BOARD
 from .ghdl_tool import GhdlNotFoundError
 from .live_session import LiveController, build_live_controller
+from .modelsim_tool import simulate_vho_with_modelsim
+from .quartus_tool import (
+    QuartusCompileRunner,
+    launch_quartus_gui,
+    launch_quartus_programmer,
+    resolve_project_dir,
+    sanitize_project_name,
+    sync_quartus_project,
+)
 from .session import SimSession
+from .settings import get_settings_with_status, load_settings, save_settings, validate_quartus_path
+from .workspace import delete_workspace_file, scan_workspace, write_workspace_files
 from .simulator import SimulationRequest, Simulator
 from .testbench_gen import detect_clock, detect_reset
 from .vhdl_parser import VHDLParser
@@ -363,6 +379,179 @@ def simulate_options() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Settings, Quartus Prime CLI & ModelSim netlist simulation
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/settings")
+def get_settings_endpoint() -> dict:
+    info = get_settings_with_status()
+    return {"ok": True, **info}
+
+
+@app.post("/api/settings")
+def save_settings_endpoint(payload: Dict[str, Any] = Body(...)) -> dict:
+    if not isinstance(payload, dict):
+        return _error_response("Expected a settings JSON object", 400)
+    save_settings(payload)
+    info = get_settings_with_status()
+    return {"ok": True, **info}
+
+
+@app.get("/api/terminal/shells")
+def terminal_shells_endpoint() -> dict:
+    return {"ok": True, "shells": list_available_shells()}
+
+
+def _sync_quartus_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    settings = load_settings()
+    files = payload.get("files") or []
+    if not files and payload.get("vhdl"):
+        files = [{"name": "design.vhd", "content": str(payload.get("vhdl") or "")}]
+    top = str(payload.get("top") or "").strip()
+    if not top and files:
+        top = Path(str(files[0].get("name") or "design")).stem
+    proj_name = sanitize_project_name(payload.get("projectName") or top or "design")
+    proj_dir = resolve_project_dir(payload.get("projectDir") or settings.get("projectDir"), proj_name)
+    device_part = str((DEVICE() or {}).get("quartusDevice") or (DEVICE() or {}).get("part") or "EP4CE6E22C8")
+    return sync_quartus_project(
+        proj_dir,
+        proj_name,
+        files,
+        top or proj_name,
+        str(payload.get("qsf") or ""),
+        device=device_part,
+        family=str((DEVICE() or {}).get("family") or "Cyclone IV E"),
+    )
+
+
+@app.post("/api/quartus/compile")
+def quartus_compile_endpoint(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
+    settings = load_settings()
+    q_path = str(payload.get("quartusPath") or settings.get("quartusPath") or "")
+    q_info = validate_quartus_path(q_path)
+    if not q_info["valid"]:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "missingQuartus": True, "error": q_info["error"], "quartus": q_info},
+        )
+    proj = _sync_quartus_from_payload(payload)
+    runner = QuartusCompileRunner(q_info["path"], Path(proj["projectDir"]), proj["projectName"])
+    result = runner.run_blocking(stage=payload.get("stage"))
+    result["project"] = proj
+    return JSONResponse(status_code=200 if result.get("ok") else 400, content=result)
+
+
+@app.post("/api/quartus/open-gui")
+def quartus_open_gui_endpoint(payload: Dict[str, Any] = Body(default={})) -> JSONResponse:
+    settings = load_settings()
+    q_path = str(payload.get("quartusPath") or settings.get("quartusPath") or "")
+    qpf_path = payload.get("qpfPath")
+    if not qpf_path and (payload.get("files") or payload.get("vhdl")):
+        proj = _sync_quartus_from_payload(payload)
+        qpf_path = proj["qpfPath"]
+    res = launch_quartus_gui(Path(qpf_path) if qpf_path else None, q_path)
+    return JSONResponse(status_code=200 if res.get("ok") else 400, content=res)
+
+
+@app.post("/api/quartus/programmer")
+def quartus_programmer_endpoint(payload: Dict[str, Any] = Body(default={})) -> JSONResponse:
+    settings = load_settings()
+    q_path = str(payload.get("quartusPath") or settings.get("quartusPath") or "")
+    sof = payload.get("sofPath")
+    res = launch_quartus_programmer(q_path, Path(sof) if sof else None)
+    return JSONResponse(status_code=200 if res.get("ok") else 400, content=res)
+
+
+@app.get("/api/workspace/files")
+def workspace_files_endpoint(dir: str = "") -> JSONResponse:
+    try:
+        return JSONResponse(status_code=200, content=scan_workspace(dir))
+    except ValueError as exc:
+        return _error_response(str(exc), 400)
+
+
+@app.post("/api/workspace/open")
+def workspace_open_endpoint(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
+    raw = str(payload.get("dir") or "").strip()
+    if not raw:
+        return _error_response("Workspace directory path is required", 400)
+    try:
+        target = Path(raw).expanduser().resolve()
+        if not target.is_dir():
+            return _error_response(f"Directory does not exist: {raw}", 400)
+        return JSONResponse(status_code=200, content=scan_workspace(target))
+    except OSError as exc:
+        return _error_response(f"Cannot open directory: {exc}", 400)
+    except ValueError as exc:
+        return _error_response(str(exc), 400)
+
+
+@app.post("/api/workspace/write")
+def workspace_write_endpoint(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
+    raw = str(payload.get("dir") or "").strip()
+    files = payload.get("files") or []
+    try:
+        return JSONResponse(status_code=200, content=write_workspace_files(raw, files))
+    except ValueError as exc:
+        return _error_response(str(exc), 400)
+    except OSError as exc:
+        return _error_response(f"Failed writing workspace files: {exc}", 500)
+
+
+@app.post("/api/workspace/delete")
+def workspace_delete_endpoint(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
+    raw = str(payload.get("dir") or "").strip()
+    name = str(payload.get("name") or "").strip()
+    try:
+        return JSONResponse(status_code=200, content=delete_workspace_file(raw, name))
+    except ValueError as exc:
+        return _error_response(str(exc), 400)
+    except OSError as exc:
+        return _error_response(f"Failed deleting workspace file: {exc}", 500)
+
+
+@app.post("/api/quartus/simulate-netlist")
+def quartus_simulate_netlist_endpoint(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
+    settings = load_settings()
+    vho_path_raw = str(payload.get("vhoPath") or "").strip()
+    sdo_path_raw = str(payload.get("sdoPath") or "").strip()
+    if vho_path_raw and Path(vho_path_raw).is_file():
+        ms_res = simulate_vho_with_modelsim(
+            Path(vho_path_raw),
+            modelsim_path=settings.get("modelsimPath") or None,
+            quartus_bin=settings.get("quartusPath") or None,
+            top_entity=payload.get("top") or None,
+            sdo_path=Path(sdo_path_raw) if sdo_path_raw else None,
+            qsf_text=str(payload.get("qsf") or ""),
+            strict_pins=bool(payload.get("strictPins", False)),
+            duration_ns=float(payload.get("duration", 2000.0) or 2000.0),
+            clock_period_ns=float(payload.get("clockPeriod", 20.0) or 20.0),
+            reset_cycles=int(payload.get("resetCycles", 2) or 2),
+            reset_active_high=bool(payload.get("resetActiveHigh", True)),
+            clock_port=payload.get("clockPort") or None,
+            reset_port=payload.get("resetPort") or None,
+            stimuli=payload.get("stimuli") or [],
+            compact=bool(payload.get("compactBoard", True)),
+        )
+        if ms_res.get("ok"):
+            return JSONResponse(status_code=200, content=ms_res)
+
+    # Fallback to built-in GHDL simulator using the exact same source files
+    vhdl = _extract_vhdl(payload)
+    if not vhdl.strip():
+        return _error_response("No EDA netlist or HDL source available to simulate", 400)
+    try:
+        simulator = get_simulator()
+    except GhdlNotFoundError as exc:
+        return _error_response(str(exc), 503)
+    req = SimulationRequest.from_dict(payload)
+    res = simulator.simulate(req)
+    res["engine"] = "builtin-ghdl"
+    return JSONResponse(status_code=200 if res.get("ok") else 400, content=res)
+
+
+# ---------------------------------------------------------------------------
 # WebSocket
 # ---------------------------------------------------------------------------
 
@@ -388,6 +577,135 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     # At most one playback session per connection; sim_start replaces it.
     session: Optional[SimSession] = None
+
+    # Active Quartus compilation runner (cancellable via quartus_stop or disconnect).
+    quartus_runner: Optional[QuartusCompileRunner] = None
+    quartus_queue: asyncio.Queue = asyncio.Queue()
+    quartus_pump_task: Optional[asyncio.Task] = None
+    quartus_loop = asyncio.get_running_loop()
+
+    async def _quartus_pump() -> None:
+        try:
+            while True:
+                item = await quartus_queue.get()
+                await websocket.send_json(item)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("quartus pump ended")
+
+    async def handle_quartus(kind: str, message: dict) -> None:
+        nonlocal quartus_runner, quartus_pump_task
+        if kind == "quartus_stop":
+            if quartus_runner is not None:
+                quartus_runner.stop()
+            return
+        if kind == "quartus_compile":
+            if quartus_runner is not None:
+                quartus_runner.stop()
+                quartus_runner = None
+            settings = load_settings()
+            q_path = str(message.get("quartusPath") or settings.get("quartusPath") or "")
+            q_info = validate_quartus_path(q_path)
+            if not q_info["valid"]:
+                await websocket.send_json({
+                    "type": "quartus_done",
+                    "ok": False,
+                    "missingQuartus": True,
+                    "error": q_info["error"],
+                    "errors": [{"severity": "error", "id": "", "message": q_info["error"]}],
+                    "warnings": [],
+                    "counts": {"error": 1, "critical_warning": 0, "warning": 0, "info": 0},
+                })
+                return
+            proj = _sync_quartus_from_payload(message)
+            if quartus_pump_task is None or quartus_pump_task.done():
+                quartus_pump_task = asyncio.create_task(_quartus_pump())
+
+            await websocket.send_json({"type": "quartus_started", "project": proj})
+
+            def _on_stage(ev: dict) -> None:
+                quartus_loop.call_soon_threadsafe(quartus_queue.put_nowait, {"type": "quartus_stage", **ev})
+
+            def _on_msg(ev: dict) -> None:
+                quartus_loop.call_soon_threadsafe(quartus_queue.put_nowait, {"type": "quartus_message", **ev})
+
+            def _on_done(ev: dict) -> None:
+                quartus_loop.call_soon_threadsafe(
+                    quartus_queue.put_nowait,
+                    {"type": "quartus_done", "project": proj, **ev},
+                )
+
+            quartus_runner = QuartusCompileRunner(
+                q_info["path"],
+                Path(proj["projectDir"]),
+                proj["projectName"],
+                on_stage=_on_stage,
+                on_message=_on_msg,
+                on_done=_on_done,
+            )
+            quartus_runner.start_background(stage=message.get("stage"))
+            return
+
+    # Disk workspace watcher for live two-way sync with CLI agents & external editors.
+    watch_dir: Optional[str] = None
+    watch_version: str = ""
+    watch_task: Optional[asyncio.Task] = None
+
+    async def _workspace_watch_loop(target_dir: str) -> None:
+        nonlocal watch_version
+        try:
+            while True:
+                await asyncio.sleep(0.4)
+                try:
+                    snap = await asyncio.to_thread(scan_workspace, target_dir)
+                except Exception:
+                    continue
+                ver = snap.get("version") or ""
+                if ver and ver != watch_version:
+                    watch_version = ver
+                    await websocket.send_json({
+                        "type": "workspace_changed",
+                        "dir": snap["dir"],
+                        "version": ver,
+                        "files": snap["files"],
+                    })
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("workspace watch loop ended")
+
+    async def handle_workspace(kind: str, message: dict) -> None:
+        nonlocal watch_dir, watch_version, watch_task
+        if kind == "workspace_ack":
+            ver = str(message.get("version") or "")
+            if ver:
+                watch_version = ver
+            return
+        if kind == "workspace_watch":
+            if watch_task is not None:
+                watch_task.cancel()
+                watch_task = None
+            raw_dir = str(message.get("dir") or "").strip()
+            watch_dir = raw_dir or None
+            watch_version = str(message.get("lastVersion") or "")
+            if watch_dir:
+                try:
+                    snap = await asyncio.to_thread(scan_workspace, watch_dir)
+                    if not watch_version:
+                        watch_version = snap.get("version") or ""
+                    elif snap.get("version") != watch_version:
+                        watch_version = snap.get("version") or ""
+                        await websocket.send_json({
+                            "type": "workspace_changed",
+                            "dir": snap["dir"],
+                            "version": watch_version,
+                            "files": snap["files"],
+                        })
+                except Exception:
+                    pass
+                watch_task = asyncio.create_task(_workspace_watch_loop(watch_dir))
+            return
 
     # Live interactive co-simulation (persistent GHDL stepping).
     live: Optional[LiveController] = None
@@ -658,6 +976,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 elif kind in ("live_start", "live_input", "live_pace", "live_step", "live_stop",
                               "live_uart_tx", "live_ps2", "live_ir", "live_temp"):
                     await handle_live(kind, message)
+                elif kind in ("quartus_compile", "quartus_stop"):
+                    await handle_quartus(kind, message)
+                elif kind in ("workspace_watch", "workspace_ack"):
+                    await handle_workspace(kind, message)
                 else:
                     await websocket.send_json(
                         {"type": "error", "message": f"Unknown message type '{kind}'"}
@@ -673,6 +995,15 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
     finally:
+        if watch_task is not None:
+            watch_task.cancel()
+        if quartus_pump_task is not None:
+            quartus_pump_task.cancel()
+        if quartus_runner is not None:
+            try:
+                quartus_runner.stop()
+            except Exception:
+                pass
         for task in live_tasks:
             task.cancel()
         if live_session is not None:
@@ -689,7 +1020,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
 @app.websocket("/ws/terminal")
 async def websocket_terminal(websocket: WebSocket) -> None:
-    """Interactive OS shell with GHDL on PATH; killed on disconnect."""
+    """Interactive OS shell with GHDL/Quartus on PATH; disabled when desktop IPC owns PTY."""
+    if os.environ.get("CYCLONE_DISABLE_NETWORK_TERMINAL") == "1":
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     loop = asyncio.get_running_loop()
     outputs: asyncio.Queue[str] = asyncio.Queue()
@@ -701,7 +1035,9 @@ async def websocket_terminal(websocket: WebSocket) -> None:
     def on_exit(code: int) -> None:
         loop.call_soon_threadsafe(exits.put_nowait, code)
 
-    term = TerminalSession(on_output=on_output, on_exit=on_exit)
+    shell_param = websocket.query_params.get("shell")
+    cwd_param = websocket.query_params.get("cwd")
+    term = TerminalSession(cwd=cwd_param, shell=shell_param, on_output=on_output, on_exit=on_exit)
     try:
         # Off the event loop: a slow/stalled PTY spawn must not freeze every
         # other WebSocket and request served by this process.
@@ -783,7 +1119,9 @@ async def websocket_terminal(websocket: WebSocket) -> None:
 
 
 @app.post("/api/terminal/exec")
-def terminal_exec(payload: Dict[str, Any] = Body(...)) -> dict:
+def terminal_exec(payload: Dict[str, Any] = Body(...)) -> Any:
+    if os.environ.get("CYCLONE_DISABLE_NETWORK_TERMINAL") == "1":
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Network terminal disabled in desktop mode"})
     command = str(payload.get("command") or "")
     if not command.strip():
         return {"ok": False, "error": "No command provided"}

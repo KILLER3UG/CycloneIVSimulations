@@ -193,11 +193,11 @@ end architecture;
         check(result.get("ok"), f"simulation failed: {errors_text(result)}")
         got = int(value(result, "LED"))
         check(got == expected, f"KEY={key_value:01X} -> LED={got:01X}, expected {expected:01X}")
-    # The UI press handler clears the bit (press = 0) and the renderer lights
-    # on 0 when the profile says active-low. Both come from board.json.
-    app_js = (frontend_dir() / "app.js").read_text(encoding="utf-8")
-    check("value &= ~(1 << bit)" in app_js, "UI press handler no longer sets the bit low")
-    check("ledConfig" in app_js and "activeLow" in app_js, "UI does not use the profile polarity")
-    board3d = (frontend_dir() / "board3d.js").read_text(encoding="utf-8")
-    check("ledConfig" in board3d, "3D board does not use the profile polarity")
+    # The UI press handler drives the net low (press = 0) and the renderer
+    # lights on 0 when the profile says active-low. Both come from board.json.
+    app_js = (frontend_dir() / "src" / "main.js").read_text(encoding="utf-8")
+    check("closed ? (low ? 0 : 1)" in app_js, "UI press handler no longer sets the bit low")
+    check("activeLow" in app_js, "UI does not use the profile polarity")
+    board3d = (frontend_dir() / "src" / "board" / "index.js").read_text(encoding="utf-8")
+    check("polarity" in board3d, "3D board does not use the profile polarity")
     return "stimulus reaches the design unchanged; only the renderer inverts (activeLow from board.json)"

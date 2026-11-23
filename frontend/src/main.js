@@ -28,6 +28,9 @@ import { pinPlanHasAssignments } from "./pinPlanGate.js";
 import { createMenuBar } from "./ui/menuBar.js";
 import { createLeftDock, TASKS } from "./ui/leftDock.js";
 import { createStatusBar } from "./ui/statusBar.js";
+import { createCompilationReportView } from "./ui/compilationReport.js";
+import { openSettingsDialog, showMissingQuartusError } from "./ui/settingsDialog.js";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
     accumulateBuzzerFreq,
     createBuzzerFreqWindow,
@@ -63,12 +66,19 @@ S.bounceEnabled = false;
 S.lastPayload = null;
 S.uartLiveBytes = [];
 S.liveVga = null;
+S.workspaceDir = "";
+S.workspaceVersion = "";
 
 let board = null;
 let interactions = null;
 let toolbar, sidebar, editor, bottom, stats, terminal = null;
-let menu, left, status = null;
+let menu, left, status, reportView = null;
 let session = null;
+let quartusSession = null;
+let workspaceSession = null;
+let workspaceWriteTimer = 0;
+let workspaceWriting = false;
+let quartusCompiling = false;
 let sessionGen = 0;
 let simAbort = null;
 let rerunTimer = null;
@@ -194,7 +204,7 @@ function initBoard() {
     const host = $("board-host");
     try {
         board = new Board3D(host, {
-            quality: "balanced", theme: "dark",
+            quality: "balanced", theme: "light",
             onPick: (pick) => { if (pick?.componentId) bottom.log(`Focused ${pick.componentId}`, "cmd"); },
         });
         board.mount();
@@ -510,11 +520,16 @@ function resizeBoardSoon() {
     setTimeout(() => board?._resize?.(), 60);
 }
 function syncPlannerToTopContext(ctx) {
-    if (!sidebar) return;
     if (ctx?.entityObj) {
-        sidebar.setEntity(ctx.entityObj);
-        applyKeyDefaultsToEditor(ctx.entityObj, sidebar.getPinPlan());
-    } else if (!ctx?.topFile) sidebar.setEntity(null);
+        if (sidebar) {
+            sidebar.setEntity(ctx.entityObj);
+            applyKeyDefaultsToEditor(ctx.entityObj, sidebar.getPinPlan());
+        }
+        left?.setHierarchy?.(ctx.entityObj, ctx.topFile);
+    } else if (!ctx?.topFile) {
+        sidebar?.setEntity?.(null);
+        left?.setHierarchy?.(null);
+    }
 }
 function syncPlannerToActiveTop() { syncPlannerToTopContext(editor?.getTopContext?.()); }
 function log(text, level = "info") { bottom?.log?.(text, level); }
@@ -523,10 +538,10 @@ function initComponents() {
     toolbar = createToolbar($("toolbar"), {
         onPower: togglePower,
         onPause: togglePause,
-        onStop: stopSim,
+        onStop: () => { stopQuartusCompile(); stopSim(); },
         onReset: resetSim,
         onStep: () => stepSim(1),
-        onRun: () => compileAndProgram(),
+        onRun: () => runQuartusCompilation(),
         onMute: toggleMute,
         onBoard: (id) => selectBoard(id),
         onExample: (id) => loadExample(id),
@@ -534,9 +549,32 @@ function initComponents() {
         onToggleLeft: () => toggleLeft(),
         onToggleBottom: () => toggleBottom(),
         onUpdate: () => { void runUpdateFlow(); },
-        onPace: (pace) => setLivePace(pace),
-        onBounce: (on) => { S.bounceEnabled = !!on; log(`Mechanical bounce ${on ? "enabled" : "disabled"}`, "cmd"); },
+        onStatusHint: (msg) => status?.setAction?.(msg),
+        onAction: (act) => handleMenuAction(act),
     });
+
+    // Simulation controls inside the 3D Devboard header bar
+    $("sim-bar")?.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-act]");
+        if (!btn) return;
+        switch (btn.dataset.act) {
+            case "power": togglePower(); break;
+            case "sim-fast": compileAndProgram(); break;
+            case "pause": togglePause(); break;
+            case "reset": resetSim(); break;
+            case "step": stepSim(1); break;
+            default: break;
+        }
+    });
+    $("sim-bar")?.addEventListener("change", (e) => {
+        if (e.target.id === "tb-pace") setLivePace(e.target.value);
+        else if (e.target.id === "tb-bounce") {
+            S.bounceEnabled = !!e.target.checked;
+            log(`Mechanical bounce ${S.bounceEnabled ? "enabled" : "disabled"}`, "cmd");
+        }
+    });
+    $("btn-right-collapse")?.addEventListener("click", () => toggleRight());
+    $("right-expand-strip")?.addEventListener("click", () => toggleRight());
 
     menu = createMenuBar($("menubar"), { onAction: handleMenuAction });
     left = createLeftDock($("navigator-host"), $("tasks-host"), {
@@ -544,30 +582,57 @@ function initComponents() {
         onOpenFile: (i) => editor.selectFile?.(i),
         onExample: (id) => loadExample(id),
         onFocusPort: () => {},
+        onRunAll: () => runQuartusCompilation(),
         onJump: (where) => {
             if (where === "pinmap") setCenterTab("pinmap");
             else if (where === "boardimport") setRightTab("boardimport");
+            else if (where === "settings") handleMenuAction("settings");
+            else if (where === "programmer") handleMenuAction("programmer");
+            else if (where === "simulate") compileAndProgram();
         },
-        onTaskClick: (i) => {
-            if (i === 2) setCenterTab("pinmap");
-            else if (i === 4) setRightTab("board3d");
+        onTaskClick: (_i, stageId) => {
+            if (stageId) runQuartusCompilation(stageId);
         },
     });
+    reportView = createCompilationReportView($("report-host"));
     status = createStatusBar($("statusbar"));
+
+    // Vertical splitter between Project Navigator & Tasks
+    const leftHRes = $("left-hresizer");
+    const navHost = $("navigator-host");
+    if (leftHRes && navHost) {
+        let hDrag = null;
+        leftHRes.addEventListener("pointerdown", (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            hDrag = { y: e.clientY, h: navHost.getBoundingClientRect().height };
+            try { leftHRes.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+        });
+        leftHRes.addEventListener("pointermove", (e) => {
+            if (!hDrag) return;
+            const total = $("left").getBoundingClientRect().height;
+            const next = Math.max(110, Math.min(total - 130, hDrag.h + (e.clientY - hDrag.y)));
+            navHost.style.flex = `0 0 ${Math.round(next)}px`;
+        });
+        const endH = () => { hDrag = null; };
+        leftHRes.addEventListener("pointerup", endH);
+        leftHRes.addEventListener("pointercancel", endH);
+    }
 
     // Dock resizers: left dock width and right dock width are user-draggable
     // (persisted); the 3D viewport re-fits around every geometry change.
     const leftResizer = $("left-resizer");
     const rightResizer = $("right-resizer");
+    const appEl = $("app");
     const applyLeftW = (px, persist) => {
         const w = Math.min(520, Math.max(200, Math.round(px)));
-        document.documentElement.style.setProperty("--left-w", `${w}px`);
+        (appEl || document.documentElement).style.setProperty("--left-w", `${w}px`);
         if (persist) { try { localStorage.setItem("c4_left_w", String(w)); } catch { /* ignore */ } }
         resizeBoardSoon();
     };
     const applyRightW = (px, persist) => {
         const w = Math.min(900, Math.max(340, Math.round(px)));
-        document.documentElement.style.setProperty("--right-w", `${w}px`);
+        (appEl || document.documentElement).style.setProperty("--right-w", `${w}px`);
         if (persist) { try { localStorage.setItem("c4_right_w", String(w)); } catch { /* ignore */ } }
         resizeBoardSoon();
     };
@@ -580,14 +645,17 @@ function initComponents() {
         el.addEventListener("pointerdown", (e) => {
             if (e.button !== 0) return;
             e.preventDefault();
-            drag = { x: e.clientX, y: e.clientY };
+            const current = prop === "c4_left_w"
+                ? $("left").getBoundingClientRect().width
+                : $("right").getBoundingClientRect().width;
+            drag = { x: e.clientX, w: current };
             try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
             document.body.classList.add("resizing");
         });
         el.addEventListener("pointermove", (e) => {
             if (!drag) return;
-            if (prop === "c4_left_w") apply(drag.x + (e.clientX - drag.x), false);
-            else apply(drag.x - (e.clientX - drag.x), false);
+            if (prop === "c4_left_w") apply(drag.w + (e.clientX - drag.x), false);
+            else apply(drag.w - (e.clientX - drag.x), false);
         });
         const endDrag = () => {
             if (!drag) return;
@@ -623,11 +691,27 @@ function initComponents() {
 
     editor = createEditorPanel($("editor-host"), {
         initialSource: S.files[0].content,
-        onFilesChanged: () => syncPlannerToActiveTop(),
-        onTopContextChanged: (ctx) => syncPlannerToTopContext(ctx),
+        onFilesChanged: () => { syncPlannerToActiveTop(); refreshNavigator(); },
+        onTopContextChanged: (ctx) => { syncPlannerToTopContext(ctx); refreshNavigator(); },
         onCursor: (line, column) => status?.setCursor?.(line, column),
-        onQsfUploaded: (qsfText) => { syncPlannerToActiveTop(); sidebar.importQsfText(qsfText); },
-        onFilesUploaded: () => {},
+        onModify: () => scheduleWorkspaceSync(),
+        onSave: (name) => {
+            void syncWorkspaceToDisk().then((ok) => {
+                if (ok) log(`Saved ${name} to ${S.workspaceDir}`, "ok");
+            });
+        },
+        onFileDeleted: (name) => {
+            if (S.workspaceDir && typeof api.workspaceDelete === "function") {
+                void api.workspaceDelete(S.workspaceDir, name).then((res) => {
+                    if (res?.data?.version) {
+                        S.workspaceVersion = res.data.version;
+                        workspaceSession?.workspaceAck?.(S.workspaceVersion);
+                    }
+                }).catch(() => {});
+            }
+        },
+        onQsfUploaded: (qsfText) => { syncPlannerToActiveTop(); sidebar.importQsfText(qsfText); scheduleWorkspaceSync(50); },
+        onFilesUploaded: () => scheduleWorkspaceSync(50),
         onRun: () => compileAndProgram(),
         onDevice: selectDevice,
         onCollapsed: () => resizeBoardSoon(),
@@ -635,7 +719,7 @@ function initComponents() {
         log: (t, l) => log(t, l),
     });
 
-    sidebar = createSidebar($("rd-periph"), {
+    sidebar = createSidebar($("sidebar-host"), {
         onFocus: (id) => { if (!board?.focusComponent?.(id)) toast(`No 3D part for "${id}"`, { kind: "warn" }); },
         onHighlightPin: (pinId) => { if (!board?.highlightPin?.(pinId)) toast(`Pin ${pinId} is not mapped`, { kind: "info" }); },
         onExample: (id) => loadExample(id),
@@ -668,13 +752,7 @@ function initComponents() {
             safeCall(() => session?.liveTemp?.(c));
         },
         onExportVcd: exportVcd,
-        onTerminalInput: (line) => {
-            if (!terminal) return;
-            if (typeof terminal.runLine === "function") terminal.runLine(line);
-            else safeCall(() => terminal.sendInput?.(line + "\n"));
-        },
-        onTerminalClear: () => terminal?.clear?.(),
-        onTerminalRestart: () => terminal?.restart?.(),
+        onTerminalShown: () => setTimeout(() => terminal?.fit?.(), 30),
         onCollapsed: () => setTimeout(() => bottom.wave.resize(), 60),
     });
 
@@ -741,32 +819,30 @@ function initComponents() {
     }
 }
 
-// Center dock tabs: Sources (Monaco) | Pin Planner. The Pin Planner lives
-// inside the shared sidebar root, which relocates between the docks.
+// Center dock tabs: Sources (Monaco) | Compilation Report | Pin Planner.
 function setCenterTab(key) {
-    if (!["sources", "pinmap"].includes(key)) return;
+    if (!["sources", "report", "pinmap"].includes(key)) return;
     document.querySelectorAll("#center-tabs .ct-tab").forEach((t) => {
         const on = t.dataset.ctab === key;
         t.classList.toggle("active", on);
         t.setAttribute("aria-selected", String(on));
     });
     $("center-editor")?.classList.toggle("hidden", key !== "sources");
+    $("center-report")?.classList.toggle("hidden", key !== "report");
     $("center-tools")?.classList.toggle("hidden", key !== "pinmap");
     if (key === "pinmap") {
-        $("center-tools").appendChild(sidebar.root);
+        $("center-tools").appendChild($("sidebar-host"));
         sidebar.showTab("pinmap");
-        // The Pin Planner moved into the center: the board dock falls back
-        // to the 3D view so the sidebar lives in exactly one place.
         if ($("right-tabs")?.querySelector("[data-rtab].active")?.dataset.rtab !== "board3d") {
             setRightTab("board3d", true);
         }
-    } else {
+    } else if (key === "sources") {
         requestAnimationFrame(() => editor?.editor?.layout?.());
     }
     resizeBoardSoon();
 }
 
-// Right dock tabs: 3D Board | Peripherals | Board / Import.
+// Right dock tabs: 3D Board | Peripherals | Device / Board.
 function setRightTab(key, keepCenter = false) {
     if (!["board3d", "periph", "boardimport"].includes(key)) return;
     document.querySelectorAll("#right-tabs .rt-tab").forEach((t) => {
@@ -778,10 +854,10 @@ function setRightTab(key, keepCenter = false) {
     $("rd-periph")?.classList.toggle("hidden", key !== "periph");
     $("rd-boardimport")?.classList.toggle("hidden", key !== "boardimport");
     if (key === "periph") {
-        $("rd-periph").appendChild(sidebar.root);
+        $("rd-periph").appendChild($("sidebar-host"));
         sidebar.showTab("periph");
     } else if (key === "boardimport") {
-        $("rd-boardimport").appendChild(sidebar.root);
+        $("rd-boardimport").appendChild($("sidebar-host"));
         sidebar.showTab("board");
     }
     if (!keepCenter && key !== "board3d"
@@ -796,23 +872,79 @@ function toggleLeft() {
     resizeBoardSoon();
 }
 function toggleRight() {
-    $("right")?.classList.toggle("collapsed");
+    const rightEl = $("right");
+    const strip = $("right-expand-strip");
+    const collapsed = rightEl?.classList.toggle("collapsed");
+    if (strip) strip.classList.toggle("hidden", !collapsed);
     resizeBoardSoon();
 }
 function toggleBottom() {
     $("bottom")?.classList.toggle("collapsed");
     setTimeout(() => bottom?.wave?.resize?.(), 60);
+    setTimeout(() => terminal?.fit?.(), 60);
 }
 
-// Menu-bar actions route onto the same handlers as the toolbar/shortcuts.
+function updateWindowTitle(projectPath = null, projectName = null) {
+    const name = projectName || S.projectName || editor?.getTopContext?.().topEntity || "buzzb";
+    const baseDir = projectPath || S.projectDir || S.settings?.projectDir || "";
+    const norm = String(baseDir).replace(/\\/g, "/").replace(/\/+$/, "");
+    const title = norm
+        ? `Quartus Prime Standard Edition - ${norm}/${name} - ${name}`
+        : `Quartus Prime Standard Edition - ${name}`;
+    document.title = title;
+    if (typeof window !== "undefined" && window.__TAURI_INTERNALS__) {
+        try { void getCurrentWindow().setTitle(title); } catch { /* ignore */ }
+    }
+}
+
+async function loadSettings() {
+    try {
+        const res = await api.getSettings();
+        const d = res?.data || {};
+        S.settings = d.settings || {};
+        S.quartusInfo = d.quartus || {};
+        S.modelsimInfo = d.modelsim || {};
+        updateWindowTitle();
+    } catch { /* ignore */ }
+}
+
+function openSettings() {
+    void openSettingsDialog({
+        api,
+        onSaved: (out) => {
+            S.settings = out.settings || S.settings;
+            S.quartusInfo = out.quartus || S.quartusInfo;
+            S.modelsimInfo = out.modelsim || S.modelsimInfo;
+            updateWindowTitle();
+            if (S.quartusInfo?.valid) {
+                log(`Quartus Prime configured: ${S.quartusInfo.version || S.quartusInfo.path}`, "ok");
+            }
+        },
+    });
+}
+
+// Menu-bar + toolbar actions
 function handleMenuAction(action) {
     switch (action) {
+        case "new":
         case "new-vhd": editor.addNewSourceFile?.("vhd"); break;
         case "new-v": editor.addNewSourceFile?.("v"); break;
+        case "open":
+        case "open-file":
+        case "add-file": editor.triggerUpload?.(); break;
+        case "open-folder": void openWorkspaceFolderDialog(); break;
+        case "save":
+        case "save-file": editor.saveActiveFile?.(); break;
+        case "export-zip": editor.downloadZip?.(); break;
         case "examples": setCenterTab("sources"); break;
         case "export-vcd": exportVcd(); break;
-        case "find": editor.editor?.getAction?.("actions.find")?.run(); break;
-        case "goto": editor.editor?.getAction?.("editor.action.gotoLine")?.run(); break;
+        case "undo": editor.undo?.(); break;
+        case "redo": editor.redo?.(); break;
+        case "cut": editor.cut?.(); break;
+        case "copy": editor.copy?.(); break;
+        case "paste": void editor.paste?.(); break;
+        case "find": editor.openFind?.(); break;
+        case "goto": editor.gotoLine?.(); break;
         case "toggle-left": toggleLeft(); break;
         case "toggle-right": toggleRight(); break;
         case "toggle-bottom": toggleBottom(); break;
@@ -820,24 +952,225 @@ function handleMenuAction(action) {
         case "cam-iso": board?.setPreset?.("iso"); break;
         case "cam-front": board?.setPreset?.("front"); break;
         case "cam-fit": board?.fit?.(); break;
-        case "pin-labels": {
-            const btn = $("btn-pin-labels");
-            btn?.click();
+        case "pin-labels": $("btn-pin-labels")?.click(); break;
+        case "pin-planner":
+        case "win-pinmap": setCenterTab("pinmap"); break;
+        case "board-settings":
+        case "device-info": setRightTab("boardimport"); break;
+        case "settings": openSettings(); break;
+        case "compile": runQuartusCompilation(); break;
+        case "stage-analysis": runQuartusCompilation("analysis"); break;
+        case "stage-fitter": runQuartusCompilation("fitter"); break;
+        case "stage-assembler": runQuartusCompilation("assembler"); break;
+        case "stage-timing": runQuartusCompilation("timing"); break;
+        case "stage-eda": runQuartusCompilation("eda"); break;
+        case "sim-fast": compileAndProgram(); break;
+        case "sim-netlist": void runNetlistSimulation(); break;
+        case "comp-report":
+        case "win-report":
+            $("ct-tab-report")?.removeAttribute("hidden");
+            setCenterTab("report");
             break;
-        }
-        case "pin-planner": setCenterTab("pinmap"); break;
-        case "board-settings": setRightTab("boardimport"); break;
-        case "compile": compileAndProgram(); break;
+        case "win-sources": setCenterTab("sources"); break;
+        case "win-3d":
+            if ($("right")?.classList.contains("collapsed")) toggleRight();
+            setRightTab("board3d");
+            break;
+        case "open-quartus": void openInQuartusGui(); break;
+        case "programmer": void openProgrammer(); break;
         case "pause": togglePause(); break;
-        case "stop": stopSim(); break;
+        case "stop": stopQuartusCompile(); stopSim(); break;
         case "reset": resetSim(); break;
         case "step": stepSim(1); break;
         case "terminal":
+        case "win-terminal":
             $("bottom")?.classList.remove("collapsed");
             bottom.showTab("terminal");
+            setTimeout(() => terminal?.fit?.(), 40);
             break;
         case "update": void runUpdateFlow(); break;
+        case "shortcuts": cheatSheet?.(); break;
+        case "about":
+            dialog({
+                title: "About Quartus Prime Standard Edition",
+                body: `<p><b>Quartus Prime Standard Edition</b> (Cyclone IV E EP4CE6E22C8 Devboard Edition)</p>
+                       <p>Built-in devboard: RZ-EasyFPGA A2.2 (Cyclone IV E EP4CE6E22C8)</p>
+                       <p>Quartus CLI: ${S.quartusInfo?.valid ? S.quartusInfo.version : "Not configured"}</p>`,
+                actions: [{ label: "OK", kind: "primary" }],
+            });
+            break;
         default: break;
+    }
+}
+
+async function openInQuartusGui() {
+    await loadSettings();
+    if (!S.quartusInfo?.valid) {
+        showMissingQuartusError(S.quartusInfo?.error, openSettings);
+        return;
+    }
+    const plan = editor.resolveCompilePlan();
+    const pinPlan = sidebar.getPinPlan();
+    const res = await api.openQuartusGui({
+        files: plan.includedFiles,
+        top: plan.topEntity || undefined,
+        projectName: plan.topEntity || "design",
+        projectDir: S.workspaceDir || S.settings?.projectDir || undefined,
+        qsf: pinPlan.qsfText,
+        quartusPath: S.quartusInfo.path,
+    });
+    if (res?.data?.ok) log("Launched Quartus Prime GUI", "ok");
+    else toast(res?.data?.error || "Failed to launch Quartus GUI", { kind: "error" });
+}
+
+async function openProgrammer() {
+    await loadSettings();
+    if (S.quartusInfo?.valid) {
+        await api.openQuartusProgrammer({
+            quartusPath: S.quartusInfo.path,
+            sofPath: S.lastReport?.sofPath || undefined,
+        });
+        log("Opened Quartus Programmer", "cmd");
+    }
+    await compileAndProgram();
+}
+
+function stopQuartusCompile() {
+    if (quartusCompiling && quartusSession) {
+        safeCall(() => quartusSession.quartusStop());
+        log("Stopping Quartus compilation...", "warn");
+    }
+}
+
+async function runNetlistSimulation() {
+    const plan = editor.resolveCompilePlan();
+    const pinPlan = sidebar.getPinPlan();
+    const setup = editor.readSetup();
+    const res = await api.simulateNetlist({
+        vhoPath: S.lastReport?.vhoPath || "",
+        sdoPath: S.lastReport?.sdoPath || "",
+        top: plan.topEntity || undefined,
+        files: plan.includedFiles,
+        qsf: pinPlan.qsfText,
+        strictPins: pinPlanHasAssignments(pinPlan),
+        duration: setup.duration,
+        clockPeriod: setup.clockPeriod,
+        resetCycles: setup.resetCycles,
+        resetActiveHigh: !setup.resetActiveLow,
+        stimuli: editor.buildStimuli(),
+        compactBoard: true,
+    });
+    const data = res?.data || {};
+    if (data.ok) {
+        log(`Simulated netlist (${data.engine || "builtin"}) in ${data.durationSec ?? "?"} s`, "ok");
+        if (data.boardImage && board) {
+            S.lastStimulusEntry = data.boardImage;
+            board.applyBoardImage(data.boardImage);
+        }
+    } else {
+        log(`Netlist simulation failed: ${data.error || data.message || "unknown"}`, "warn");
+    }
+}
+
+async function runQuartusCompilation(stage = null) {
+    await loadSettings();
+    if (!S.quartusInfo?.valid) {
+        showMissingQuartusError(S.quartusInfo?.error, openSettings);
+        return;
+    }
+    const plan = editor.resolveCompilePlan();
+    if (!plan.includedFiles.length) {
+        toast("No source files in project to compile.", { kind: "error" });
+        return;
+    }
+    syncPlannerToTopContext({ entityObj: plan.topEntityObj, topFile: plan.topFile });
+    const pinPlan = sidebar.getPinPlan();
+
+    quartusCompiling = true;
+    toolbar.setRunning(true, false);
+    if (!stage) left?.resetTasks?.();
+    left?.setMasterState?.("run", "");
+    bottom?.clearProcessing?.();
+    $("bottom")?.classList.remove("collapsed");
+    bottom?.showTab?.("processing");
+    status?.beginElapsed?.();
+    status?.setProgress?.(0, "Starts a new compilation");
+    log(`Starting Quartus compilation for '${plan.topEntity}'...`, "cmd", "processing");
+
+    if (quartusSession) {
+        safeCall(() => quartusSession.close());
+        quartusSession = null;
+    }
+
+    const qSess = makeSession({
+        onMessage: (msg) => {
+            if (msg.type === "quartus_started") {
+                if (msg.project?.projectDir) S.projectDir = msg.project.projectDir;
+                if (msg.project?.projectName) S.projectName = msg.project.projectName;
+                updateWindowTitle(S.projectDir, S.projectName);
+            } else if (msg.type === "quartus_stage") {
+                const dur = Number.isFinite(msg.duration) ? `${msg.duration.toFixed(1)} s` : "";
+                if (Number.isInteger(msg.index)) left?.setTask?.(msg.index, msg.state, dur);
+                if (Number.isFinite(msg.pct)) status?.setProgress?.(msg.pct, msg.label || "Compiling...");
+            } else if (msg.type === "quartus_message") {
+                bottom?.addQuartusMessage?.(msg);
+            } else if (msg.type === "quartus_done") {
+                quartusCompiling = false;
+                status?.stopElapsed?.();
+                toolbar.setRunning(false, false);
+                if (msg.missingQuartus) {
+                    left?.setMasterState?.("error", "");
+                    showMissingQuartusError(msg.error, openSettings);
+                    return;
+                }
+                const durStr = msg.durationSec ? `${msg.durationSec} s` : "";
+                left?.setMasterState?.(msg.ok ? "done" : "error", durStr);
+                if (msg.ok) {
+                    status?.setProgress?.(100, "Full Compilation was successful");
+                    S.lastReport = msg.report || null;
+                    const tabBtn = $("ct-tab-report");
+                    if (tabBtn) {
+                        tabBtn.textContent = `Compilation Report - ${msg.projectName || plan.topEntity}`;
+                        tabBtn.removeAttribute("hidden");
+                    }
+                    reportView?.setReport?.(msg.report || null);
+                    setCenterTab("report");
+                    // Run ModelSim .vho (if installed) and start live 3D devboard simulation
+                    if (msg.report?.vhoPath && S.modelsimInfo?.valid) {
+                        void runNetlistSimulation();
+                    }
+                    void compileAndProgram({ updateTasks: false });
+                } else {
+                    status?.setProgress?.(null, msg.cancelled ? "Compilation stopped" : "Compilation failed");
+                    if (msg.errors?.length) editor.setProblems(msg.errors);
+                }
+            }
+        },
+        onClose: () => {
+            if (quartusCompiling) {
+                quartusCompiling = false;
+                toolbar.setRunning(false, false);
+                status?.stopElapsed?.();
+            }
+        },
+    });
+    quartusSession = qSess;
+    try {
+        await qSess.connect();
+        qSess.quartusCompile({
+            files: plan.includedFiles,
+            top: plan.topEntity || undefined,
+            projectName: plan.topEntity || "design",
+            projectDir: S.workspaceDir || S.settings?.projectDir || undefined,
+            qsf: pinPlan.qsfText,
+            quartusPath: S.quartusInfo.path,
+            stage: stage || undefined,
+        });
+    } catch (err) {
+        quartusCompiling = false;
+        toolbar.setRunning(false, false);
+        status?.stopElapsed?.();
+        log(`Quartus compile connection failed: ${err.message}`, "error", "processing");
     }
 }
 
@@ -863,7 +1196,8 @@ function setTaskState(index, state) {
 // Project Navigator mirror: entity tree, file list, language + board cells.
 function refreshNavigator() {
     try {
-        left?.setHierarchy?.(S.entity, editor?.getTopContext?.().topFile);
+        const topCtx = editor?.getTopContext?.() || {};
+        left?.setHierarchy?.(S.entity || topCtx.entityObj, topCtx.topFile);
         const files = editor?.getFiles?.() || [];
         const activeName = editor?.getActiveFile?.() || "";
         const activeIndex = files.findIndex((f) => f.name === activeName);
@@ -872,17 +1206,17 @@ function refreshNavigator() {
         status?.setLanguage?.(lang);
         const device = S.device || {};
         status?.setBoard?.(`${S.boardProfile?.board?.name || S.activeBoardId || "—"} · ${device.part || ""}`);
-        menu?.setTopEntity?.(S.entity?.name || editor?.getTopContext?.().topEntity || "—");
+        menu?.setTopEntity?.(S.entity?.name || topCtx.topEntity || "—");
     } catch { /* navigator is best-effort chrome */ }
 }
 
 // ------------------------------------------------------------------ theme --
 function setTheme() {
-    document.documentElement.dataset.theme = "dark";
-    safeCall(() => board?.setTheme?.("dark"));
-    safeCall(() => editor?.setTheme?.(true));
+    document.documentElement.dataset.theme = "light";
+    safeCall(() => board?.setTheme?.("light"));
+    safeCall(() => editor?.setTheme?.(false));
 }
-function toggleTheme() { /* the studio is intentionally dark-only */ }
+function toggleTheme() { /* Quartus Prime Standard Edition light theme */ }
 
 // ------------------------------------------------------------------ power --
 function togglePower() { setPower(!S.power); }
@@ -1044,7 +1378,18 @@ async function loadExample(id) {
             ? await api.example(id)
             : (await api._fetch(`/api/examples/${encodeURIComponent(id)}`)).data;
         const source = data?.source ?? ex.source;
+        S.entity = null;
         editor.setFiles([{ name: ex.file || `${ex.id}.vhd`, content: source }], false);
+        S.projectName = ex.entity || ex.id;
+        toolbar?.setProjectLabel?.(ex.id);
+        const wsDir = defaultWorkspaceDirFor(S.projectName);
+        if (wsDir) {
+            S.workspaceDir = wsDir;
+            S.projectDir = wsDir;
+            await syncWorkspaceToDisk();
+            startWorkspaceWatch(wsDir);
+        }
+        updateWindowTitle(S.workspaceDir || S.projectDir, S.projectName);
         refreshNavigator();
         log(`Loaded example: ${ex.name}`, "cmd");
     } catch (err) {
@@ -1187,7 +1532,9 @@ function showCompileFailure(summary, msgs, errCount, step = 1) {
 
 function setStatus(status, detail = "") { S.status = status; S.statusDetail = detail; toolbar.setStatus(status, detail); }
 
-async function compileAndProgram() {
+let simOwnsTasks = true;
+async function compileAndProgram({ updateTasks = true } = {}) {
+    simOwnsTasks = !!updateTasks;
     refreshing = false;
     refreshPending = false;
     audioSettle(safeCall(() => audio.ensure?.()));
@@ -1214,10 +1561,12 @@ async function compileAndProgram() {
     }
 
     setStatus("compiling");
-    toolbar.setRunning(true, false);   // spinner + sheen on Compile & Run
-    left?.resetTasks?.();
-    setTaskState(0, "run");
-    status?.beginElapsed?.();
+    if (simOwnsTasks) {
+        toolbar.setRunning(true, false);
+        left?.resetTasks?.();
+        setTaskState(0, "run");
+        status?.beginElapsed?.();
+    }
     log(`Compiling top-level '${plan.topEntity}'…`, "cmd");
     let res;
     try {
@@ -1229,9 +1578,11 @@ async function compileAndProgram() {
             strictPins: pinPlanHasAssignments(pinPlan),
         });
     } catch (err) {
-        setTaskState(0, "error");
-        status?.stopElapsed?.();
-        toolbar.setRunning(false, false);
+        if (simOwnsTasks) {
+            setTaskState(0, "error");
+            status?.stopElapsed?.();
+            toolbar.setRunning(false, false);
+        }
         setStatus("error", err.message);
         log(`Compile request failed: ${err.message}`, "error");
         return;
@@ -1248,12 +1599,11 @@ async function compileAndProgram() {
         errCount: allErrors.length, warnCount: allWarnings.length,
     });
     S.problems = combined.filter((m) => m.severity !== "info");
-    bottom.setProblems(S.problems);
+    if (simOwnsTasks) bottom.setProblems(S.problems, "system");
     editor.setProblems(S.problems);
-    // The Diagnostics dock is the single home for compile messages now.
     log(summary, allErrors.length ? "error" : "ok");
     if (!res.httpOk || !res.data?.ok || allErrors.length) {
-        showCompileFailure(summary, combined, allErrors.length || 1);
+        if (simOwnsTasks) showCompileFailure(summary, combined, allErrors.length || 1);
         return;
     }
 
@@ -1272,20 +1622,19 @@ async function compileAndProgram() {
     for (let i = 0; i < S.keyState.length; i += 1) S.keyState[i] = false;
     syncLivePinBindings();
     buildBoardControls();
-    setTaskState(1, "done");
-    setTaskState(2, "done");
+    if (simOwnsTasks) {
+        setTaskState(1, "done");
+        setTaskState(2, "done");
+    }
     refreshNavigator();
     log(`Compiled ${S.entity.name}: ${S.entity.ports.length} ports`, "ok");
 
-    // Pin Planner coverage: a design that compiles but has no pin assignments
-    // is not mapped to any board hardware — nothing will light up or respond.
-    // Make that unmissable and hand the user the one-click fix.
     const pinWarning = pinCoverageWarning(updatedPinPlan?.validation);
     if (pinWarning) {
         log(pinWarning, "warn");
         toast(pinWarning, {
             kind: "warn", timeout: 10000,
-            action: { label: "Open Pin Planner", onClick: () => safeCall(() => sidebar?.showTab?.("pinmap")) },
+            action: { label: "Open Pin Planner", onClick: () => safeCall(() => setCenterTab("pinmap")) },
         });
     }
 
@@ -1299,7 +1648,7 @@ async function compileAndProgram() {
         onSimReady: (msg) => { if (gen === sessionGen) handleSimReady(msg); },
         onClose: (byUser) => {
             if (gen !== sessionGen) return;
-            driveBuzzer(false, 0, 0);  // never leave a tone running on a dead socket
+            driveBuzzer(false, 0, 0);
             if (!byUser && (S.running || S.paused)) log("Simulation WebSocket closed unexpectedly", "error");
         },
         onOpen: () => {},
@@ -1307,13 +1656,15 @@ async function compileAndProgram() {
     try {
         await session.connect();
     } catch (err) {
-        setTaskState(3, "error");
-        status?.stopElapsed?.();
+        if (simOwnsTasks) {
+            setTaskState(3, "error");
+            status?.stopElapsed?.();
+        }
         setStatus("error", "websocket failed");
         log(`Could not open simulation session: ${err.message}`, "error");
         return;
     }
-    setTaskState(3, "run");
+    if (simOwnsTasks) setTaskState(3, "run");
     sessionStart(payload);
 }
 
@@ -1423,8 +1774,10 @@ function handleSessionMessage(msg) {
             toolbar.setRunning(false, false);
             log(wasRefresh && msg.boardImage ? "Simulation complete — board updated"
                 : `Simulation complete — ${msg.totalCycles ?? S.totalCycles} cycles`, "ok");
-            setTaskState(4, "done");
-            status?.stopElapsed?.();
+            if (simOwnsTasks) {
+                setTaskState(4, "done");
+                status?.stopElapsed?.();
+            }
             if (refreshPending) { refreshPending = false; refresh(); }
             // The batch preview is done — hand over to the persistent live
             // co-simulation so key/DIP/reset interaction continues from the
@@ -1715,12 +2068,136 @@ function exportVcd() {
 }
 
 // -------------------------------------------------------------- terminal ---
+function defaultWorkspaceDirFor(projectName) {
+    const base = String(S.settings?.projectDir || "").trim().replace(/[\\/]+$/, "");
+    if (!base) return "";
+    const safe = String(projectName || "design").replace(/[^A-Za-z0-9_.-]+/g, "_") || "design";
+    const sep = base.includes("\\") ? "\\" : "/";
+    return `${base}${sep}${safe}`;
+}
+
+async function syncWorkspaceToDisk(filesOverride = null) {
+    if (!S.workspaceDir || S.backendOk === false || typeof api.workspaceWrite !== "function") return false;
+    if (workspaceWriting) return false;
+    workspaceWriting = true;
+    try {
+        const files = filesOverride || editor?.getFiles?.() || [];
+        const res = await api.workspaceWrite(S.workspaceDir, files);
+        if (res?.httpOk && res?.data?.ok) {
+            S.workspaceVersion = res.data.version || S.workspaceVersion;
+            workspaceSession?.workspaceAck?.(S.workspaceVersion);
+            return true;
+        }
+    } catch { /* ignore */ }
+    finally { workspaceWriting = false; }
+    return false;
+}
+
+function scheduleWorkspaceSync(delayMs = 500) {
+    if (!S.workspaceDir || S.backendOk === false) return;
+    clearTimeout(workspaceWriteTimer);
+    workspaceWriteTimer = setTimeout(() => { void syncWorkspaceToDisk(); }, delayMs);
+}
+
+function applyWorkspaceUpdate(msg) {
+    if (!msg?.version || msg.version === S.workspaceVersion) return;
+    S.workspaceVersion = msg.version;
+    const diff = editor?.applyExternalFiles?.(msg.files || []);
+    if (diff && (diff.changed.length || diff.added.length || diff.removed.length)) {
+        refreshNavigator();
+        syncPlannerToActiveTop();
+        const touched = [...diff.changed, ...diff.added].join(", ");
+        const tail = diff.removed.length ? ` (removed ${diff.removed.join(", ")})` : "";
+        log(`Synced from disk: ${touched || "workspace updated"}${tail}`, "info");
+    }
+}
+
+function ensureWorkspaceSession() {
+    if (workspaceSession) return workspaceSession;
+    workspaceSession = makeSession({
+        onOpen: () => {
+            if (S.workspaceDir) workspaceSession?.workspaceWatch?.(S.workspaceDir, S.workspaceVersion);
+        },
+        onMessage: (msg) => {
+            if (msg?.type === "workspace_changed") applyWorkspaceUpdate(msg);
+        },
+        onClose: () => { workspaceSession = null; },
+    });
+    void workspaceSession.connect().catch(() => { workspaceSession = null; });
+    return workspaceSession;
+}
+
+function startWorkspaceWatch(dir) {
+    const clean = String(dir || "").trim();
+    if (!clean) return;
+    S.workspaceDir = clean;
+    S.projectDir = clean;
+    updateWindowTitle(clean, S.projectName);
+    const ws = ensureWorkspaceSession();
+    if (ws?.open) ws.workspaceWatch(clean, S.workspaceVersion);
+}
+
+async function openWorkspaceFolderDialog() {
+    const body = document.createElement("div");
+    body.className = "q-settings-form";
+    body.innerHTML = `
+        <div class="q-set-group">
+            <label class="q-set-label" for="ws-folder-input">Workspace folder path (for two-way sync with CLI agents / Git)</label>
+            <input type="text" id="ws-folder-input" class="q-set-input" value="${String(S.workspaceDir || S.settings?.projectDir || "").replace(/"/g, "&quot;")}" spellcheck="false">
+            <div class="q-set-hint">Files in this folder stay live-synced between Claude Code / Codex / your editor and this IDE.</div>
+        </div>
+    `;
+    const inp = body.querySelector("#ws-folder-input");
+    const openNow = async () => {
+        const dir = inp?.value?.trim();
+        if (!dir) return false;
+        const res = await api.workspaceOpen(dir);
+        if (!res?.httpOk || !res?.data?.ok) {
+            toast(res?.data?.error || "Could not open workspace folder", { kind: "error" });
+            return false;
+        }
+        const loaded = res.data.files || [];
+        S.entity = null;
+        S.workspaceVersion = res.data.version || "";
+        const folderName = String(res.data.dir || dir).split(/[\\/]+/).filter(Boolean).pop() || "design";
+        S.projectName = folderName;
+        editor.setFiles(loaded.filter((f) => !/\.(qpf|qsf)$/i.test(f.name)), false, { userAction: true });
+        const qsfFile = loaded.find((f) => /\.qsf$/i.test(f.name));
+        if (qsfFile) sidebar?.importQsfText?.(qsfFile.content);
+        startWorkspaceWatch(res.data.dir || dir);
+        refreshNavigator();
+        syncPlannerToActiveTop();
+        log(`Opened workspace ${res.data.dir} (${loaded.length} file(s))`, "ok");
+        return true;
+    };
+    const close = dialog({
+        title: "Open Folder / Workspace",
+        body,
+        actions: [
+            { label: "Cancel" },
+            { label: "Open Workspace", kind: "primary", onClick: async () => { if (await openNow()) close(); return false; } },
+        ],
+    });
+    setTimeout(() => { inp?.focus(); inp?.select(); }, 20);
+}
+
 async function mountTerminal() {
     try {
-        // Static import keeps the controller in the production bundle; the old
-        // @vite-ignore dynamic import resolved against dist/assets and 404'd.
         if (!bottom?.getTerminalHost) return;
-        terminal = createTerminalController(bottom.getTerminalHost());
+        terminal = createTerminalController(bottom.getTerminalHost(), {
+            getCwd: () => "",
+            getExtraPaths: () => [S.quartusInfo?.path, S.modelsimInfo?.path].filter(Boolean),
+            onCdProject: () => {
+                if (!S.workspaceDir) {
+                    toast("No workspace folder active yet", { kind: "info" });
+                    return;
+                }
+                const target = S.workspaceDir.replace(/"/g, "");
+                terminal?.runLine?.(`cd "${target}"`);
+                terminal?.focus?.();
+            },
+            fetchShells: async () => (await api.terminalShells())?.data?.shells || [],
+        });
         safeCall(() => terminal.connect?.());
         if (window.__cyclone) window.__cyclone.terminal = terminal;
         log("Terminal ready", "ok");
@@ -1754,6 +2231,12 @@ function bindShortcuts() {
         return i >= 0 ? i : -1;
     };
     document.addEventListener("keydown", (e) => {
+        // Ctrl+L starts Quartus compilation even while focused in Monaco
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "l") {
+            e.preventDefault();
+            runQuartusCompilation();
+            return;
+        }
         // Never hijack typing inside inputs, textareas, selects,
         // contenteditable hosts or the Monaco/CodeMirror editor.
         if (isEditableTarget(e.target)) return;
@@ -1797,7 +2280,7 @@ function bindShortcuts() {
 async function init() {
     initComponents();
     initBoard();
-    setTheme("dark");
+    setTheme("light");
     toolbar.setPower(true);
     resizeBoardSoon();
     bindShortcuts();
@@ -1806,10 +2289,11 @@ async function init() {
     $("backend-retry")?.addEventListener("click", async () => {
         $("backend-banner")?.classList.add("hidden");
         await checkHealth();
-        if (S.backendOk) { await loadProfile(); await loadBoards(); await loadExamples(); }
+        if (S.backendOk) { await loadSettings(); await loadProfile(); await loadBoards(); await loadExamples(); }
     });
 
     await checkHealth();
+    await loadSettings();
     await loadProfile();
     await loadBoards();
     await loadExamples();
@@ -1818,17 +2302,22 @@ async function init() {
     status?.setCursor?.(1, 1);
     refreshNavigator();
 
-    const def = S.examples.find((e) => e.id === "sevseg_keys")
+    const def = S.examples.find((e) => e.id === "buzzb")
+        || S.examples.find((e) => e.id === "sevseg_keys")
         || S.examples.find((e) => /counter/i.test(e.id) || /counter/i.test(e.name));
     if (def) await loadExample(def.id);
+    updateWindowTitle();
 
     window.__cyclone = {
         board, state: S, api, compile: compileAndProgram, run: compileAndProgram,
+        quartusCompile: runQuartusCompilation, stopQuartusCompile, openSettings,
+        openWorkspaceFolder: (dir) => dir ? api.workspaceOpen(dir) : openWorkspaceFolderDialog(),
         stopSim, editor, sidebar, bottom, audio, pause: togglePause, resetSim, stepSim,
         toggleDip, setPhysicalKeyPressed, selectBoard, importCustomBoard,
         computeChannelMask, applyStimulusEntry, handleChannelChange, terminal,
     };
-    log("Cyclone IV Studio ready — press Compile & Run (Ctrl+Enter).", "info");
+    log("Quartus Prime Standard Edition ready — press Start Compilation (Ctrl+L) or Simulate.", "info");
+    if (S.workspaceDir) ensureWorkspaceSession();
     mountTerminal();
 }
 

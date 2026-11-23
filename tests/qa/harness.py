@@ -43,6 +43,21 @@ def frontend_dir() -> Path:
             return candidate
     return base
 
+
+def frontend_src(*names: str) -> str:
+    """Concatenated frontend module sources (paths relative to frontend/).
+
+    The modern app lives in ``frontend/src`` as ES modules; the QA source
+    checks read these instead of the retired single-file layout.
+    """
+    base = ROOT / "frontend"
+    return "\n".join(
+        (base / name).read_text(encoding="utf-8", errors="replace")
+        for name in names
+        if (base / name).exists()
+    )
+
+
 DESIGNS = Path(__file__).resolve().parent / "designs"
 CACHE_DIR = ROOT / "tests" / ".qa_ghdl_cache"
 

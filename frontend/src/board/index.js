@@ -685,6 +685,13 @@ export class Board3D {
         this._paintDisplay();
         this._liveMeta = state.metas;
         this._liveBuzzer = state.buzzer;
+        // SP1 pulse ring follows the DECODED live tone: a passive speaker
+        // sounds only while the pin toggles (mode "tone"); a steady DC level
+        // is silence on this board. Without this the ring never lights in
+        // live mode (the batch path's setBuzzerActive is not called here).
+        const toneOn = state.buzzer?.mode === "tone";
+        this.io.buzzer.on = toneOn;
+        this._setBuzzerVisual(toneOn, true);
         if (this.lcd3d && frame.lcd) this.lcd3d.update(frame.lcd);
         return state;
     }

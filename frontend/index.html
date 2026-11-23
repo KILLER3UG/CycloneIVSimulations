@@ -1,46 +1,76 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" href="data:,">
-    <title>Cyclone IV Studio</title>
+    <title>Quartus Prime Standard Edition</title>
 </head>
 <body>
     <div id="drawer-backdrop" hidden></div>
     <div id="app">
-        <!-- Zone 0: slim IDE menu (File / Edit / View / Assignments / Processing / Tools) -->
+        <!-- Zone 0: Quartus Prime menu bar (File..Help) -->
         <nav id="menubar" aria-label="IDE menu"></nav>
 
-        <!-- Zone 1: action bar (board + top entity, Compile & Run, transport, audio) -->
+        <!-- Zone 1: Quartus Prime main toolbar -->
         <header id="toolbar" aria-label="Main toolbar"></header>
 
-        <!-- Zone 2: left dock — Project Navigator over the Tasks pipeline -->
+        <!-- Zone 2: left dock — Project Navigator over Tasks -->
         <aside id="left" aria-label="Project navigator and compilation tasks">
             <div id="navigator-host" class="left-navigator"></div>
+            <div class="left-hresizer" id="left-hresizer" aria-hidden="true" title="Drag to resize Project Navigator / Tasks"></div>
             <div id="tasks-host" class="left-tasks"></div>
         </aside>
         <div class="dock-resizer" id="left-resizer" aria-hidden="true" title="Drag to resize the navigator"></div>
 
-        <!-- Zone 3: center workspace — tabbed source editor + tool tabs -->
+        <!-- Zone 3: center workspace — tabbed source editor, Compilation Report & Pin Planner -->
         <section id="center" aria-label="Source editor and tools">
             <div class="center-tabs" id="center-tabs" role="tablist" aria-label="Editor tools">
                 <button type="button" class="ct-tab active" data-ctab="sources" role="tab" aria-selected="true">Sources</button>
+                <button type="button" class="ct-tab" data-ctab="report" id="ct-tab-report" role="tab" aria-selected="false" hidden>Compilation Report</button>
                 <button type="button" class="ct-tab" data-ctab="pinmap" role="tab" aria-selected="false">Pin Planner</button>
             </div>
             <div id="center-editor" class="center-pane"><div id="editor-host"></div></div>
+            <div id="center-report" class="center-pane hidden"><div id="report-host"></div></div>
             <div id="center-tools" class="center-pane hidden"></div>
         </section>
-        <div class="dock-resizer" id="right-resizer" aria-hidden="true" title="Drag to resize the board dock"></div>
+        <div class="dock-resizer" id="right-resizer" aria-hidden="true" title="Drag to resize the 3D Devboard panel"></div>
 
-        <!-- Zone 4: right dock — live 3D virtual board + Peripherals / Board-Import -->
-        <aside id="right" aria-label="Virtual board dock">
+        <!-- Zone 4: right dock (replaces IP Catalog) — collapsible 3D Devboard view -->
+        <aside id="right" aria-label="3D Devboard dock">
+            <div class="rd-header">
+                <span class="rd-title">3D Devboard &mdash; Cyclone IV E</span>
+                <div class="rd-actions">
+                    <button type="button" class="rd-win-btn" id="btn-right-collapse" data-act="collapse-right" title="Collapse 3D Devboard panel" aria-label="Collapse 3D Devboard">&times;</button>
+                </div>
+            </div>
             <div class="rd-tabs" id="right-tabs" role="tablist" aria-label="Board dock views">
-                <button type="button" class="rt-tab active" data-rtab="board3d" role="tab" aria-selected="true">3D Board</button>
+                <button type="button" class="rt-tab active" data-rtab="board3d" role="tab" aria-selected="true">3D Devboard</button>
                 <button type="button" class="rt-tab" data-rtab="periph" role="tab" aria-selected="false">Peripherals</button>
-                <button type="button" class="rt-tab" data-rtab="boardimport" role="tab" aria-selected="false">Board / Import</button>
+                <button type="button" class="rt-tab" data-rtab="boardimport" role="tab" aria-selected="false">Device / Board</button>
             </div>
             <div id="rd-board" class="rd-pane">
+                <div class="sim-bar" id="sim-bar" aria-label="Board simulation controls">
+                    <button class="sim-btn tb-power" data-act="power" aria-label="Board power" aria-pressed="true" title="Board power (P)">Power</button>
+                    <button class="sim-btn" id="btn-sim-fast" data-act="sim-fast" title="Run interactive live simulator on current files">Simulate</button>
+                    <button class="sim-btn" data-act="pause" aria-label="Pause simulation" title="Pause / resume">Pause</button>
+                    <button class="sim-btn" data-act="reset" aria-label="Reset simulation" title="Reset">Reset</button>
+                    <button class="sim-btn" data-act="step" aria-label="Step one cycle" title="Step +1 cycle">Step</button>
+                    <div class="tb-pill tb-live" id="tb-live-pill" hidden role="group" aria-label="Live clock pace">
+                        <span class="tb-live-dot" id="tb-live-dot" title="Live co-simulation running"></span>
+                        <select id="tb-pace" aria-label="Clock pace">
+                            <option value="single">Single Cycle</option>
+                            <option value="1hz">1 Hz</option>
+                            <option value="100hz">100 Hz</option>
+                            <option value="10khz">10 kHz</option>
+                            <option value="max" selected>Live Max</option>
+                        </select>
+                        <span class="tb-audio-badge" id="tb-live-speed" aria-live="polite">&mdash;</span>
+                        <label class="tb-live-bounce" title="Inject mechanical contact chatter on key/DIP edges">
+                            <input type="checkbox" id="tb-bounce"> bounce
+                        </label>
+                    </div>
+                </div>
                 <main id="board-area" aria-label="3D board view">
                     <div id="board-host"></div>
 
@@ -70,17 +100,20 @@
                     </div>
                 </main>
             </div>
-            <div id="rd-periph" class="rd-pane hidden"></div>
+            <div id="rd-periph" class="rd-pane hidden"><div id="sidebar-host"></div></div>
             <div id="rd-boardimport" class="rd-pane hidden"></div>
         </aside>
+        <button type="button" id="right-expand-strip" class="right-expand-strip hidden" title="Expand 3D Devboard panel" aria-label="Expand 3D Devboard">
+            <span>&lsaquo; 3D Devboard</span>
+        </button>
 
-        <!-- Zone 5: bottom dock — Messages / Terminal / Waveform / Displays -->
+        <!-- Zone 5: bottom dock — Messages (System / Processing) / Terminal / Waveform / Displays -->
         <section id="bottom" aria-label="Output dock">
             <div class="bp-resizer" aria-hidden="true" title="Drag to resize dock"></div>
             <div id="bottompanel"></div>
         </section>
 
-        <!-- Zone 6: slim status bar -->
+        <!-- Zone 6: Quartus Prime status bar -->
         <footer id="statusbar" aria-label="Status bar"></footer>
     </div>
     <script type="module" src="/src/main.js"></script>

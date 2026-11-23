@@ -136,21 +136,90 @@ def _strip_inline_comment(line: str) -> str:
 
     Quartus allows comments after an assignment
     (``set_location_assignment PIN_87 -to LED[0] -- LED1``).  The comment
-    marker is only recognised *outside* double-quoted values, so values such
-    as ``"3.3-V LVTTL"`` survive untouched.
+    marker is only recognised *outside* double-quoted values and braced
+    values, so ``"3.3-V LVTTL"`` and ``{my # design.vhd}`` survive untouched.
     """
     in_quote = False
+    brace_depth = 0
     index = 0
     while index < len(line):
         char = line[index]
-        if char == '"':
+        if char == '"' and brace_depth == 0:
             in_quote = not in_quote
-        elif not in_quote and char == "#":
+        elif char == "{" and not in_quote:
+            brace_depth += 1
+        elif char == "}" and not in_quote and brace_depth > 0:
+            brace_depth -= 1
+        elif not in_quote and brace_depth == 0 and char == "#":
             return line[:index]
-        elif not in_quote and char == "-" and line.startswith("--", index):
+        elif not in_quote and brace_depth == 0 and char == "-" and line.startswith("--", index):
             return line[:index]
         index += 1
     return line
+
+
+def _tokenize_tcl(line: str) -> List[str]:
+    """Minimal safe Tcl-like tokenizer supporting quotes and {...} braces (no eval)."""
+    tokens: List[str] = []
+    i = 0
+    n = len(line)
+    while i < n:
+        while i < n and line[i].isspace():
+            i += 1
+        if i >= n:
+            break
+        if line[i] == "{":
+            depth = 1
+            i += 1
+            start = i
+            while i < n and depth > 0:
+                if line[i] == "{":
+                    depth += 1
+                elif line[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                i += 1
+            tokens.append(line[start:i])
+            if i < n and line[i] == "}":
+                i += 1
+        elif line[i] == '"':
+            i += 1
+            buf: List[str] = []
+            while i < n and line[i] != '"':
+                if line[i] == "\\" and i + 1 < n:
+                    i += 1
+                buf.append(line[i])
+                i += 1
+            tokens.append("".join(buf))
+            if i < n and line[i] == '"':
+                i += 1
+        else:
+            start = i
+            while i < n and not line[i].isspace():
+                i += 1
+            tokens.append(line[start:i])
+    return tokens
+
+
+def _join_continuations(text: str) -> List[Tuple[int, str]]:
+    """Join backslash-continued QSF lines, tracking starting 1-based line number."""
+    out: List[Tuple[int, str]] = []
+    acc = ""
+    start_ln = 1
+    for ln, raw in enumerate(text.splitlines(), start=1):
+        stripped_r = raw.rstrip()
+        if not acc:
+            start_ln = ln
+        if stripped_r.endswith("\\"):
+            acc += stripped_r[:-1] + " "
+        else:
+            acc += raw
+            out.append((start_ln, acc))
+            acc = ""
+    if acc:
+        out.append((start_ln, acc))
+    return out
 
 
 def _error(line_no: int, message: str) -> dict:
@@ -171,14 +240,37 @@ def parse_qsf(text: str) -> QsfResult:
     seen_slots: Dict[Tuple[str, Optional[int]], int] = {}
     seen_pin_targets: Dict[str, Tuple[str, Optional[int]]] = {}
     pin_key_map: Dict[str, str] = {}   # upper-case base -> first-seen spelling
-    for line_no, raw in enumerate(text.splitlines(), start=1):
+    for line_no, raw in _join_continuations(text):
         line = _strip_inline_comment(raw).strip()
         if not line or line.startswith("#") or line.startswith("--"):
             continue
 
-        loc = _LOCATION_RE.match(line)
-        if loc:
-            pin, target = loc.group(1).upper(), loc.group(2)
+        tokens = _tokenize_tcl(line)
+        cmd = tokens[0].lower() if tokens else ""
+
+        if cmd == "set_location_assignment":
+            pin_tok = ""
+            target_tok = ""
+            idx = 1
+            while idx < len(tokens):
+                t = tokens[idx]
+                if t.lower() == "-to" and idx + 1 < len(tokens):
+                    target_tok = tokens[idx + 1]
+                    idx += 2
+                elif t.lower() in ("-comment", "-section_id", "-tag") and idx + 1 < len(tokens):
+                    idx += 2
+                elif not t.startswith("-") and not pin_tok:
+                    pin_tok = t
+                    idx += 1
+                else:
+                    idx += 1
+            if pin_tok and target_tok:
+                pin, target = pin_tok.upper(), target_tok
+            else:
+                loc = _LOCATION_RE.match(line)
+                if not loc:
+                    continue
+                pin, target = loc.group(1).upper(), loc.group(2)
             result.assignments += 1
             number = _PIN_NUMBER_RE.match(pin)
             valid_pin = False
@@ -223,8 +315,6 @@ def parse_qsf(text: str) -> QsfResult:
                     f" (first at line {seen_slots[slot]})",
                 ))
                 continue
-            # Merge case-insensitive duplicates under the first-seen spelling
-            # (a .qsf may write KEY[0] and key[1] for the same vector).
             actual_key = pin_key_map.get(key, base)
             pin_key_map.setdefault(key, actual_key)
             result.pins.setdefault(actual_key, [])
@@ -236,29 +326,63 @@ def parse_qsf(text: str) -> QsfResult:
             seen_pin_targets[pin] = slot
             continue
 
-        inst = _INSTANCE_RE.match(line)
-        if inst:
-            name, value, target = inst.group(1), inst.group(2).strip(), inst.group(3)
-            result.assignments += 1
-            if name.upper() == "IO_STANDARD":
-                result.io_standards[target.upper()] = value.strip('"')
-            continue
+        if cmd == "set_instance_assignment":
+            name = ""
+            value = ""
+            target = ""
+            idx = 1
+            while idx < len(tokens):
+                t = tokens[idx]
+                if t.lower() == "-name" and idx + 1 < len(tokens):
+                    name = tokens[idx + 1]
+                    if idx + 2 < len(tokens) and not tokens[idx + 2].startswith("-"):
+                        value = tokens[idx + 2]
+                        idx += 3
+                    else:
+                        idx += 2
+                elif t.lower() == "-to" and idx + 1 < len(tokens):
+                    target = tokens[idx + 1]
+                    idx += 2
+                elif t.startswith("-") and idx + 1 < len(tokens):
+                    idx += 2
+                else:
+                    idx += 1
+            if name and target:
+                result.assignments += 1
+                if name.upper() == "IO_STANDARD":
+                    result.io_standards[target.upper()] = value
+                continue
 
-        glob = _GLOBAL_RE.match(line)
-        if glob:
-            name, value = glob.group(1).upper(), glob.group(2).strip()
-            result.assignments += 1
-            if name == "TOP_LEVEL_ENTITY":
-                result.top = value.strip('"')
-            elif name == "FAMILY":
-                result.family = value.strip('"')
-            elif name == "DEVICE":
-                result.device = value.strip('"')
-            elif name in ("VERILOG_FILE", "VHDL_FILE", "SYSTEMVERILOG_FILE"):
-                result.files.append((name.replace("_FILE", "").lower(), value.strip('"')))
-            elif name == "RESERVE_ALL_UNUSED_PINS_WEAK_PULLUP":
-                result.unusedPolicy = value.strip('"')
-            continue
+        if cmd == "set_global_assignment":
+            name = ""
+            value = ""
+            idx = 1
+            while idx < len(tokens):
+                t = tokens[idx]
+                if t.lower() == "-name" and idx + 1 < len(tokens):
+                    name = tokens[idx + 1].upper()
+                    if idx + 2 < len(tokens) and not tokens[idx + 2].startswith("-"):
+                        value = tokens[idx + 2]
+                        idx += 3
+                    else:
+                        idx += 2
+                elif t.startswith("-") and idx + 1 < len(tokens):
+                    idx += 2
+                else:
+                    idx += 1
+            if name:
+                result.assignments += 1
+                if name == "TOP_LEVEL_ENTITY":
+                    result.top = value
+                elif name == "FAMILY":
+                    result.family = value
+                elif name == "DEVICE":
+                    result.device = value
+                elif name in ("VERILOG_FILE", "VHDL_FILE", "SYSTEMVERILOG_FILE"):
+                    result.files.append((name.replace("_FILE", "").lower(), value))
+                elif name == "RESERVE_ALL_UNUSED_PINS_WEAK_PULLUP":
+                    result.unusedPolicy = value
+                continue
 
         if line.lower().startswith(("set_", "define_global_assignment")):
             result.assignments += 1

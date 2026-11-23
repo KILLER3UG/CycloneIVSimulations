@@ -1,7 +1,9 @@
-// toolbar.js — Zone 1: a slim 42px monochrome header in three groups.
-// Left: title + board selector + examples selector.
-// Center: transport pill group + the single primary Compile & Run action.
-// Right: audio pill with volume popover + the two view toggles.
+// toolbar.js — Zone 1: Quartus Prime Standard Edition main toolbar.
+// Matches the reference screenshots:
+// New / Open / Save | Cut / Copy / Paste | Undo / Redo | Project dropdown |
+// Stop | Start Compilation (Ctrl+L) | Analysis & Synthesis | Fitter |
+// Assembler | Timing Analysis | EDA Netlist Writer | Programmer |
+// Open in Quartus | Settings | Audio + Right/Bottom dock toggles.
 
 import { icon } from "./icons.js";
 
@@ -9,61 +11,53 @@ export function createToolbar(root, h) {
     root.classList.add("toolbar");
     root.innerHTML = `
         <div class="tb-group tb-left">
-            <span class="tb-title">Cyclone IV Studio</span>
-            <label class="tb-select" title="Active FPGA board">
-                <select id="tb-board-select" aria-label="FPGA Board"></select>
+            <button type="button" class="q-tool-btn" data-act="new" title="New VHDL File">${icon("qNew")}</button>
+            <button type="button" class="q-tool-btn" data-act="open" title="Open Source / Project Files">${icon("qOpen")}</button>
+            <button type="button" class="q-tool-btn" data-act="save" title="Save Current File (Ctrl+S)">${icon("qSave")}</button>
+            <span class="tb-sep" aria-hidden="true"></span>
+            <button type="button" class="q-tool-btn" data-act="cut" title="Cut (Ctrl+X)">${icon("qCut")}</button>
+            <button type="button" class="q-tool-btn" data-act="copy" title="Copy (Ctrl+C)">${icon("qCopy")}</button>
+            <button type="button" class="q-tool-btn" data-act="paste" title="Paste (Ctrl+V)">${icon("qPaste")}</button>
+            <span class="tb-sep" aria-hidden="true"></span>
+            <button type="button" class="q-tool-btn" data-act="undo" title="Undo (Ctrl+Z)">${icon("qUndo")}</button>
+            <button type="button" class="q-tool-btn" data-act="redo" title="Redo (Ctrl+Y)">${icon("qRedo")}</button>
+            <span class="tb-sep" aria-hidden="true"></span>
+            <label class="tb-select tb-proj-select" title="Active Project / Revision">
+                <select id="tb-examples" aria-label="Project / Example"></select>
             </label>
-            <label class="tb-select" title="Load a bundled example">
-                <select id="tb-examples" aria-label="Load Example"><option value="">Examples&hellip;</option></select>
-            </label>
-        </div>
-
-        <div class="tb-group tb-center">
-            <div class="tb-pill" role="group" aria-label="Simulation transport">
-                <button class="icon-btn tb-power" data-act="power" aria-label="Board power" aria-pressed="true" title="Board power (P)">${icon("power")}</button>
-                <button class="icon-btn" data-act="pause" aria-label="Pause simulation" title="Pause / resume">${icon("pause")}</button>
-                <button class="icon-btn" data-act="stop" aria-label="Stop simulation" title="Stop (Esc)">${icon("stop")}</button>
-                <button class="icon-btn" data-act="reset" aria-label="Reset simulation" title="Reset">${icon("reset")}</button>
-                <button class="icon-btn" data-act="step" aria-label="Step one cycle" title="Step +1 cycle">${icon("step")}</button>
-            </div>
-            <div class="tb-pill tb-live" id="tb-live-pill" hidden role="group" aria-label="Live clock pace">
-                <span class="tb-live-dot" id="tb-live-dot" title="Live co-simulation running"></span>
-                <label class="tb-select" title="Clock pace — simulated clock rate vs. wall time">
-                    <select id="tb-pace" aria-label="Clock pace">
-                        <option value="single">Single Cycle</option>
-                        <option value="1hz">1 Hz</option>
-                        <option value="100hz">100 Hz</option>
-                        <option value="10khz">10 kHz</option>
-                        <option value="max" selected>Live Max</option>
-                    </select>
-                </label>
-                <span class="tb-audio-badge" id="tb-live-speed" aria-live="polite">&mdash;</span>
-                <label class="tb-live-bounce" title="Inject mechanical contact chatter on key/DIP edges (tests debouncers)">
-                    <input type="checkbox" id="tb-bounce"> bounce
-                </label>
-            </div>
-            <button type="button" class="btn btn-primary tb-compile" id="tb-compile" data-act="compile" title="Compile &amp; run (Ctrl+Enter)">${icon("play")}<span>Compile &amp; Run</span></button>
+            <select id="tb-board-select" aria-label="FPGA Board" class="hidden"></select>
+            <span class="tb-sep" aria-hidden="true"></span>
+            <button type="button" class="q-tool-btn" data-act="pin-planner" title="Pin Planner">${icon("qPinPlan")}</button>
+            <button type="button" class="q-tool-btn" data-act="settings" title="Settings (Quartus Path &amp; Options)">${icon("qSettings")}</button>
+            <button type="button" class="q-tool-btn" data-act="open-quartus" title="Open in Quartus Prime GUI">${icon("qQuartus")}</button>
+            <span class="tb-sep" aria-hidden="true"></span>
+            <button type="button" class="q-tool-btn q-stop-btn" id="tb-stop" data-act="stop" title="Stop Compilation / Simulation (Esc)">${icon("qStop")}</button>
+            <button type="button" class="q-tool-btn q-compile-btn" id="tb-compile" data-act="compile" title="Start Compilation (Ctrl+L)">${icon("qCompile")}</button>
+            <button type="button" class="q-tool-btn" data-act="stage-analysis" title="Start Analysis &amp; Synthesis">${icon("qSynth")}</button>
+            <button type="button" class="q-tool-btn" data-act="stage-fitter" title="Start Fitter (Place &amp; Route)">${icon("qFitter")}</button>
+            <button type="button" class="q-tool-btn" data-act="stage-assembler" title="Start Assembler">${icon("qAsm")}</button>
+            <button type="button" class="q-tool-btn" data-act="stage-timing" title="Start Timing Analysis">${icon("qTiming")}</button>
+            <button type="button" class="q-tool-btn" data-act="stage-eda" title="Start EDA Netlist Writer">${icon("qEda")}</button>
+            <button type="button" class="q-tool-btn" data-act="programmer" title="Programmer (Open Quartus Programmer / Program 3D Board)">${icon("qPgm")}</button>
+            <button type="button" class="q-tool-btn" data-act="about" title="About Quartus Prime Standard Edition">${icon("qHelpBubble")}</button>
         </div>
 
         <div class="tb-group tb-right">
             <div class="tb-audio-pill">
-                <button class="icon-btn tb-mute" id="tb-mute" title="Mute buzzer" aria-label="Mute buzzer" aria-pressed="false">${icon("volume")}</button>
+                <button class="q-tool-btn tb-mute" id="tb-mute" title="Mute buzzer" aria-label="Mute buzzer" aria-pressed="false">${icon("volume")}</button>
                 <span class="tb-audio-badge" id="tb-audio-badge" aria-live="polite">Silent</span>
-                <button class="icon-btn tb-audio-caret" id="tb-audio-caret" aria-label="Volume" aria-expanded="false" title="Volume">&#9662;</button>
+                <button class="q-tool-btn tb-audio-caret" id="tb-audio-caret" aria-label="Volume" aria-expanded="false" title="Volume">&#9662;</button>
                 <div class="tb-volume-pop" id="tb-volume-pop" hidden>
                     <label for="tb-volume">Buzzer volume</label>
                     <input type="range" id="tb-volume" min="0" max="100" step="1" value="55" aria-label="Buzzer volume">
                 </div>
             </div>
-            <button class="icon-btn tb-view" data-act="collapse" aria-label="Toggle right workbench" title="Toggle right workbench">${icon("slider")}</button>
-            <button class="icon-btn tb-view" id="tb-toggle-bottom" aria-label="Toggle bottom dock" title="Toggle bottom dock">${icon("monitor")}</button>
-            <button class="icon-btn" id="tb-update" aria-label="Check for updates" title="Check for updates">${icon("update")}</button>
+            <button class="q-tool-btn tb-view" data-act="collapse" aria-label="Toggle 3D Devboard" title="Toggle 3D Devboard sidebar (Ctrl+\\)">${icon("qChip")}</button>
+            <button class="q-tool-btn tb-view" id="tb-toggle-bottom" aria-label="Toggle Messages / Terminal dock" title="Toggle Messages &amp; Terminal dock">${icon("terminal")}</button>
+            <button class="q-tool-btn" id="tb-update" aria-label="Check for updates" title="Check for updates">${icon("update")}</button>
         </div>
     `;
 
-    const powerBtn = root.querySelector('[data-act="power"]');
-    const pauseBtn = root.querySelector('[data-act="pause"]');
-    const stepBtn = root.querySelector('[data-act="step"]');
     const boardSel = root.querySelector("#tb-board-select");
     const examplesSel = root.querySelector("#tb-examples");
     const muteBtn = root.querySelector("#tb-mute");
@@ -71,40 +65,51 @@ export function createToolbar(root, h) {
     const caret = root.querySelector("#tb-audio-caret");
     const pop = root.querySelector("#tb-volume-pop");
 
-    // Status/pipeline/version live in the HUD and diagnostics now; keep no-op
-    // entry points so callers written against the older toolbar still work.
     function setStatus() {}
     function setStep() {}
     function setVersion() {}
-    function setTheme() { /* the studio is dark-only */ }
+    function setTheme() {}
 
     function setPower(on) {
+        const powerBtn = document.querySelector('#sim-bar [data-act="power"]');
+        if (!powerBtn) return;
         powerBtn.classList.toggle("on", !!on);
         powerBtn.setAttribute("aria-pressed", String(!!on));
         powerBtn.title = on ? "Power on — click to switch off" : "Power off — click to switch on";
     }
 
     function setRunning(running, paused = false) {
-        pauseBtn.classList.toggle("active", !!paused);
-        pauseBtn.title = paused ? "Resume" : "Pause";
-        stepBtn.disabled = !!running && !paused;
-        // The header owns compile now (the workbench footer button is gone):
-        // mirror the run state on Compile & Run — spinner + sheen while the
-        // compiler/simulation is working.
+        const pauseBtn = document.querySelector('#sim-bar [data-act="pause"]');
+        if (pauseBtn) {
+            pauseBtn.classList.toggle("active", !!paused);
+            pauseBtn.title = paused ? "Resume" : "Pause";
+        }
+        const stepBtn = document.querySelector('#sim-bar [data-act="step"]');
+        if (stepBtn) stepBtn.disabled = !!running && !paused;
+
         const runBtn = root.querySelector("#tb-compile");
         if (runBtn) {
-            runBtn.disabled = !!running;
             runBtn.classList.toggle("running", !!running);
-            const label = runBtn.querySelector("span");
-            if (label) label.textContent = running ? "Compiling\u2026" : "Compile & Run";
+            runBtn.title = running ? "Compiling..." : "Start Compilation (Ctrl+L)";
+        }
+        const stopBtn = root.querySelector("#tb-stop");
+        if (stopBtn) stopBtn.classList.toggle("active-stop", !!running);
+    }
+
+    function setExamples(list, activeProjectName) {
+        const items = Array.isArray(list) ? list : [];
+        examplesSel.innerHTML = items.map((e) => `<option value="${String(e.id)}">${e.name || e.id}</option>`).join("")
+            + `<option value="" disabled>──────────</option>`;
+        if (activeProjectName) {
+            const match = items.find((e) => e.id === activeProjectName || e.name === activeProjectName);
+            if (match) examplesSel.value = match.id;
         }
     }
 
-    function setExamples(list) {
-        const items = Array.isArray(list) ? list : [];
-        examplesSel.innerHTML = `<option value="">Examples&hellip;</option>`
-            + items.map((e) => `<option value="${String(e.id)}">${e.name || e.id}</option>`).join("");
-        examplesSel.value = "";
+    function setProjectLabel(name) {
+        if (!name) return;
+        const opt = Array.from(examplesSel.options).find((o) => o.value === name || o.textContent === name);
+        if (opt) examplesSel.value = opt.value;
     }
 
     function setBoards(list, activeId) {
@@ -136,37 +141,30 @@ export function createToolbar(root, h) {
         }
     }
 
-    /** Live co-simulation pill: visibility, pace value, honest speed readout. */
     function setLive(visible, pace, speedText) {
-        const pill = root.querySelector("#tb-live-pill");
+        const pill = document.getElementById("tb-live-pill");
         if (pill) pill.hidden = !visible;
-        const sel = root.querySelector("#tb-pace");
+        const sel = document.getElementById("tb-pace");
         if (sel && pace) sel.value = String(pace);
-        const speed = root.querySelector("#tb-live-speed");
+        const speed = document.getElementById("tb-live-speed");
         if (speed) speed.textContent = speedText || "\u2014";
     }
 
     function setLiveSpeed(speedText) {
-        const speed = root.querySelector("#tb-live-speed");
+        const speed = document.getElementById("tb-live-speed");
         if (speed) speed.textContent = speedText || "\u2014";
     }
 
     root.addEventListener("change", (e) => {
         if (e.target === examplesSel && e.target.value) {
-            const id = e.target.value;
-            examplesSel.value = "";
-            h.onExample?.(id);
+            h.onExample?.(e.target.value);
         } else if (e.target === boardSel && e.target.value) {
             h.onBoard?.(e.target.value);
-        } else if (e.target.id === "tb-pace") {
-            h.onPace?.(e.target.value);
-        } else if (e.target.id === "tb-bounce") {
-            h.onBounce?.(e.target.checked);
         }
     });
 
     root.addEventListener("click", (e) => {
-        if (e.target === caret) {
+        if (e.target.closest("#tb-audio-caret")) {
             const open = pop.hidden;
             pop.hidden = !open;
             caret.setAttribute("aria-expanded", String(open));
@@ -176,31 +174,27 @@ export function createToolbar(root, h) {
             pop.hidden = true;
             caret.setAttribute("aria-expanded", "false");
         }
-        if (e.target.closest("#tb-toggle-bottom")) {
-            h.onToggleBottom?.();
-            return;
-        }
-        if (e.target.closest("#tb-update")) {
-            h.onUpdate?.();
-            return;
-        }
+        if (e.target.closest("#tb-mute")) { h.onMute?.(); return; }
+        if (e.target.closest("#tb-toggle-bottom")) { h.onToggleBottom?.(); return; }
+        if (e.target.closest("#tb-update")) { h.onUpdate?.(); return; }
         const btn = e.target.closest("[data-act]");
         if (!btn) return;
-        switch (btn.dataset.act) {
-            case "power": h.onPower?.(); break;
-            case "pause": h.onPause?.(); break;
-            case "stop": h.onStop?.(); break;
-            case "reset": h.onReset?.(); break;
-            case "step": h.onStep?.(); break;
-            case "compile": h.onRun?.(); break;
-            case "mute": h.onMute?.(); break;
-            case "collapse": h.onToggleRight?.(); break;
-            default: break;
-        }
+        const act = btn.dataset.act;
+        if (act === "compile") h.onRun?.();
+        else if (act === "stop") h.onStop?.();
+        else if (act === "collapse") h.onToggleRight?.();
+        else h.onAction?.(act);
     });
+
+    // Hover status-bar hint text like Quartus Prime
+    root.addEventListener("mouseover", (e) => {
+        const btn = e.target.closest("[title]");
+        if (btn?.title) h.onStatusHint?.(btn.title);
+    });
+    root.addEventListener("mouseout", () => h.onStatusHint?.("Ready"));
 
     return {
         setStatus, setStep, setPower, setRunning, setTheme, setVersion,
-        setExamples, setBoards, setActiveBoard, setAudio, setLive, setLiveSpeed, root,
+        setExamples, setProjectLabel, setBoards, setActiveBoard, setAudio, setLive, setLiveSpeed, root,
     };
 }

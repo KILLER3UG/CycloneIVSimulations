@@ -83,28 +83,34 @@ export function createEditorPanel(root, h) {
     root.classList.add("editor-panel");
     root.innerHTML = `
         <div class="ep-resizer" aria-hidden="true" title="Drag to resize"></div>
-        <div class="ep-head">
-            <span class="ep-title">${icon("file")}<span>Project & Source</span></span>
+        <div class="ep-tabs-wrap">
+            <div class="ep-tabs" id="ep-tabs" role="tablist"></div>
             <span class="ep-head-actions">
-                <span class="ep-add-group" role="group" aria-label="Add source file">
-                    <button type="button" class="ep-mod-btn" data-act="add-vhd" title="Add new VHDL file (.vhd)">+ Add file</button>
-                    <button type="button" class="ep-mod-btn ep-mod-v" data-act="add-v" title="Add new Verilog file (.v)">.v</button>
-                </span>
-                <button class="icon-btn" data-act="upload" title="Upload files (.vhd .v .sv .qsf .mif .hex)">${icon("upload")}</button>
+                <button type="button" class="ep-mod-btn" data-act="add-vhd" title="Add new VHDL file (.vhd)">+ .vhd</button>
+                <button type="button" class="ep-mod-btn ep-mod-v" data-act="add-v" title="Add new Verilog file (.v)">+ .v</button>
+                <button class="icon-btn" data-act="upload" title="Open / Upload files (.vhd .v .sv .qsf .mif .hex)">${icon("qOpen")}</button>
                 <button class="icon-btn" data-act="rename" title="Rename active file">${icon("pencil")}</button>
                 <button class="icon-btn" data-act="delete" title="Delete active file">${icon("trash")}</button>
                 <button class="icon-btn" data-act="zip" title="Download project as zip">${icon("zip")}</button>
-                <button class="icon-btn" data-act="collapse" title="Collapse panel" aria-label="Collapse panel">${icon("chevron")}</button>
+                <select id="ep-device" class="ep-dev-select hidden" aria-label="Target device">
+                    ${DEVICES.map((d) => `<option value="${d.key}">${d.label}</option>`).join("")}
+                </select>
             </span>
         </div>
 
-        <div class="ep-tabs-wrap">
-            <div class="ep-tabs" id="ep-tabs" role="tablist"></div>
-            <label class="ep-dev-inline" title="Target FPGA device">
-                <select id="ep-device" aria-label="Target device">
-                    ${DEVICES.map((d) => `<option value="${d.key}">${d.label}</option>`).join("")}
-                </select>
-            </label>
+        <div class="ep-subbar" aria-label="Text editor toolbar">
+            <button type="button" class="ep-sub-btn" data-act="find-next" title="Bookmarks / Next Match (F3)">${icon("qEdBookmark")}</button>
+            <button type="button" class="ep-sub-btn" data-act="find" title="Find / Replace (Ctrl+F)">${icon("qFind")}</button>
+            <span class="ep-sub-sep"></span>
+            <button type="button" class="ep-sub-btn" data-act="comment" title="Toggle Line Comment (Ctrl+/)">${icon("qEdBrace")}</button>
+            <button type="button" class="ep-sub-btn" data-act="outdent" title="Outdent Lines">${icon("qEdOutdent")}</button>
+            <button type="button" class="ep-sub-btn" data-act="indent" title="Indent Lines">${icon("qEdIndent")}</button>
+            <span class="ep-sub-sep"></span>
+            <button type="button" class="ep-sub-btn active" id="ep-toggle-ln" data-act="toggle-ln" title="Toggle Line Numbers">${icon("qEdLineNum")}</button>
+            <button type="button" class="ep-sub-btn" id="ep-toggle-wrap" data-act="toggle-wrap" title="Toggle Word Wrap">${icon("qEdWrap")}</button>
+            <span class="ep-sub-sep"></span>
+            <button type="button" class="ep-sub-btn" data-act="fontdown" title="Decrease Font Size">A-</button>
+            <button type="button" class="ep-sub-btn" data-act="fontup" title="Increase Font Size">A+</button>
         </div>
 
         <div class="ep-editor-wrap" id="ep-drop">
@@ -127,17 +133,26 @@ export function createEditorPanel(root, h) {
     const tabsEl = root.querySelector("#ep-tabs");
     const collapseBtn = root.querySelector('[data-act="collapse"]');
 
+    let lineNumbersOn = true;
+    let wordWrapOn = false;
+
     const editor = monaco.editor.create(editorHost, {
         value: "",
         language: "c4-vhdl",
-        theme: "c4-dark",
+        theme: "c4-light",
         minimap: { enabled: false },
+        fontFamily: "'Courier New', Consolas, 'Cascadia Code', ui-monospace, monospace",
         fontSize: 13,
+        lineHeight: 19,
+        folding: true,
+        showFoldingControls: "always",
+        guides: { indentation: true, highlightActiveIndentation: true },
         automaticLayout: true,
         scrollBeyondLastLine: false,
         renderWhitespace: "selection",
         tabSize: 4,
-        find: { addExtraSpaceOnTop: false, autoFindInSelection: "never" },
+        find: { addExtraSpaceOnTop: true, autoFindInSelection: "never" },
+        lineNumbers: "on",
         lineNumbersMinChars: 3,
     });
     // Status-bar cursor mirror (Ln X, Col Y).
@@ -409,6 +424,7 @@ export function createEditorPanel(root, h) {
                 if (suppressModify) return;
                 hasUserProject = true;
                 scheduleHierarchyRefresh();
+                h.onModify?.(name, m.getValue());
             });
             models.set(name, m);
         } else if (typeof content === "string" && m.getValue() !== content) {
@@ -543,6 +559,7 @@ export function createEditorPanel(root, h) {
         setFiles(next, false, { userAction: true });
         const idx = files.findIndex((f) => f.name === fileName);
         if (idx >= 0) selectFile(idx);
+        h.onModify?.(fileName, content);
         h.log?.(`Created ${fileName} (${kind === "v" ? "module" : "entity"} ${modName})`, "ok");
     }
 
@@ -567,6 +584,7 @@ export function createEditorPanel(root, h) {
         lastUndo = { removed, index, prevActive, prevPinned };
         setFiles(remaining, false, { userAction: true });
         if (nearest >= 0) selectFile(nearest);
+        h.onFileDeleted?.(removed.name);
 
         toast(`Deleted ${removed.name}`, {
             kind: "info",
@@ -781,7 +799,21 @@ export function createEditorPanel(root, h) {
             case "zip": downloadZip(); break;
             case "fontup": setFontSize(fontSize + 1); break;
             case "fontdown": setFontSize(fontSize - 1); break;
-            case "find": editor.getAction("editor.action.startFindReplaceAction")?.run(); break;
+            case "find": editor.getAction("actions.find")?.run(); break;
+            case "find-next": editor.getAction("editor.action.nextMatchFindAction")?.run(); break;
+            case "comment": editor.getAction("editor.action.commentLine")?.run(); break;
+            case "indent": editor.getAction("editor.action.indentLines")?.run(); break;
+            case "outdent": editor.getAction("editor.action.outdentLines")?.run(); break;
+            case "toggle-ln":
+                lineNumbersOn = !lineNumbersOn;
+                editor.updateOptions({ lineNumbers: lineNumbersOn ? "on" : "off" });
+                btn.classList.toggle("active", lineNumbersOn);
+                break;
+            case "toggle-wrap":
+                wordWrapOn = !wordWrapOn;
+                editor.updateOptions({ wordWrap: wordWrapOn ? "on" : "off" });
+                btn.classList.toggle("active", wordWrapOn);
+                break;
             case "collapse":
                 if (document.body.classList.contains("drawer-right")) {
                     document.body.classList.remove("drawer-right");
@@ -958,6 +990,73 @@ export function createEditorPanel(root, h) {
         h.onDevice?.(e.target.value);
     });
 
+    function applyExternalFiles(diskFiles = []) {
+        const incoming = (Array.isArray(diskFiles) ? diskFiles : []).filter((f) => {
+            const lower = String(f?.name || "").toLowerCase();
+            return ALLOWED.some((ext) => lower.endsWith(ext)) || lower.endsWith(".sdc");
+        });
+        const byName = new Map(incoming.map((f) => [f.name, String(f.content ?? "")]));
+        const changed = [];
+        const added = [];
+        const removed = [];
+
+        suppressModify = true;
+        try {
+            const existingNames = new Set(files.map((f) => f.name));
+            // Update modified open files in-place without clobbering cursor/undo stack
+            for (const f of files) {
+                if (!byName.has(f.name)) continue;
+                const nextContent = byName.get(f.name);
+                const model = models.get(f.name);
+                const curContent = model ? model.getValue() : f.content;
+                if (curContent !== nextContent) {
+                    f.content = nextContent;
+                    if (model) {
+                        model.pushEditOperations([], [{ range: model.getFullModelRange(), text: nextContent }], () => null);
+                    }
+                    changed.push(f.name);
+                }
+            }
+            // Add newly created HDL/data files created on disk by external tools/agents
+            for (const f of incoming) {
+                if (existingNames.has(f.name)) continue;
+                if (/\.(qpf|qsf)$/i.test(f.name)) continue;
+                files.push({ name: f.name, content: String(f.content ?? "") });
+                modelFor(f.name, f.content);
+                added.push(f.name);
+            }
+            // Remove files deleted on disk (only when workspace scan returned entries or explicit empty)
+            const activeName = files[activeFile]?.name || "";
+            if (incoming.length > 0) {
+                for (let i = files.length - 1; i >= 0; i -= 1) {
+                    const name = files[i].name;
+                    if (!byName.has(name)) {
+                        files.splice(i, 1);
+                        const m = models.get(name);
+                        if (m) { m.dispose(); models.delete(name); }
+                        removed.push(name);
+                    }
+                }
+            }
+            if (changed.length || added.length || removed.length) {
+                syncEmptyState();
+                if (files.length) {
+                    const nextIdx = Math.max(0, files.findIndex((f) => f.name === activeName));
+                    activeFile = nextIdx;
+                    editor.setModel(modelFor(files[nextIdx].name, files[nextIdx].content));
+                    requestAnimationFrame(layoutEditor);
+                } else {
+                    activeFile = -1;
+                }
+                refreshHierarchy(true);
+                h.onFilesChanged?.(snapshotFiles());
+            }
+        } finally {
+            suppressModify = false;
+        }
+        return { changed, added, removed };
+    }
+
     function openFile(name, line, col) {
         const i = files.findIndex((f) => f.name === name);
         if (i >= 0) selectFile(i);
@@ -972,7 +1071,7 @@ export function createEditorPanel(root, h) {
 
     return {
         root, editor,
-        setFiles, selectFile, openFile,
+        setFiles, applyExternalFiles, selectFile, openFile,
         layout: layoutEditor,
         addNewSourceFile, deleteFileAt,
         getFiles: snapshotFiles,
@@ -987,6 +1086,38 @@ export function createEditorPanel(root, h) {
         setTopEntity: () => refreshHierarchy(false),
         setEntity, setProblems,
         setTheme, setDevice,
+        openFind: () => editor.getAction("actions.find")?.run(),
+        findNext: () => editor.getAction("editor.action.nextMatchFindAction")?.run(),
+        gotoLine: () => editor.getAction("editor.action.gotoLine")?.run(),
+        undo: () => { editor.focus(); editor.trigger("toolbar", "undo", null); },
+        redo: () => { editor.focus(); editor.trigger("toolbar", "redo", null); },
+        cut: () => { editor.focus(); editor.getAction("editor.action.clipboardCutAction")?.run(); },
+        copy: () => { editor.focus(); editor.getAction("editor.action.clipboardCopyAction")?.run(); },
+        paste: async () => {
+            editor.focus();
+            try {
+                const txt = await navigator.clipboard.readText();
+                if (txt) editor.trigger("toolbar", "type", { text: txt });
+            } catch { /* clipboard permission */ }
+        },
+        triggerUpload: () => root.querySelector("#ep-file")?.click(),
+        downloadZip,
+        saveActiveFile: () => {
+            const f = files[activeFile];
+            if (!f) return;
+            const content = models.get(f.name)?.getValue() ?? f.content;
+            if (typeof h.onSave === "function") {
+                h.onSave(f.name, content);
+                return;
+            }
+            const blob = new Blob([content], { type: "text/plain" });
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = f.name;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+            h.log?.(`Saved ${f.name}`, "ok");
+        },
         readSetup, buildStimuli, getStimulusValue, setStimulusValue,
         setStimulusPulseOnce,
         setCollapsed, expand,
