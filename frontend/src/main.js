@@ -25,6 +25,9 @@ import { runUpdateFlow, updatesSupported } from "./updater.js";
 import { buildVcd } from "./vcdExport.js";
 import { createTerminalController } from "./ui/terminal.js";
 import { pinPlanHasAssignments } from "./pinPlanGate.js";
+import { createMenuBar } from "./ui/menuBar.js";
+import { createLeftDock, TASKS } from "./ui/leftDock.js";
+import { createStatusBar } from "./ui/statusBar.js";
 import {
     accumulateBuzzerFreq,
     createBuzzerFreqWindow,
@@ -64,6 +67,7 @@ S.liveVga = null;
 let board = null;
 let interactions = null;
 let toolbar, sidebar, editor, bottom, stats, terminal = null;
+let menu, left, status = null;
 let session = null;
 let sessionGen = 0;
 let simAbort = null;
@@ -527,11 +531,79 @@ function initComponents() {
         onBoard: (id) => selectBoard(id),
         onExample: (id) => loadExample(id),
         onToggleRight: () => toggleRight(),
+        onToggleLeft: () => toggleLeft(),
         onToggleBottom: () => toggleBottom(),
         onUpdate: () => { void runUpdateFlow(); },
         onPace: (pace) => setLivePace(pace),
         onBounce: (on) => { S.bounceEnabled = !!on; log(`Mechanical bounce ${on ? "enabled" : "disabled"}`, "cmd"); },
     });
+
+    menu = createMenuBar($("menubar"), { onAction: handleMenuAction });
+    left = createLeftDock($("navigator-host"), $("tasks-host"), {
+        onToggleLeft: () => toggleLeft(),
+        onOpenFile: (i) => editor.selectFile?.(i),
+        onExample: (id) => loadExample(id),
+        onFocusPort: () => {},
+        onJump: (where) => {
+            if (where === "pinmap") setCenterTab("pinmap");
+            else if (where === "boardimport") setRightTab("boardimport");
+        },
+        onTaskClick: (i) => {
+            if (i === 2) setCenterTab("pinmap");
+            else if (i === 4) setRightTab("board3d");
+        },
+    });
+    status = createStatusBar($("statusbar"));
+
+    // Dock resizers: left dock width and right dock width are user-draggable
+    // (persisted); the 3D viewport re-fits around every geometry change.
+    const leftResizer = $("left-resizer");
+    const rightResizer = $("right-resizer");
+    const applyLeftW = (px, persist) => {
+        const w = Math.min(520, Math.max(200, Math.round(px)));
+        document.documentElement.style.setProperty("--left-w", `${w}px`);
+        if (persist) { try { localStorage.setItem("c4_left_w", String(w)); } catch { /* ignore */ } }
+        resizeBoardSoon();
+    };
+    const applyRightW = (px, persist) => {
+        const w = Math.min(900, Math.max(340, Math.round(px)));
+        document.documentElement.style.setProperty("--right-w", `${w}px`);
+        if (persist) { try { localStorage.setItem("c4_right_w", String(w)); } catch { /* ignore */ } }
+        resizeBoardSoon();
+    };
+    for (const [el, apply, prop] of [
+        [leftResizer, applyLeftW, "c4_left_w"],
+        [rightResizer, applyRightW, "c4_right_w"],
+    ]) {
+        if (!el) continue;
+        let drag = null;
+        el.addEventListener("pointerdown", (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            drag = { x: e.clientX, y: e.clientY };
+            try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+            document.body.classList.add("resizing");
+        });
+        el.addEventListener("pointermove", (e) => {
+            if (!drag) return;
+            if (prop === "c4_left_w") apply(drag.x + (e.clientX - drag.x), false);
+            else apply(drag.x - (e.clientX - drag.x), false);
+        });
+        const endDrag = () => {
+            if (!drag) return;
+            drag = null;
+            document.body.classList.remove("resizing");
+        };
+        el.addEventListener("pointerup", endDrag);
+        el.addEventListener("pointercancel", endDrag);
+    }
+    try {
+        const savedLeft = Number(localStorage.getItem("c4_left_w"));
+        if (Number.isFinite(savedLeft) && savedLeft >= 200) applyLeftW(savedLeft, false);
+        const savedRight = Number(localStorage.getItem("c4_right_w"));
+        if (Number.isFinite(savedRight) && savedRight >= 340) applyRightW(savedRight, false);
+    } catch { /* ignore */ }
+
 
     // The update button only makes sense inside the desktop webview.
     if (!updatesSupported()) {
@@ -553,6 +625,7 @@ function initComponents() {
         initialSource: S.files[0].content,
         onFilesChanged: () => syncPlannerToActiveTop(),
         onTopContextChanged: (ctx) => syncPlannerToTopContext(ctx),
+        onCursor: (line, column) => status?.setCursor?.(line, column),
         onQsfUploaded: (qsfText) => { syncPlannerToActiveTop(); sidebar.importQsfText(qsfText); },
         onFilesUploaded: () => {},
         onRun: () => compileAndProgram(),
@@ -562,7 +635,7 @@ function initComponents() {
         log: (t, l) => log(t, l),
     });
 
-    sidebar = createSidebar($("sidebar-host"), {
+    sidebar = createSidebar($("rd-periph"), {
         onFocus: (id) => { if (!board?.focusComponent?.(id)) toast(`No 3D part for "${id}"`, { kind: "warn" }); },
         onHighlightPin: (pinId) => { if (!board?.highlightPin?.(pinId)) toast(`Pin ${pinId} is not mapped`, { kind: "info" }); },
         onExample: (id) => loadExample(id),
@@ -610,52 +683,22 @@ function initComponents() {
     document.querySelector(".board-hud-pill")?.appendChild(statsEl);
     stats = createStatsBlock(statsEl);
 
-    const right = $("right");
-    right.dataset.tab = "code";
-    $("wb-tabs")?.addEventListener("click", (e) => {
-        const tab = e.target.closest("[data-tab]");
+    // Center/right dock tab switching keeps exactly one sidebar home: the
+    // Pin Planner hosts it in the center, Peripherals and Board/Import in
+    // the right dock next to the 3D board.
+    $("center-tabs")?.addEventListener("click", (e) => {
+        const tab = e.target.closest("[data-ctab]");
         if (!tab) return;
-        setWorkbenchTab(tab.dataset.tab);
+        setCenterTab(tab.dataset.ctab);
+    });
+    $("right-tabs")?.addEventListener("click", (e) => {
+        const tab = e.target.closest("[data-rtab]");
+        if (!tab) return;
+        setRightTab(tab.dataset.rtab);
     });
 
-    // The 2-zone layout moved the drag handle out of the editor panel into
-    // #workspace; keep dragging it to resize the right workbench column.
-    const wbResizer = document.querySelector("#workspace > .ep-resizer");
-    if (wbResizer) {
-        let drag = null;
-        const applyWidth = (px, persist) => {
-            const w = Math.min(900, Math.max(340, Math.round(px)));
-            document.documentElement.style.setProperty("--right-w", `${w}px`);
-            if (persist) {
-                try { localStorage.setItem("c4_right_w", String(w)); } catch { /* ignore */ }
-            }
-            resizeBoardSoon();
-        };
-        wbResizer.addEventListener("pointerdown", (e) => {
-            if (e.button !== 0) return;
-            e.preventDefault();
-            drag = { x: e.clientX, w: $("right").getBoundingClientRect().width };
-            try { wbResizer.setPointerCapture(e.pointerId); } catch { /* ignore */ }
-            document.body.classList.add("resizing");
-        });
-        wbResizer.addEventListener("pointermove", (e) => {
-            if (!drag) return;
-            applyWidth(drag.w - (e.clientX - drag.x), false);
-        });
-        const endDrag = (e) => {
-            if (!drag) return;
-            const w = drag.w - (e.clientX - drag.x);
-            drag = null;
-            document.body.classList.remove("resizing");
-            try { wbResizer.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
-            applyWidth(Number.isFinite(w) ? w : $("right").getBoundingClientRect().width, true);
-        };
-        wbResizer.addEventListener("pointerup", endDrag);
-        wbResizer.addEventListener("pointercancel", endDrag);
-    }
-
-    // Bottom dock height: drag its top edge (same pattern as the workbench
-    // resizer). Persisted; the board viewport re-fits around the new height.
+    // Bottom dock height: drag its top edge (persisted; the board viewport
+    // re-fits around the new height).
     const bottomEl = $("bottom");
     const bpResizer = bottomEl?.querySelector(".bp-resizer");
     const applyBottomHeight = (px, persist) => {
@@ -698,28 +741,139 @@ function initComponents() {
     }
 }
 
-function setWorkbenchTab(key) {
-    const right = $("right");
-    if (!right || !["code", "pinmap", "periph", "board"].includes(key)) return;
-    right.dataset.tab = key;
-    right.querySelectorAll(".wb-tab").forEach((t) => {
-        const on = t.dataset.tab === key;
+// Center dock tabs: Sources (Monaco) | Pin Planner. The Pin Planner lives
+// inside the shared sidebar root, which relocates between the docks.
+function setCenterTab(key) {
+    if (!["sources", "pinmap"].includes(key)) return;
+    document.querySelectorAll("#center-tabs .ct-tab").forEach((t) => {
+        const on = t.dataset.ctab === key;
         t.classList.toggle("active", on);
         t.setAttribute("aria-selected", String(on));
     });
-    if (key !== "code") sidebar.showTab(key);
-    else requestAnimationFrame(() => editor?.editor?.layout?.());
+    $("center-editor")?.classList.toggle("hidden", key !== "sources");
+    $("center-tools")?.classList.toggle("hidden", key !== "pinmap");
+    if (key === "pinmap") {
+        $("center-tools").appendChild(sidebar.root);
+        sidebar.showTab("pinmap");
+        // The Pin Planner moved into the center: the board dock falls back
+        // to the 3D view so the sidebar lives in exactly one place.
+        if ($("right-tabs")?.querySelector("[data-rtab].active")?.dataset.rtab !== "board3d") {
+            setRightTab("board3d", true);
+        }
+    } else {
+        requestAnimationFrame(() => editor?.editor?.layout?.());
+    }
+    resizeBoardSoon();
+}
+
+// Right dock tabs: 3D Board | Peripherals | Board / Import.
+function setRightTab(key, keepCenter = false) {
+    if (!["board3d", "periph", "boardimport"].includes(key)) return;
+    document.querySelectorAll("#right-tabs .rt-tab").forEach((t) => {
+        const on = t.dataset.rtab === key;
+        t.classList.toggle("active", on);
+        t.setAttribute("aria-selected", String(on));
+    });
+    $("rd-board")?.classList.toggle("hidden", key !== "board3d");
+    $("rd-periph")?.classList.toggle("hidden", key !== "periph");
+    $("rd-boardimport")?.classList.toggle("hidden", key !== "boardimport");
+    if (key === "periph") {
+        $("rd-periph").appendChild(sidebar.root);
+        sidebar.showTab("periph");
+    } else if (key === "boardimport") {
+        $("rd-boardimport").appendChild(sidebar.root);
+        sidebar.showTab("board");
+    }
+    if (!keepCenter && key !== "board3d"
+            && document.querySelector("#center-tabs .ct-tab.active")?.dataset.ctab === "pinmap") {
+        setCenterTab("sources");
+    }
+    resizeBoardSoon();
+}
+
+function toggleLeft() {
+    $("left")?.classList.toggle("collapsed");
     resizeBoardSoon();
 }
 function toggleRight() {
-    const right = $("right");
-    if (!right) return;
-    right.classList.toggle("collapsed");
+    $("right")?.classList.toggle("collapsed");
     resizeBoardSoon();
 }
 function toggleBottom() {
     $("bottom")?.classList.toggle("collapsed");
     setTimeout(() => bottom?.wave?.resize?.(), 60);
+}
+
+// Menu-bar actions route onto the same handlers as the toolbar/shortcuts.
+function handleMenuAction(action) {
+    switch (action) {
+        case "new-vhd": editor.addNewSourceFile?.("vhd"); break;
+        case "new-v": editor.addNewSourceFile?.("v"); break;
+        case "examples": setCenterTab("sources"); break;
+        case "export-vcd": exportVcd(); break;
+        case "find": editor.editor?.getAction?.("actions.find")?.run(); break;
+        case "goto": editor.editor?.getAction?.("editor.action.gotoLine")?.run(); break;
+        case "toggle-left": toggleLeft(); break;
+        case "toggle-right": toggleRight(); break;
+        case "toggle-bottom": toggleBottom(); break;
+        case "cam-top": board?.setPreset?.("top"); break;
+        case "cam-iso": board?.setPreset?.("iso"); break;
+        case "cam-front": board?.setPreset?.("front"); break;
+        case "cam-fit": board?.fit?.(); break;
+        case "pin-labels": {
+            const btn = $("btn-pin-labels");
+            btn?.click();
+            break;
+        }
+        case "pin-planner": setCenterTab("pinmap"); break;
+        case "board-settings": setRightTab("boardimport"); break;
+        case "compile": compileAndProgram(); break;
+        case "pause": togglePause(); break;
+        case "stop": stopSim(); break;
+        case "reset": resetSim(); break;
+        case "step": stepSim(1); break;
+        case "terminal":
+            $("bottom")?.classList.remove("collapsed");
+            bottom.showTab("terminal");
+            break;
+        case "update": void runUpdateFlow(); break;
+        default: break;
+    }
+}
+
+// Compilation Tasks pipeline: stage states + durations, mirrored on the
+// status-bar progress cell.
+let taskStartedAt = 0;
+function setTaskState(index, state) {
+    const durationMs = performance.now() - taskStartedAt;
+    const durationText = state === "done" || state === "error"
+        ? `${(durationMs / 1000).toFixed(2)} s` : "";
+    left?.setTask?.(index, state, durationText);
+    if (state === "run") {
+        taskStartedAt = performance.now();
+        status?.setProgress(Math.round((index / TASKS.length) * 100), TASKS[index]?.label);
+    } else if (state === "done") {
+        status?.setProgress(Math.round(((index + 1) / TASKS.length) * 100), TASKS[index]?.label);
+    } else if (state === "error") {
+        status?.setProgress(null, `${TASKS[index]?.label} failed`);
+    }
+    if (index === TASKS.length - 1 && state === "done") status?.clearProgress();
+}
+
+// Project Navigator mirror: entity tree, file list, language + board cells.
+function refreshNavigator() {
+    try {
+        left?.setHierarchy?.(S.entity, editor?.getTopContext?.().topFile);
+        const files = editor?.getFiles?.() || [];
+        const activeName = editor?.getActiveFile?.() || "";
+        const activeIndex = files.findIndex((f) => f.name === activeName);
+        left?.setFiles?.(files, activeIndex, -1);
+        const lang = (activeName || "").toLowerCase().endsWith(".v") ? "Verilog" : "VHDL";
+        status?.setLanguage?.(lang);
+        const device = S.device || {};
+        status?.setBoard?.(`${S.boardProfile?.board?.name || S.activeBoardId || "—"} · ${device.part || ""}`);
+        menu?.setTopEntity?.(S.entity?.name || editor?.getTopContext?.().topEntity || "—");
+    } catch { /* navigator is best-effort chrome */ }
 }
 
 // ------------------------------------------------------------------ theme --
@@ -780,6 +934,9 @@ function applyProfile(data) {
     S.simStats.targetSpeed = b.clockHz || 50000000;
     safeCall(() => board?.setProfile?.(profile));
     safeCall(() => sidebar?.setProfile?.(profile));
+    const device = S.device || {};
+    safeCall(() => left?.setBoardLabel?.(`${b.name || S.activeBoardId} · ${device.part || ""}`));
+    safeCall(() => status?.setBoard?.(`${b.name || S.activeBoardId || "—"} · ${device.part || ""}`));
     buildBoardControls();
     stats?.update(S);
     return profile;
@@ -876,6 +1033,7 @@ async function loadExamples() {
     } catch { S.examples = []; }
     sidebar.setExamples(S.examples);
     toolbar.setExamples(S.examples);
+    safeCall(() => left?.setExamples?.(S.examples));
 }
 
 async function loadExample(id) {
@@ -887,6 +1045,7 @@ async function loadExample(id) {
             : (await api._fetch(`/api/examples/${encodeURIComponent(id)}`)).data;
         const source = data?.source ?? ex.source;
         editor.setFiles([{ name: ex.file || `${ex.id}.vhd`, content: source }], false);
+        refreshNavigator();
         log(`Loaded example: ${ex.name}`, "cmd");
     } catch (err) {
         log(`Failed to load example ${ex.id}: ${err.message}`, "error");
@@ -1017,7 +1176,8 @@ function formatSummary({ topEntity, topFile, filesUsed, pinPlan, errCount, warnC
 function showCompileFailure(summary, msgs, errCount, step = 1) {
     bottom.setProblems(msgs.filter((m) => m.severity === "error" || m.severity === "warning"));
     editor.setProblems(msgs);
-    toolbar.setStep(step, "error");
+    setTaskState(Math.min(Math.max(step, 0), TASKS.length - 1), "error");
+    status?.stopElapsed?.();
     toolbar.setRunning(false, false);
     setStatus("error", "compile failed");
     log(`Compile failed (${errCount} error(s)) — previous board state retained.`, "error");
@@ -1055,6 +1215,9 @@ async function compileAndProgram() {
 
     setStatus("compiling");
     toolbar.setRunning(true, false);   // spinner + sheen on Compile & Run
+    left?.resetTasks?.();
+    setTaskState(0, "run");
+    status?.beginElapsed?.();
     log(`Compiling top-level '${plan.topEntity}'…`, "cmd");
     let res;
     try {
@@ -1066,7 +1229,8 @@ async function compileAndProgram() {
             strictPins: pinPlanHasAssignments(pinPlan),
         });
     } catch (err) {
-        toolbar.setStep(0, "error");
+        setTaskState(0, "error");
+        status?.stopElapsed?.();
         toolbar.setRunning(false, false);
         setStatus("error", err.message);
         log(`Compile request failed: ${err.message}`, "error");
@@ -1108,8 +1272,9 @@ async function compileAndProgram() {
     for (let i = 0; i < S.keyState.length; i += 1) S.keyState[i] = false;
     syncLivePinBindings();
     buildBoardControls();
-    toolbar.setStep(1, "done");
-    toolbar.setStep(2, "done");
+    setTaskState(1, "done");
+    setTaskState(2, "done");
+    refreshNavigator();
     log(`Compiled ${S.entity.name}: ${S.entity.ports.length} ports`, "ok");
 
     // Pin Planner coverage: a design that compiles but has no pin assignments
@@ -1142,11 +1307,13 @@ async function compileAndProgram() {
     try {
         await session.connect();
     } catch (err) {
-        toolbar.setStep(3, "error");
+        setTaskState(3, "error");
+        status?.stopElapsed?.();
         setStatus("error", "websocket failed");
         log(`Could not open simulation session: ${err.message}`, "error");
         return;
     }
+    setTaskState(3, "run");
     sessionStart(payload);
 }
 
@@ -1256,6 +1423,8 @@ function handleSessionMessage(msg) {
             toolbar.setRunning(false, false);
             log(wasRefresh && msg.boardImage ? "Simulation complete — board updated"
                 : `Simulation complete — ${msg.totalCycles ?? S.totalCycles} cycles`, "ok");
+            setTaskState(4, "done");
+            status?.stopElapsed?.();
             if (refreshPending) { refreshPending = false; refresh(); }
             // The batch preview is done — hand over to the persistent live
             // co-simulation so key/DIP/reset interaction continues from the
@@ -1318,14 +1487,16 @@ function handleSessionMessage(msg) {
             flushPendingUi();
             setStatus("idle");
             toolbar.setRunning(false, false);
-            toolbar.setStep(-1);
+            left?.resetTasks?.();
+            status?.clearProgress?.();
             break;
         case "sim_error":
             S.running = false; S.paused = false; refreshing = false; refreshPending = false;
             safeCall(() => board?.setRunning?.(false));
             setStatus("error", msg.message || "simulation error");
             toolbar.setRunning(false, false);
-            toolbar.setStep(4, "error");
+            setTaskState(4, "error");
+            status?.stopElapsed?.();
             log(`Simulation error: ${msg.message || "unknown"}`, "error");
             if (msg.errors?.length) {
                 S.problems = msg.errors;
@@ -1642,6 +1813,10 @@ async function init() {
     await loadProfile();
     await loadBoards();
     await loadExamples();
+
+    status?.setVersion?.(S.appVersion ? `v${S.appVersion}` : "");
+    status?.setCursor?.(1, 1);
+    refreshNavigator();
 
     const def = S.examples.find((e) => e.id === "sevseg_keys")
         || S.examples.find((e) => /counter/i.test(e.id) || /counter/i.test(e.name));

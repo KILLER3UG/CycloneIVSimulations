@@ -1,21 +1,20 @@
-// bottomPanel.js — Zone 4: one collapsible bottom dock with four tabs.
-// Terminal mounts the xterm controller; Diagnostics owns every compiler error
-// and log line; Waveform keeps the VCD export; Displays holds UART/VGA/LCD.
+// bottomPanel.js — Zone 5: one collapsible bottom dock with four tabs.
+// Terminal mounts the xterm controller; Messages owns every compiler error,
+// warning and log line (Quartus-style severity filters + jump-to-line);
+// Waveform keeps the VCD export; Displays holds UART/VGA/LCD.
 
 import { icon } from "./icons.js";
 import { createWaveformView } from "./waveform.js";
-
-const TAGS = { info: "INFO", ok: "OK", warn: "WARN", error: "ERR", cmd: "CMD" };
 
 export function createBottomPanel(root, h) {
     root.classList.add("bottom-panel");
     root.innerHTML = `
         <div class="bp-tabs" role="tablist" aria-label="Output dock views">
             <button class="bp-tab" data-btab="terminal" role="tab" aria-selected="false">${icon("terminal")}<span>Terminal</span></button>
-            <button class="bp-tab active" data-btab="diagnostics" role="tab" aria-selected="true">${icon("activity")}<span>Diagnostics</span></button>
+            <button class="bp-tab active" data-btab="diagnostics" role="tab" aria-selected="true">${icon("activity")}<span>Messages</span></button>
             <button class="bp-tab" data-btab="waveform" role="tab" aria-selected="false">${icon("activity")}<span>Waveform</span></button>
             <button class="bp-tab" data-btab="displays" role="tab" aria-selected="false">${icon("monitor")}<span>Serial / VGA / LCD</span></button>
-            <em class="bp-badge" id="diag-badge" title="Diagnostics">0</em>
+            <em class="bp-badge" id="diag-badge" title="Messages">0</em>
             <span class="bp-flex"></span>
             <button class="icon-btn" data-act="collapse" title="Collapse bottom dock" aria-label="Collapse bottom dock">${icon("chevron")}</button>
         </div>
@@ -25,16 +24,20 @@ export function createBottomPanel(root, h) {
             </div>
 
             <div class="bp-pane" data-pane="diagnostics">
-                <div class="bp-pane-tools">
-                    <label><input type="checkbox" data-lf="info" checked> INFO</label>
-                    <label><input type="checkbox" data-lf="ok" checked> OK</label>
-                    <label><input type="checkbox" data-lf="warn" checked> WARN</label>
-                    <label><input type="checkbox" data-lf="error" checked> ERR</label>
-                    <label><input type="checkbox" data-lf="cmd" checked> CMD</label>
+                <div class="msg-tools">
+                    <div class="msg-filters" role="group" aria-label="Severity filter">
+                        <button type="button" class="msg-filter active" data-sev="all">All <em id="mf-all">0</em></button>
+                        <button type="button" class="msg-filter" data-sev="error">Errors <em id="mf-error">0</em></button>
+                        <button type="button" class="msg-filter" data-sev="warning">Warnings <em id="mf-warning">0</em></button>
+                        <button type="button" class="msg-filter" data-sev="info">Info <em id="mf-info">0</em></button>
+                    </div>
+                    <input type="text" class="msg-filter-text" id="msg-filter-text" placeholder="Filter&hellip;" aria-label="Filter messages">
                     <span class="bp-flex"></span>
                     <button class="btn" data-act="clearlog">Clear</button>
                 </div>
-                <div class="console-log" id="console-log" role="log"></div>
+                <div class="msg-table" id="console-log" role="log">
+                    <div class="msg-head"><span>Type</span><span>ID</span><span>Message</span></div>
+                </div>
             </div>
 
             <div class="bp-pane hidden" data-pane="waveform">
@@ -93,9 +96,9 @@ export function createBottomPanel(root, h) {
     const wave = createWaveformView(root.querySelector("#wave-wrap"), { onValuesAt: h.onValuesAt });
     const logEl = root.querySelector("#console-log");
     const badge = root.querySelector("#diag-badge");
-    const filters = { info: true, ok: true, warn: true, error: true, cmd: true };
-    const logRows = [];
-    let problems = [];
+    const messages = [];          // {sev, id, text, file, line, column, el, isProblem}
+    let activeSev = "all";
+    let filterText = "";
     let active = "diagnostics";
 
     // ------------------------------------------------------------- tabs ----
@@ -126,9 +129,9 @@ export function createBottomPanel(root, h) {
                 setTimeout(() => wave.resize(), 60);
                 break;
             case "clearlog":
-                logEl.innerHTML = "";
-                logRows.length = 0;
-                updateBadge();
+                for (const m of messages) m.el.remove();
+                messages.length = 0;
+                updateCounts();
                 break;
             case "term-clear": h.onTerminalClear?.(); break;
             case "term-restart": h.onTerminalRestart?.(); break;
@@ -136,13 +139,9 @@ export function createBottomPanel(root, h) {
         }
     });
 
-    // ------------------------------------------------------- diagnostics ---
-    root.querySelectorAll("[data-lf]").forEach((cb) => {
-        cb.addEventListener("change", () => {
-            filters[cb.dataset.lf] = cb.checked;
-            logRows.forEach((r) => r.el.classList.toggle("hidden", !filters[r.level]));
-        });
-    });
+    // ------------------------------------------------------- messages ------
+    // Quartus-style Messages tab: tabular Type | ID | Message rows, severity
+    // filters with live counts, a text filter and click-to-jump-to-line.
     root.querySelector("#bp-export-vcd")?.addEventListener("click", () => h.onExportVcd?.());
     root.querySelector("#terminal-input")?.addEventListener("keydown", (e) => {
         if (e.key !== "Enter") return;
@@ -151,44 +150,108 @@ export function createBottomPanel(root, h) {
         h.onTerminalInput?.(line);
     });
 
+    const SEV_OF_LEVEL = { info: "info", ok: "info", cmd: "info", warn: "warning", error: "error" };
+    const TYPE_LABEL = { error: "Error", warning: "Warning", info: "Info" };
+
+    function matchesFilter(m) {
+        if (activeSev !== "all" && m.sev !== activeSev) return false;
+        if (!filterText) return true;
+        const hay = `${m.text} ${m.id}`.toLowerCase();
+        return hay.includes(filterText.toLowerCase());
+    }
+
+    function applyMessageFilter() {
+        for (const m of messages) m.el.classList.toggle("hidden", !matchesFilter(m));
+    }
+
+    function updateCounts() {
+        const counts = { error: 0, warning: 0, info: 0 };
+        for (const m of messages) counts[m.sev] += 1;
+        root.querySelector("#mf-all").textContent = String(messages.length);
+        root.querySelector("#mf-error").textContent = String(counts.error);
+        root.querySelector("#mf-warning").textContent = String(counts.warning);
+        root.querySelector("#mf-info").textContent = String(counts.info);
+        badge.textContent = String(counts.error || messages.length);
+        badge.classList.toggle("has-errors", counts.error > 0);
+        badge.classList.toggle("has-warnings", counts.error === 0 && counts.warning > 0);
+    }
+
+    function makeMessageRow(m) {
+        const row = document.createElement("div");
+        row.className = `msg-row sev-${m.sev}${m.isProblem ? " is-problem" : ""}`;
+        row.innerHTML = `<span class="m-type">${TYPE_LABEL[m.sev]}</span><span class="m-id"></span><span class="m-text"></span>`;
+        row.querySelector(".m-id").textContent = m.id || "";
+        row.querySelector(".m-text").textContent = m.text;
+        if (m.isProblem) {
+            row.title = "Click to jump to the source line";
+            row.addEventListener("click", () => h.onOpenProblem?.({
+                file: m.file, line: m.line, column: m.column, severity: m.sev,
+                message: m.text,
+            }));
+        }
+        return row;
+    }
+
+    function appendMessage(m) {
+        const row = makeMessageRow(m);
+        m.el = row;
+        messages.push(m);
+        logEl.appendChild(row);
+        while (messages.length > 600) {
+            const old = messages.shift();
+            old.el.remove();
+        }
+        applyMessageFilter();
+        updateCounts();
+        // Defer the scroll: reading scrollHeight forces a full document layout
+        // and would blow the <1 ms stimulus budget.
+        requestAnimationFrame(() => { logEl.scrollTop = logEl.scrollHeight; });
+    }
+
+    root.querySelectorAll(".msg-filter").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            activeSev = btn.dataset.sev;
+            root.querySelectorAll(".msg-filter").forEach((b) => b.classList.toggle("active", b === btn));
+            applyMessageFilter();
+        });
+    });
+    root.querySelector("#msg-filter-text")?.addEventListener("input", (e) => {
+        filterText = e.target.value.trim();
+        applyMessageFilter();
+    });
+
     function stamp() {
         const d = new Date();
         const p = (n, w = 2) => String(n).padStart(w, "0");
-        return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
-    }
-
-    function updateBadge() {
-        const errs = problems.filter((p) => p.severity === "error").length;
-        const warns = problems.filter((p) => p.severity === "warning").length;
-        const n = problems.length || logRows.filter((r) => r.level === "error").length;
-        badge.textContent = String(n);
-        badge.classList.toggle("has-errors", errs > 0);
-        badge.classList.toggle("has-warnings", errs === 0 && warns > 0);
-        badge.title = `${errs} error(s), ${warns} warning(s), ${logRows.length} log line(s)`;
+        return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
     }
 
     function log(text, level = "info") {
-        const row = document.createElement("div");
-        row.className = `log-line log-${level}`;
-        row.innerHTML = `<span class="log-time">${stamp()}</span><span class="log-tag">${TAGS[level] || "INFO"}</span><span class="log-text"></span>`;
-        row.querySelector(".log-text").textContent = String(text);
-        row.classList.toggle("hidden", !filters[level]);
-        logEl.appendChild(row);
-        logRows.push({ el: row, level });
-        while (logRows.length > 600) logRows.shift().el.remove();
-        // Defer the scroll: reading scrollHeight forces a full document layout
-        // (backdrop-filter pills make that expensive) and would blow the
-        // <1 ms stimulus budget. The visual result is identical.
-        requestAnimationFrame(() => { logEl.scrollTop = logEl.scrollHeight; });
-        if (level === "error") updateBadge();
+        appendMessage({ sev: SEV_OF_LEVEL[level] || "info", id: stamp(), text: String(text) });
     }
 
-    // Compiler diagnostics now live here (the right workbench keeps its own
-    // compact Code-tab drawer, but this dock is the single full log).
+    /** Compiler/lint diagnostics: clickable rows that jump to the source. */
     function setProblems(list = []) {
-        problems = Array.isArray(list) ? list : [];
-        logRows.filter((r) => r.level === "diag").forEach((r) => r.el.remove());
-        updateBadge();
+        for (let i = messages.length - 1; i >= 0; i -= 1) {
+            if (messages[i].isProblem) {
+                messages[i].el.remove();
+                messages.splice(i, 1);
+            }
+        }
+        for (const item of Array.isArray(list) ? list : []) {
+            const sev = item.severity === "error" ? "error"
+                : item.severity === "warning" ? "warning" : "info";
+            const file = item.file || "design.vhd";
+            const line = item.line ? String(item.line) : "";
+            appendMessage({
+                sev,
+                id: line ? `${file}:${line}` : file,
+                text: item.message || String(item),
+                file, line: item.line, column: item.column,
+                isProblem: true,
+            });
+        }
+        updateCounts();
     }
 
     // ------------------------------------------------------------ serial ---
@@ -328,7 +391,7 @@ export function createBottomPanel(root, h) {
         probeBar.appendChild(chip);
     }
 
-    updateBadge();
+    updateCounts();
 
     return {
         showTab, log, setProblems, setUart, setVga, setLcd, setLiveUart, setLiveVga,

@@ -9,59 +9,79 @@
 <body>
     <div id="drawer-backdrop" hidden></div>
     <div id="app">
-        <!-- Zone 1: slim 42px header -->
+        <!-- Zone 0: slim IDE menu (File / Edit / View / Assignments / Processing / Tools) -->
+        <nav id="menubar" aria-label="IDE menu"></nav>
+
+        <!-- Zone 1: action bar (board + top entity, Compile & Run, transport, audio) -->
         <header id="toolbar" aria-label="Main toolbar"></header>
 
-        <!-- Zone 2 + 3: only the board viewport and the right workbench -->
-        <div id="workspace">
-            <main id="board-area" aria-label="3D board view">
-                <div id="board-host"></div>
+        <!-- Zone 2: left dock — Project Navigator over the Tasks pipeline -->
+        <aside id="left" aria-label="Project navigator and compilation tasks">
+            <div id="navigator-host" class="left-navigator"></div>
+            <div id="tasks-host" class="left-tasks"></div>
+        </aside>
+        <div class="dock-resizer" id="left-resizer" aria-hidden="true" title="Drag to resize the navigator"></div>
 
-                <div class="board-overlay-top" aria-label="Camera and view controls">
-                    <div class="cam-pill" id="cam-presets" role="group" aria-label="Camera presets">
-                        <button type="button" data-cam="top">Top</button>
-                        <button type="button" data-cam="iso" class="active">45&deg;</button>
-                        <button type="button" data-cam="front">Front</button>
-                        <button type="button" data-cam="fit">Fit</button>
-                        <button type="button" id="btn-pin-labels" aria-pressed="false">Pin Labels</button>
+        <!-- Zone 3: center workspace — tabbed source editor + tool tabs -->
+        <section id="center" aria-label="Source editor and tools">
+            <div class="center-tabs" id="center-tabs" role="tablist" aria-label="Editor tools">
+                <button type="button" class="ct-tab active" data-ctab="sources" role="tab" aria-selected="true">Sources</button>
+                <button type="button" class="ct-tab" data-ctab="pinmap" role="tab" aria-selected="false">Pin Planner</button>
+            </div>
+            <div id="center-editor" class="center-pane"><div id="editor-host"></div></div>
+            <div id="center-tools" class="center-pane hidden"></div>
+        </section>
+        <div class="dock-resizer" id="right-resizer" aria-hidden="true" title="Drag to resize the board dock"></div>
+
+        <!-- Zone 4: right dock — live 3D virtual board + Peripherals / Board-Import -->
+        <aside id="right" aria-label="Virtual board dock">
+            <div class="rd-tabs" id="right-tabs" role="tablist" aria-label="Board dock views">
+                <button type="button" class="rt-tab active" data-rtab="board3d" role="tab" aria-selected="true">3D Board</button>
+                <button type="button" class="rt-tab" data-rtab="periph" role="tab" aria-selected="false">Peripherals</button>
+                <button type="button" class="rt-tab" data-rtab="boardimport" role="tab" aria-selected="false">Board / Import</button>
+            </div>
+            <div id="rd-board" class="rd-pane">
+                <main id="board-area" aria-label="3D board view">
+                    <div id="board-host"></div>
+
+                    <div class="board-overlay-top" aria-label="Camera and view controls">
+                        <div class="cam-pill" id="cam-presets" role="group" aria-label="Camera presets">
+                            <button type="button" data-cam="top">Top</button>
+                            <button type="button" data-cam="iso" class="active">45&deg;</button>
+                            <button type="button" data-cam="front">Front</button>
+                            <button type="button" data-cam="fit">Fit</button>
+                            <button type="button" id="btn-pin-labels" aria-pressed="false">Pin Labels</button>
+                        </div>
                     </div>
-                </div>
 
-                <div class="board-hud-pill">
-                    <div id="board-controls" class="board-controls hidden" aria-label="Board key and DIP controls">
-                        <div class="bc-row" id="bc-row"></div>
+                    <div class="board-hud-pill">
+                        <div id="board-controls" class="board-controls hidden" aria-label="Board key and DIP controls">
+                            <div class="bc-row" id="bc-row"></div>
+                        </div>
                     </div>
-                </div>
 
-                <div id="backend-banner" class="backend-banner hidden" role="alert">
-                    <span class="bb-icon">&#9888;</span>
-                    <div>
-                        <b>Backend disconnected</b>
-                        <span>Start the simulator with <code>python -m backend serve</code>.</span>
+                    <div id="backend-banner" class="backend-banner hidden" role="alert">
+                        <span class="bb-icon">&#9888;</span>
+                        <div>
+                            <b>Backend disconnected</b>
+                            <span>Start the simulator with <code>python -m backend serve</code>.</span>
+                        </div>
+                        <button class="btn" id="backend-retry" type="button">Retry</button>
                     </div>
-                    <button class="btn" id="backend-retry" type="button">Retry</button>
-                </div>
-            </main>
+                </main>
+            </div>
+            <div id="rd-periph" class="rd-pane hidden"></div>
+            <div id="rd-boardimport" class="rd-pane hidden"></div>
+        </aside>
 
-            <div class="ep-resizer" aria-hidden="true" title="Drag to resize workbench"></div>
-
-            <aside id="right" aria-label="Workbench">
-                <div class="wb-tabs" id="wb-tabs" role="tablist" aria-label="Workbench views">
-                    <button type="button" class="wb-tab active" data-tab="code" role="tab" aria-selected="true">Code</button>
-                    <button type="button" class="wb-tab" data-tab="pinmap" role="tab" aria-selected="false">Pin Planner</button>
-                    <button type="button" class="wb-tab" data-tab="periph" role="tab" aria-selected="false">Peripherals</button>
-                    <button type="button" class="wb-tab" data-tab="board" role="tab" aria-selected="false">Board</button>
-                </div>
-                <div id="editor-host"></div>
-                <div id="sidebar-host"></div>
-            </aside>
-        </div>
-
-        <!-- Zone 4: single collapsible bottom dock (height draggable) -->
+        <!-- Zone 5: bottom dock — Messages / Terminal / Waveform / Displays -->
         <section id="bottom" aria-label="Output dock">
             <div class="bp-resizer" aria-hidden="true" title="Drag to resize dock"></div>
             <div id="bottompanel"></div>
         </section>
+
+        <!-- Zone 6: slim status bar -->
+        <footer id="statusbar" aria-label="Status bar"></footer>
     </div>
     <script type="module" src="/src/main.js"></script>
 </body>

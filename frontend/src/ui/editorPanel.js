@@ -140,6 +140,12 @@ export function createEditorPanel(root, h) {
         find: { addExtraSpaceOnTop: false, autoFindInSelection: "never" },
         lineNumbersMinChars: 3,
     });
+    // Status-bar cursor mirror (Ln X, Col Y).
+    if (typeof editor.onDidChangeCursorPosition === "function") {
+        editor.onDidChangeCursorPosition((e) => {
+            h.onCursor?.(e.position?.lineNumber || 1, e.position?.column || 1);
+        });
+    }
 
     // Monaco measures its container when it is created, which can still be
     // display:none during startup or a workbench-tab switch. Keep it sized on
