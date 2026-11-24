@@ -62,7 +62,7 @@ export function dialog({ title, body, actions = [], wide = false }) {
         btn.type = "button";
         btn.className = `btn ${a.kind || ""}`;
         btn.textContent = a.label;
-        btn.addEventListener("click", () => { a.onClick?.(); if (a.closes !== false) close(); });
+        btn.addEventListener("click", () => { a.onClick?.(close); if (a.closes !== false) close(); });
         actionsEl.appendChild(btn);
     }
     if (!actions.length) actionsEl.remove();

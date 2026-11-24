@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod dialogs;
 mod pty;
 
 use std::env;
@@ -345,9 +346,15 @@ fn main() {
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,
+            dialogs::dialog_pick_folder,
+            dialogs::dialog_open_files,
+            dialogs::dialog_save_file,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.set_theme(Some(tauri::Theme::Light));
+            }
             let resource_dir = app.path().resource_dir().ok();
             let user_data = resolve_user_data_dir();
             let _ = fs::create_dir_all(user_data.join("logs"));

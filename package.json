@@ -1,7 +1,7 @@
 {
   "name": "cycloneivsimulations",
   "private": true,
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Cyclone IV Studio \u2014 RZ-EasyFPGA A2.2 browser simulator (root task runner; the frontend app lives in frontend/)",
   "scripts": {
     "dev": "cd frontend && npm run dev",

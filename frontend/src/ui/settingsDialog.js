@@ -1,6 +1,7 @@
 // settingsDialog.js — Quartus Prime Settings dialog & Missing-Quartus-Path alert.
 
 import { dialog } from "./toast.js";
+import { invoke } from "@tauri-apps/api/core";
 
 function esc(s) {
     return String(s ?? "").replace(/[&<>"']/g, (ch) => (
@@ -27,6 +28,7 @@ export async function openSettingsDialog({ api, onSaved } = {}) {
                 <div class="q-set-row">
                     <input type="text" id="qs-quartus-path" class="q-set-input" value="${esc(s.quartusPath || "")}"
                            placeholder="C:\\intelFPGA\\18.1\\quartus\\bin64">
+                    <button type="button" class="btn" id="qs-browse-quartus">Browse...</button>
                     <button type="button" class="btn" id="qs-detect-btn">Auto-detect</button>
                 </div>
                 <div class="q-set-status ${q.valid ? "ok" : "err"}" id="qs-quartus-status">
@@ -37,8 +39,11 @@ export async function openSettingsDialog({ api, onSaved } = {}) {
 
             <div class="q-set-group">
                 <label class="q-set-label" for="qs-modelsim-path">ModelSim path (optional, for .vho netlist simulation)</label>
-                <input type="text" id="qs-modelsim-path" class="q-set-input" value="${esc(s.modelsimPath || "")}"
-                       placeholder="C:\\intelFPGA\\18.1\\modelsim_ase\\win32aloem">
+                <div class="q-set-row">
+                    <input type="text" id="qs-modelsim-path" class="q-set-input" value="${esc(s.modelsimPath || "")}"
+                           placeholder="C:\\intelFPGA\\18.1\\modelsim_ase\\win32aloem">
+                    <button type="button" class="btn" id="qs-browse-modelsim">Browse...</button>
+                </div>
                 <div class="q-set-status ${m.valid ? "ok" : "dim"}" id="qs-ms-status">
                     ${m.valid ? `Valid: ${esc(m.path)}` : "Not detected (built-in simulator will be used)"}
                 </div>
@@ -46,7 +51,10 @@ export async function openSettingsDialog({ api, onSaved } = {}) {
 
             <div class="q-set-group">
                 <label class="q-set-label" for="qs-project-dir">Project workspace folder</label>
-                <input type="text" id="qs-project-dir" class="q-set-input" value="${esc(s.projectDir || "")}">
+                <div class="q-set-row">
+                    <input type="text" id="qs-project-dir" class="q-set-input" value="${esc(s.projectDir || "")}">
+                    <button type="button" class="btn" id="qs-browse-project">Browse...</button>
+                </div>
             </div>
 
             <div class="q-set-group">
@@ -123,6 +131,21 @@ export async function openSettingsDialog({ api, onSaved } = {}) {
                 qInput.value = candidates[0];
             }
         });
+        const wireBrowse = (btnId, inputId, title) => {
+            const btn = document.getElementById(btnId);
+            if (!btn) return;
+            if (!window.__TAURI_INTERNALS__) { btn.hidden = true; return; }
+            btn.addEventListener("click", async () => {
+                const inp = document.getElementById(inputId);
+                try {
+                    const picked = await invoke("dialog_pick_folder", { title, startDir: inp?.value || null });
+                    if (picked && inp) inp.value = picked;
+                } catch { /* ignore */ }
+            });
+        };
+        wireBrowse("qs-browse-quartus", "qs-quartus-path", "Select Quartus bin64 Folder");
+        wireBrowse("qs-browse-modelsim", "qs-modelsim-path", "Select ModelSim Folder");
+        wireBrowse("qs-browse-project", "qs-project-dir", "Select Default Project Workspace Folder");
     }, 0);
 }
 

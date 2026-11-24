@@ -27,7 +27,7 @@ export function createToolbar(root, h) {
             </label>
             <select id="tb-board-select" aria-label="FPGA Board" class="hidden"></select>
             <span class="tb-sep" aria-hidden="true"></span>
-            <button type="button" class="q-tool-btn" data-act="pin-planner" title="Pin Planner">${icon("qPinPlan")}</button>
+            <button type="button" class="q-tool-btn" id="tb-pin-planner" data-act="pin-planner" title="Pin Planner">${icon("qPinPlan")}</button>
             <button type="button" class="q-tool-btn" data-act="settings" title="Settings (Quartus Path &amp; Options)">${icon("qSettings")}</button>
             <button type="button" class="q-tool-btn" data-act="open-quartus" title="Open in Quartus Prime GUI">${icon("qQuartus")}</button>
             <span class="tb-sep" aria-hidden="true"></span>

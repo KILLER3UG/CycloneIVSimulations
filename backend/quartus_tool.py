@@ -310,6 +310,7 @@ def parse_compilation_report(project_dir: Path, project_name: str) -> Dict[str, 
     map_sum = _read(f"{proj}.map.summary")
     fit_sum = _read(f"{proj}.fit.summary")
     sta_sum = _read(f"{proj}.sta.summary")
+    asm_rpt = _read(f"{proj}.asm.rpt")
     eda_rpt = _read(f"{proj}.eda.rpt")
 
     flow_summary = _parse_ascii_table(flow_rpt, "Flow Summary")
@@ -318,11 +319,29 @@ def parse_compilation_report(project_dir: Path, project_name: str) -> Dict[str, 
     elif not flow_summary and map_sum:
         flow_summary = [["Item", "Value"], *[[r["key"], r["value"]] for r in _parse_kv_summary(map_sum)]]
 
+    flow_settings = _parse_ascii_table(flow_rpt, "Flow Settings")
+    flow_non_default = _parse_ascii_table(flow_rpt, "Flow Non-Default Global Settings")
     elapsed = _parse_ascii_table(flow_rpt, "Flow Elapsed Time")
-    flow_settings = _parse_ascii_table(flow_rpt, "Flow Non-Default Global Settings")
+    flow_os_summary = _parse_ascii_table(flow_rpt, "Flow OS Summary")
+
+    # Extract Flow Log text block (after `; Flow Log ;` header)
+    flow_log_lines: List[str] = []
+    in_flow_log = False
+    for raw_ln in flow_rpt.splitlines():
+        if not in_flow_log:
+            if "flow log" in raw_ln.lower() and raw_ln.strip().startswith(";"):
+                in_flow_log = True
+            continue
+        if raw_ln.strip().startswith("; --") and flow_log_lines:
+            continue
+        if raw_ln.strip().startswith(";"):
+            break
+        flow_log_lines.append(raw_ln)
+
     map_rows = _parse_kv_summary(map_sum)
     fit_rows = _parse_kv_summary(fit_sum)
     sta_rows = _parse_kv_summary(sta_sum)
+    asm_rows = _parse_ascii_table(asm_rpt, "Assembler") or _parse_kv_summary(asm_rpt)
 
     eda_files: List[str] = []
     if sim_dir.is_dir():
@@ -351,12 +370,19 @@ def parse_compilation_report(project_dir: Path, project_name: str) -> Dict[str, 
         "edaFiles": eda_files,
         "flowSummary": flow_summary,
         "flowSettings": flow_settings,
+        "flowNonDefault": flow_non_default,
         "elapsedTimes": elapsed,
+        "flowOsSummary": flow_os_summary,
+        "flowLog": "\n".join(flow_log_lines).strip(),
+        "assemblerSummary": asm_rows,
         "resourceUsage": fit_rows or map_rows,
         "synthesisSummary": map_rows,
         "timing": sta_rows,
         "raw": {
             "flow": flow_rpt[:30000],
+            "map": map_sum[:15000],
+            "fit": fit_sum[:15000],
+            "asm": asm_rpt[:15000],
             "eda": eda_rpt[:15000],
             "sta": sta_sum[:15000],
         },

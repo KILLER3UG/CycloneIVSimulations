@@ -10,12 +10,16 @@
     "core:default",
     "core:event:default",
     "core:window:allow-set-title",
+    "core:window:allow-close",
     "updater:default",
     "process:default",
     "allow-pty-list-shells",
     "allow-pty-create",
     "allow-pty-write",
     "allow-pty-resize",
-    "allow-pty-kill"
+    "allow-pty-kill",
+    "allow-dialog-pick-folder",
+    "allow-dialog-open-files",
+    "allow-dialog-save-file"
   ]
 }

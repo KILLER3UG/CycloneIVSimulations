@@ -4,6 +4,18 @@ All notable changes to **Cyclone IV Studio** are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-11-24
+
+### Added
+- **Dynamic Terminal Working Directory Sync**: The embedded ConPTY terminal automatically `cd`s to the active editor file's directory (including nested subfolders) when selecting files, opening folders/files, or switching examples so CLI agents can edit files directly in place, and falls back to the user's Home directory when no file is open.
+- **Native Windows File Explorer Dialogs**: Added `rfd`-backed native dialogs for `Open...` (files), `Open Project...` (folder), `New Project Wizard...`, `Save As...`, and Settings `Browse...`.
+
+### Changed
+- **Quartus Prime Light UI & Removable Pin Planner**: Light native Windows window theme, single-row Quartus document tab strip (`buzzb.vhd` | closeable `Compilation Report` | closeable `Pin Planner` opened from `#tb-pin-planner`), Quartus `Project Navigator` hierarchy + 3-column `Task | Time` grid, exact `Flow Summary` Compilation Report, and full `File` menu without `.sdc` clutter or bottom-middle Pin Planner toasts.
+
+### Fixed
+- **In-App Updater Version & Progress**: Resolved `@tauri-apps/api/app` `getVersion()` cleanly so the updater dialog displays the real `v0.1.x` version instead of `vundefined` and handles download/install progress events reliably.
+
 ## [0.1.7] - 2026-11-24
 
 ### Added

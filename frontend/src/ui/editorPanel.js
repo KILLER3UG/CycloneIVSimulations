@@ -185,6 +185,14 @@ export function createEditorPanel(root, h) {
     let suppressModify = false;
     let refreshTimer = 0;
     let lastUndo = null;
+    let lastNotifiedActive = null;
+
+    function notifyActiveFile() {
+        const nextName = files[activeFile]?.name || "";
+        if (nextName === lastNotifiedActive) return;
+        lastNotifiedActive = nextName;
+        h.onActiveFileChanged?.(nextName);
+    }
 
     function snapshotFiles() {
         return files.map((f) => ({
@@ -495,6 +503,7 @@ export function createEditorPanel(root, h) {
             activeFile = -1;
             syncEmptyState();
             refreshHierarchy(true);
+            notifyActiveFile();
             return;
         }
         if (i < 0 || i >= files.length) return;
@@ -505,6 +514,7 @@ export function createEditorPanel(root, h) {
         editor.setModel(modelFor(f.name, f.content));
         requestAnimationFrame(layoutEditor);
         refreshHierarchy(changed && !pinnedTop);
+        notifyActiveFile();
     }
 
     function setFiles(next, keepActive = true, { userAction = false } = {}) {
@@ -530,6 +540,7 @@ export function createEditorPanel(root, h) {
             activeFile = -1;
             syncEmptyState();
             refreshHierarchy(true);
+            notifyActiveFile();
             h.onFilesChanged?.(files);
             return;
         }
@@ -793,7 +804,10 @@ export function createEditorPanel(root, h) {
         switch (btn.dataset.act) {
             case "add-vhd": addNewSourceFile("vhd"); break;
             case "add-v": addNewSourceFile("v"); break;
-            case "upload": root.querySelector("#ep-file").click(); break;
+            case "upload":
+                if (typeof h.onRequestOpen === "function") h.onRequestOpen();
+                else root.querySelector("#ep-file").click();
+                break;
             case "rename": openRenameDialog(); break;
             case "delete": deleteFileAt(activeFile); break;
             case "zip": downloadZip(); break;
@@ -1020,7 +1034,7 @@ export function createEditorPanel(root, h) {
             // Add newly created HDL/data files created on disk by external tools/agents
             for (const f of incoming) {
                 if (existingNames.has(f.name)) continue;
-                if (/\.(qpf|qsf)$/i.test(f.name)) continue;
+                if (/\.(qpf|qsf|sdc)$/i.test(f.name)) continue;
                 files.push({ name: f.name, content: String(f.content ?? "") });
                 modelFor(f.name, f.content);
                 added.push(f.name);
@@ -1049,6 +1063,7 @@ export function createEditorPanel(root, h) {
                     activeFile = -1;
                 }
                 refreshHierarchy(true);
+                notifyActiveFile();
                 h.onFilesChanged?.(snapshotFiles());
             }
         } finally {

@@ -23,12 +23,17 @@
         </aside>
         <div class="dock-resizer" id="left-resizer" aria-hidden="true" title="Drag to resize the navigator"></div>
 
-        <!-- Zone 3: center workspace — tabbed source editor, Compilation Report & Pin Planner -->
+        <!-- Zone 3: center workspace — single-row Quartus document tabs (Sources / Compilation Report / Pin Planner) -->
         <section id="center" aria-label="Source editor and tools">
             <div class="center-tabs" id="center-tabs" role="tablist" aria-label="Editor tools">
-                <button type="button" class="ct-tab active" data-ctab="sources" role="tab" aria-selected="true">Sources</button>
-                <button type="button" class="ct-tab" data-ctab="report" id="ct-tab-report" role="tab" aria-selected="false" hidden>Compilation Report</button>
-                <button type="button" class="ct-tab" data-ctab="pinmap" role="tab" aria-selected="false">Pin Planner</button>
+                <div class="ct-files" id="ct-files"></div>
+                <button type="button" class="ct-tab" data-ctab="report" id="ct-tab-report" role="tab" aria-selected="false" hidden><span class="ct-ico" id="ct-report-ico"></span><span id="ct-report-label">Compilation Report</span><span class="ct-close" data-close-report title="Close Compilation Report">&times;</span></button>
+                <button type="button" class="ct-tab" data-ctab="pinmap" id="ct-tab-pinmap" role="tab" aria-selected="false" hidden><span class="ct-ico" id="ct-pin-ico"></span><span>Pin Planner</span><span class="ct-close" data-close-pinmap title="Close Pin Planner">&times;</span></button>
+                <span class="ct-spacer"></span>
+                <div class="ct-actions">
+                    <button type="button" class="ep-mod-btn" data-cact="add-vhd" title="Add new VHDL file (.vhd)">+ .vhd</button>
+                    <button type="button" class="ep-mod-btn ep-mod-v" data-cact="add-v" title="Add new Verilog file (.v)">+ .v</button>
+                </div>
             </div>
             <div id="center-editor" class="center-pane"><div id="editor-host"></div></div>
             <div id="center-report" class="center-pane hidden"><div id="report-host"></div></div>

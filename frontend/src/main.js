@@ -21,15 +21,17 @@ import { createInteractions } from "./ui/interactions.js";
 import { dialog, toast, cheatSheet } from "./ui/toast.js";
 import { icon } from "./ui/icons.js";
 import { audio } from "./audio.js";
-import { runUpdateFlow, updatesSupported } from "./updater.js";
+import { resolveCurrentVersion, runUpdateFlow, updatesSupported } from "./updater.js";
 import { buildVcd } from "./vcdExport.js";
 import { createTerminalController } from "./ui/terminal.js";
+import { resolveFileDir } from "./ui/terminalPath.js";
 import { pinPlanHasAssignments } from "./pinPlanGate.js";
 import { createMenuBar } from "./ui/menuBar.js";
 import { createLeftDock, TASKS } from "./ui/leftDock.js";
 import { createStatusBar } from "./ui/statusBar.js";
 import { createCompilationReportView } from "./ui/compilationReport.js";
 import { openSettingsDialog, showMissingQuartusError } from "./ui/settingsDialog.js";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
     accumulateBuzzerFreq,
@@ -548,7 +550,7 @@ function initComponents() {
         onToggleRight: () => toggleRight(),
         onToggleLeft: () => toggleLeft(),
         onToggleBottom: () => toggleBottom(),
-        onUpdate: () => { void runUpdateFlow(); },
+        onUpdate: () => { void runUpdateFlow(S.appVersion); },
         onStatusHint: (msg) => status?.setAction?.(msg),
         onAction: (act) => handleMenuAction(act),
     });
@@ -692,6 +694,7 @@ function initComponents() {
     editor = createEditorPanel($("editor-host"), {
         initialSource: S.files[0].content,
         onFilesChanged: () => { syncPlannerToActiveTop(); refreshNavigator(); },
+        onActiveFileChanged: () => syncTerminalToActiveFile(),
         onTopContextChanged: (ctx) => { syncPlannerToTopContext(ctx); refreshNavigator(); },
         onCursor: (line, column) => status?.setCursor?.(line, column),
         onModify: () => scheduleWorkspaceSync(),
@@ -712,6 +715,7 @@ function initComponents() {
         },
         onQsfUploaded: (qsfText) => { syncPlannerToActiveTop(); sidebar.importQsfText(qsfText); scheduleWorkspaceSync(50); },
         onFilesUploaded: () => scheduleWorkspaceSync(50),
+        onRequestOpen: () => void openFilesWithExplorer(),
         onRun: () => compileAndProgram(),
         onDevice: selectDevice,
         onCollapsed: () => resizeBoardSoon(),
@@ -731,7 +735,10 @@ function initComponents() {
     sidebar.setKeyStateReader(() => S.keyState || []);
 
     bottom = createBottomPanel($("bottompanel"), {
-        onOpenProblem: (p) => editor.openFile(p.file || editor.getActiveFile(), p.line, p.column),
+        onOpenProblem: (p) => {
+            setCenterTab("sources");
+            editor.openFile(p.file || editor.getActiveFile(), p.line, p.column);
+        },
         onValuesAt: (t) => { S.simTimeNs = t; },
         onLiveUartTx: (bytes) => {
             if (!S.liveActive) { toast("UART injection needs live mode — run first", { kind: "warn" }); return; }
@@ -761,12 +768,45 @@ function initComponents() {
     document.querySelector(".board-hud-pill")?.appendChild(statsEl);
     stats = createStatsBlock(statsEl);
 
+    // Populate single-row Quartus document tab icons
+    const rptIco = $("ct-report-ico");
+    if (rptIco) rptIco.innerHTML = icon("qCompReport");
+    const pinIco = $("ct-pin-ico");
+    if (pinIco) pinIco.innerHTML = icon("qPinPlan");
+
     // Center/right dock tab switching keeps exactly one sidebar home: the
     // Pin Planner hosts it in the center, Peripherals and Board/Import in
     // the right dock next to the 3D board.
     $("center-tabs")?.addEventListener("click", (e) => {
+        const closeFileBtn = e.target.closest("[data-close-file]");
+        if (closeFileBtn) {
+            e.stopPropagation();
+            editor?.deleteFileAt?.(Number(closeFileBtn.dataset.closeFile));
+            return;
+        }
+        if (e.target.closest("[data-close-report]")) {
+            e.stopPropagation();
+            $("ct-tab-report")?.setAttribute("hidden", "");
+            setCenterTab("sources");
+            return;
+        }
+        if (e.target.closest("[data-close-pinmap]")) {
+            e.stopPropagation();
+            $("ct-tab-pinmap")?.setAttribute("hidden", "");
+            setCenterTab("sources");
+            return;
+        }
+        const actBtn = e.target.closest("[data-cact]");
+        if (actBtn) {
+            if (actBtn.dataset.cact === "add-vhd") editor?.addNewSourceFile?.("vhd");
+            else if (actBtn.dataset.cact === "add-v") editor?.addNewSourceFile?.("v");
+            return;
+        }
         const tab = e.target.closest("[data-ctab]");
         if (!tab) return;
+        if (tab.dataset.ctab === "sources" && tab.dataset.fileIdx !== undefined) {
+            editor?.selectFile?.(Number(tab.dataset.fileIdx));
+        }
         setCenterTab(tab.dataset.ctab);
     });
     $("right-tabs")?.addEventListener("click", (e) => {
@@ -819,17 +859,34 @@ function initComponents() {
     }
 }
 
+function renderCenterFileTabs() {
+    const host = $("ct-files");
+    if (!host) return;
+    const files = editor?.getFiles?.() || [];
+    const activeName = editor?.getActiveFile?.() || "";
+    const inSources = !$("center-editor")?.classList.contains("hidden");
+    host.innerHTML = files.map((f, i) => {
+        const isActive = inSources && f.name === activeName;
+        const safeName = String(f.name || "").replace(/[&<>"']/g, (ch) => (
+            { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]
+        ));
+        return `<button type="button" class="ct-tab ct-file-tab ${isActive ? "active" : ""}" data-ctab="sources" data-file-idx="${i}" role="tab" aria-selected="${isActive}" title="${safeName}"><span class="ct-ico">${icon("qFileAbc")}</span><span>${safeName}</span><span class="ct-close" data-close-file="${i}" title="Close ${safeName}">&times;</span></button>`;
+    }).join("");
+}
+
 // Center dock tabs: Sources (Monaco) | Compilation Report | Pin Planner.
 function setCenterTab(key) {
     if (!["sources", "report", "pinmap"].includes(key)) return;
-    document.querySelectorAll("#center-tabs .ct-tab").forEach((t) => {
+    if (key === "pinmap") $("ct-tab-pinmap")?.removeAttribute("hidden");
+    $("center-editor")?.classList.toggle("hidden", key !== "sources");
+    $("center-report")?.classList.toggle("hidden", key !== "report");
+    $("center-tools")?.classList.toggle("hidden", key !== "pinmap");
+    document.querySelectorAll("#center-tabs > .ct-tab").forEach((t) => {
         const on = t.dataset.ctab === key;
         t.classList.toggle("active", on);
         t.setAttribute("aria-selected", String(on));
     });
-    $("center-editor")?.classList.toggle("hidden", key !== "sources");
-    $("center-report")?.classList.toggle("hidden", key !== "report");
-    $("center-tools")?.classList.toggle("hidden", key !== "pinmap");
+    renderCenterFileTabs();
     if (key === "pinmap") {
         $("center-tools").appendChild($("sidebar-host"));
         sidebar.showTab("pinmap");
@@ -931,11 +988,38 @@ function handleMenuAction(action) {
         case "new-v": editor.addNewSourceFile?.("v"); break;
         case "open":
         case "open-file":
-        case "add-file": editor.triggerUpload?.(); break;
-        case "open-folder": void openWorkspaceFolderDialog(); break;
+        case "add-file": void openFilesWithExplorer(); break;
+        case "open-project":
+        case "open-folder": void openProjectWithExplorer(); break;
+        case "new-project": void newProjectWithExplorer(); break;
+        case "close-file": {
+            const files = editor.getFiles?.() || [];
+            const activeName = editor.getActiveFile?.();
+            const idx = files.findIndex((f) => f.name === activeName);
+            if (idx >= 0) editor.deleteFileAt?.(idx);
+            break;
+        }
+        case "close-project":
+            S.workspaceDir = "";
+            S.workspaceVersion = "";
+            S.projectDir = "";
+            S.projectName = "";
+            editor.setFiles([], false, { userAction: true });
+            refreshNavigator();
+            updateWindowTitle();
+            syncTerminalToActiveFile();
+            break;
         case "save":
-        case "save-file": editor.saveActiveFile?.(); break;
+        case "save-file":
+        case "save-project":
+        case "save-all": editor.saveActiveFile?.(); break;
+        case "save-as": void saveFileAsWithExplorer(); break;
         case "export-zip": editor.downloadZip?.(); break;
+        case "exit":
+            if (typeof window !== "undefined" && window.__TAURI_INTERNALS__) {
+                void getCurrentWindow().close().catch(() => {});
+            }
+            break;
         case "examples": setCenterTab("sources"); break;
         case "export-vcd": exportVcd(); break;
         case "undo": editor.undo?.(); break;
@@ -988,7 +1072,7 @@ function handleMenuAction(action) {
             bottom.showTab("terminal");
             setTimeout(() => terminal?.fit?.(), 40);
             break;
-        case "update": void runUpdateFlow(); break;
+        case "update": void runUpdateFlow(S.appVersion); break;
         case "shortcuts": cheatSheet?.(); break;
         case "about":
             dialog({
@@ -1129,8 +1213,10 @@ async function runQuartusCompilation(stage = null) {
                     status?.setProgress?.(100, "Full Compilation was successful");
                     S.lastReport = msg.report || null;
                     const tabBtn = $("ct-tab-report");
+                    const tabLbl = $("ct-report-label");
                     if (tabBtn) {
-                        tabBtn.textContent = `Compilation Report - ${msg.projectName || plan.topEntity}`;
+                        if (tabLbl) tabLbl.textContent = `Compilation Report - ${msg.projectName || plan.topEntity}`;
+                        else tabBtn.textContent = `Compilation Report - ${msg.projectName || plan.topEntity}`;
                         tabBtn.removeAttribute("hidden");
                     }
                     reportView?.setReport?.(msg.report || null);
@@ -1202,6 +1288,7 @@ function refreshNavigator() {
         const activeName = editor?.getActiveFile?.() || "";
         const activeIndex = files.findIndex((f) => f.name === activeName);
         left?.setFiles?.(files, activeIndex, -1);
+        renderCenterFileTabs();
         const lang = (activeName || "").toLowerCase().endsWith(".v") ? "Verilog" : "VHDL";
         status?.setLanguage?.(lang);
         const device = S.device || {};
@@ -1379,16 +1466,22 @@ async function loadExample(id) {
             : (await api._fetch(`/api/examples/${encodeURIComponent(id)}`)).data;
         const source = data?.source ?? ex.source;
         S.entity = null;
-        editor.setFiles([{ name: ex.file || `${ex.id}.vhd`, content: source }], false);
-        S.projectName = ex.entity || ex.id;
-        toolbar?.setProjectLabel?.(ex.id);
-        const wsDir = defaultWorkspaceDirFor(S.projectName);
-        if (wsDir) {
-            S.workspaceDir = wsDir;
-            S.projectDir = wsDir;
-            await syncWorkspaceToDisk();
-            startWorkspaceWatch(wsDir);
+        suppressTerminalCwdSync = true;
+        try {
+            editor.setFiles([{ name: ex.file || `${ex.id}.vhd`, content: source }], false);
+            S.projectName = ex.entity || ex.id;
+            toolbar?.setProjectLabel?.(ex.id);
+            const wsDir = defaultWorkspaceDirFor(S.projectName);
+            if (wsDir) {
+                S.workspaceDir = wsDir;
+                S.projectDir = wsDir;
+                await syncWorkspaceToDisk();
+                startWorkspaceWatch(wsDir);
+            }
+        } finally {
+            suppressTerminalCwdSync = false;
         }
+        syncTerminalToActiveFile();
         updateWindowTitle(S.workspaceDir || S.projectDir, S.projectName);
         refreshNavigator();
         log(`Loaded example: ${ex.name}`, "cmd");
@@ -1632,10 +1725,6 @@ async function compileAndProgram({ updateTasks = true } = {}) {
     const pinWarning = pinCoverageWarning(updatedPinPlan?.validation);
     if (pinWarning) {
         log(pinWarning, "warn");
-        toast(pinWarning, {
-            kind: "warn", timeout: 10000,
-            action: { label: "Open Pin Planner", onClick: () => safeCall(() => setCenterTab("pinmap")) },
-        });
     }
 
     safeCall(() => board?.setDesign?.(S.compileBoard));
@@ -2068,6 +2157,17 @@ function exportVcd() {
 }
 
 // -------------------------------------------------------------- terminal ---
+let suppressTerminalCwdSync = false;
+
+function resolveTerminalTargetDir() {
+    return resolveFileDir(S.workspaceDir, editor?.getActiveFile?.() || "");
+}
+
+function syncTerminalToActiveFile({ force = false } = {}) {
+    if (suppressTerminalCwdSync) return false;
+    return terminal?.syncCwd?.(resolveTerminalTargetDir(), { force }) ?? false;
+}
+
 function defaultWorkspaceDirFor(projectName) {
     const base = String(S.settings?.projectDir || "").trim().replace(/[\\/]+$/, "");
     if (!base) return "";
@@ -2137,6 +2237,147 @@ function startWorkspaceWatch(dir) {
     if (ws?.open) ws.workspaceWatch(clean, S.workspaceVersion);
 }
 
+async function openWorkspacePath(dir, { selectFile = "" } = {}) {
+    const res = await api.workspaceOpen(dir);
+    if (!res?.httpOk || !res?.data?.ok) {
+        toast(res?.data?.error || "Could not open workspace folder", { kind: "error" });
+        return false;
+    }
+    loadWorkspaceSnapshot(res.data, { selectFile });
+    return true;
+}
+
+function loadWorkspaceSnapshot(snap, { selectFile = "" } = {}) {
+    const loaded = snap?.files || [];
+    const targetDir = snap?.dir || "";
+    S.entity = null;
+    S.workspaceVersion = snap?.version || "";
+    const folderName = String(targetDir).split(/[\\/]+/).filter(Boolean).pop() || "design";
+    S.projectName = folderName;
+    suppressTerminalCwdSync = true;
+    try {
+        S.workspaceDir = targetDir;
+        S.projectDir = targetDir;
+        const edFiles = loaded.filter((f) => !/\.(qpf|qsf)$/i.test(f.name));
+        editor.setFiles(edFiles.length ? edFiles : loaded, false, { userAction: true });
+        if (selectFile) editor.openFile?.(selectFile);
+    } finally {
+        suppressTerminalCwdSync = false;
+    }
+    setCenterTab("sources");
+    const qsfFile = loaded.find((f) => /\.qsf$/i.test(f.name));
+    if (qsfFile) sidebar?.importQsfText?.(qsfFile.content);
+    startWorkspaceWatch(targetDir);
+    syncTerminalToActiveFile();
+    refreshNavigator();
+    syncPlannerToActiveTop();
+    log(`Opened workspace ${targetDir} (${loaded.length} file(s))`, "ok");
+}
+
+async function openFilesWithExplorer() {
+    if (typeof window === "undefined" || !window.__TAURI_INTERNALS__) {
+        editor.triggerUpload?.();
+        return;
+    }
+    try {
+        const startDir = S.workspaceDir || S.settings?.projectDir || null;
+        const paths = await invoke("dialog_open_files", {
+            title: "Open Source / Project Files",
+            startDir,
+            multiple: true,
+        });
+        if (!Array.isArray(paths) || !paths.length) return;
+        const res = await api.workspaceOpenFiles(paths);
+        if (!res?.httpOk || !res?.data?.ok) {
+            toast(res?.data?.error || "Could not open selected files", { kind: "error" });
+            return;
+        }
+        const preferred = res.data.selectedFiles?.[0] || "";
+        loadWorkspaceSnapshot(res.data, { selectFile: preferred });
+    } catch (err) {
+        toast(`Open failed: ${err}`, { kind: "error" });
+    }
+}
+
+async function openProjectWithExplorer() {
+    if (typeof window === "undefined" || !window.__TAURI_INTERNALS__) {
+        await openWorkspaceFolderDialog();
+        return;
+    }
+    try {
+        const startDir = S.workspaceDir || S.settings?.projectDir || null;
+        const picked = await invoke("dialog_pick_folder", {
+            title: "Open Project Folder",
+            startDir,
+        });
+        if (!picked) return;
+        await openWorkspacePath(picked);
+    } catch (err) {
+        toast(`Open project failed: ${err}`, { kind: "error" });
+    }
+}
+
+async function newProjectWithExplorer() {
+    if (typeof window !== "undefined" && window.__TAURI_INTERNALS__) {
+        try {
+            const startDir = S.settings?.projectDir || S.workspaceDir || null;
+            const picked = await invoke("dialog_pick_folder", {
+                title: "Select New Project Folder",
+                startDir,
+            });
+            if (!picked) return;
+            const folderName = String(picked).split(/[\\/]+/).filter(Boolean).pop() || "design";
+            S.entity = null;
+            S.projectName = folderName;
+            S.workspaceDir = picked;
+            S.projectDir = picked;
+            editor.addNewSourceFile?.("vhd");
+            await syncWorkspaceToDisk();
+            startWorkspaceWatch(picked);
+            if (terminal?.isConnected?.()) terminal.runLine(`cd "${picked.replace(/"/g, "")}"`);
+            refreshNavigator();
+            log(`Initialized workspace at ${picked}`, "ok");
+            return;
+        } catch (err) {
+            toast(`New project failed: ${err}`, { kind: "error" });
+            return;
+        }
+    }
+    await openWorkspaceFolderDialog();
+}
+
+async function saveFileAsWithExplorer() {
+    const activeName = editor.getActiveFile?.();
+    const curFile = (editor.getFiles?.() || []).find((f) => f.name === activeName);
+    if (!curFile) return;
+    if (typeof window === "undefined" || !window.__TAURI_INTERNALS__) {
+        editor.saveActiveFile?.();
+        return;
+    }
+    try {
+        const startDir = S.workspaceDir || S.settings?.projectDir || null;
+        const targetPath = await invoke("dialog_save_file", {
+            title: "Save File As",
+            startDir,
+            defaultName: curFile.name,
+        });
+        if (!targetPath) return;
+        const norm = String(targetPath).replace(/\//g, "\\");
+        const sep = Math.max(norm.lastIndexOf("\\"), norm.lastIndexOf("/"));
+        const parentDir = sep > 0 ? norm.slice(0, sep) : S.workspaceDir;
+        const fileName = sep >= 0 ? norm.slice(sep + 1) : curFile.name;
+        const files = (editor.getFiles?.() || []).map((f) => (f.name === activeName ? { name: fileName, content: curFile.content } : f));
+        if (!files.some((f) => f.name === fileName)) files.push({ name: fileName, content: curFile.content });
+        const res = await api.workspaceWrite(parentDir, files);
+        if (res?.httpOk && res?.data?.ok) {
+            loadWorkspaceSnapshot(res.data, { selectFile: fileName });
+            log(`Saved ${targetPath}`, "ok");
+        }
+    } catch (err) {
+        toast(`Save As failed: ${err}`, { kind: "error" });
+    }
+}
+
 async function openWorkspaceFolderDialog() {
     const body = document.createElement("div");
     body.className = "q-settings-form";
@@ -2148,34 +2389,12 @@ async function openWorkspaceFolderDialog() {
         </div>
     `;
     const inp = body.querySelector("#ws-folder-input");
-    const openNow = async () => {
-        const dir = inp?.value?.trim();
-        if (!dir) return false;
-        const res = await api.workspaceOpen(dir);
-        if (!res?.httpOk || !res?.data?.ok) {
-            toast(res?.data?.error || "Could not open workspace folder", { kind: "error" });
-            return false;
-        }
-        const loaded = res.data.files || [];
-        S.entity = null;
-        S.workspaceVersion = res.data.version || "";
-        const folderName = String(res.data.dir || dir).split(/[\\/]+/).filter(Boolean).pop() || "design";
-        S.projectName = folderName;
-        editor.setFiles(loaded.filter((f) => !/\.(qpf|qsf)$/i.test(f.name)), false, { userAction: true });
-        const qsfFile = loaded.find((f) => /\.qsf$/i.test(f.name));
-        if (qsfFile) sidebar?.importQsfText?.(qsfFile.content);
-        startWorkspaceWatch(res.data.dir || dir);
-        refreshNavigator();
-        syncPlannerToActiveTop();
-        log(`Opened workspace ${res.data.dir} (${loaded.length} file(s))`, "ok");
-        return true;
-    };
     const close = dialog({
         title: "Open Folder / Workspace",
         body,
         actions: [
             { label: "Cancel" },
-            { label: "Open Workspace", kind: "primary", onClick: async () => { if (await openNow()) close(); return false; } },
+            { label: "Open Workspace", kind: "primary", onClick: async () => { const dir = inp?.value?.trim(); if (dir && await openWorkspacePath(dir)) close(); return false; } },
         ],
     });
     setTimeout(() => { inp?.focus(); inp?.select(); }, 20);
@@ -2185,15 +2404,10 @@ async function mountTerminal() {
     try {
         if (!bottom?.getTerminalHost) return;
         terminal = createTerminalController(bottom.getTerminalHost(), {
-            getCwd: () => "",
+            getCwd: () => resolveTerminalTargetDir(),
             getExtraPaths: () => [S.quartusInfo?.path, S.modelsimInfo?.path].filter(Boolean),
             onCdProject: () => {
-                if (!S.workspaceDir) {
-                    toast("No workspace folder active yet", { kind: "info" });
-                    return;
-                }
-                const target = S.workspaceDir.replace(/"/g, "");
-                terminal?.runLine?.(`cd "${target}"`);
+                terminal?.syncCwd?.(resolveTerminalTargetDir(), { force: true });
                 terminal?.focus?.();
             },
             fetchShells: async () => (await api.terminalShells())?.data?.shells || [],
@@ -2231,10 +2445,30 @@ function bindShortcuts() {
         return i >= 0 ? i : -1;
     };
     document.addEventListener("keydown", (e) => {
-        // Ctrl+L starts Quartus compilation even while focused in Monaco
+        // Ctrl+L / Ctrl+O / Ctrl+J / Ctrl+S work even while focused in Monaco
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "l") {
             e.preventDefault();
             runQuartusCompilation();
+            return;
+        }
+        if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "o") {
+            e.preventDefault();
+            void openFilesWithExplorer();
+            return;
+        }
+        if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "j") {
+            e.preventDefault();
+            void openProjectWithExplorer();
+            return;
+        }
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "s") {
+            e.preventDefault();
+            editor.saveActiveFile?.();
+            return;
+        }
+        if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "n") {
+            e.preventDefault();
+            editor.addNewSourceFile?.("vhd");
             return;
         }
         // Never hijack typing inside inputs, textareas, selects,
@@ -2298,6 +2532,8 @@ async function init() {
     await loadBoards();
     await loadExamples();
 
+    const tauriVer = await resolveCurrentVersion(S.appVersion);
+    if (tauriVer) S.appVersion = tauriVer;
     status?.setVersion?.(S.appVersion ? `v${S.appVersion}` : "");
     status?.setCursor?.(1, 1);
     refreshNavigator();
@@ -2312,6 +2548,9 @@ async function init() {
         board, state: S, api, compile: compileAndProgram, run: compileAndProgram,
         quartusCompile: runQuartusCompilation, stopQuartusCompile, openSettings,
         openWorkspaceFolder: (dir) => dir ? api.workspaceOpen(dir) : openWorkspaceFolderDialog(),
+        openWorkspacePath,
+        handleMenuAction,
+        closeProject: () => handleMenuAction("close-project"),
         stopSim, editor, sidebar, bottom, audio, pause: togglePause, resetSim, stepSim,
         toggleDip, setPhysicalKeyPressed, selectBoard, importCustomBoard,
         computeChannelMask, applyStimulusEntry, handleChannelChange, terminal,

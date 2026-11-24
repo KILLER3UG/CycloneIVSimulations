@@ -76,3 +76,10 @@ def test_workspace_rest_and_websocket_push_on_external_edit(tmp_path):
                 f["name"] == "buzzb.vhd" and "-- edited_by_cli" in f["content"]
                 for f in pushed["files"]
             )
+
+        r_files = client.post("/api/workspace/open-files", json={"paths": [str(ws / "buzzb.vhd")]})
+        assert r_files.status_code == 200
+        j_files = r_files.json()
+        assert j_files["ok"] is True
+        assert j_files["selectedFiles"] == ["buzzb.vhd"]
+        assert Path(j_files["dir"]).resolve() == ws.resolve()

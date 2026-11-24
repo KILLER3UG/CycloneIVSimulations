@@ -14,6 +14,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { terminalWsUrl } from "../api.js";
+import { normalizeDir, sameDir, buildCdCommand } from "./terminalPath.js";
 
 const ANSI_PATTERN = /\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)|[@-Z\\-_])/g;
 
@@ -43,7 +44,7 @@ export function createTerminalController(containerEl, opts = {}) {
             </select>
             <span id="term-cwd" class="term-cwd">&mdash;</span>
             <span id="term-status" class="term-status" role="status" aria-live="polite">disconnected</span>
-            <button id="term-cd-project" type="button" class="term-btn" title="cd to active project workspace folder">cd Project</button>
+            <button id="term-cd-project" type="button" class="term-btn" title="cd to active file folder (or Home if no file)">cd Project</button>
             <button id="term-clear" type="button" class="term-btn" title="Clear active terminal">Clear</button>
             <button id="term-restart" type="button" class="term-btn" title="Restart active shell">Restart</button>
         </div>
@@ -185,6 +186,7 @@ export function createTerminalController(containerEl, opts = {}) {
             ready: false,
             connected: false,
             cwd: getCwd() || "",
+            homeDir: "",
             mirror: "",
         };
         sessions.set(id, s);
@@ -270,6 +272,7 @@ export function createTerminalController(containerEl, opts = {}) {
                 });
                 s.ready = true;
                 s.connected = true;
+                s.homeDir = res?.home || s.homeDir || "";
                 s.cwd = res?.cwd || s.cwd;
                 if (s.id === activeId) {
                     setStatus(`ready (${chosenShell})`, "ready");
@@ -309,6 +312,7 @@ export function createTerminalController(containerEl, opts = {}) {
                 if (msg?.type === "ready") {
                     s.ready = true;
                     s.connected = true;
+                    s.homeDir = msg.home || s.homeDir || "";
                     s.cwd = msg.cwd || s.cwd;
                     if (s.id === activeId) {
                         setStatus(`ready${msg.ghdlOnPath ? " · ghdl" : ""}`, "ready");
@@ -449,6 +453,22 @@ export function createTerminalController(containerEl, opts = {}) {
         if (inputEl && inputEl.value) inputEl.value = "";
     }
 
+    function syncCwd(targetDir, { force = false } = {}) {
+        const s = sessions.get(activeId);
+        if (!s || !s.connected) return false;
+        const desired = normalizeDir(targetDir);
+        const displayTarget = desired || s.homeDir || "~";
+        if (!force) {
+            if (desired && sameDir(s.cwd, desired)) return false;
+            if (!desired && ((s.homeDir && sameDir(s.cwd, s.homeDir)) || s.cwd === "~")) return false;
+        }
+        const cmd = buildCdCommand(desired, s.shellId);
+        sendToSession(s, `${cmd}\r\n`);
+        s.cwd = displayTarget;
+        syncMirror();
+        return true;
+    }
+
     function clear() {
         const s = sessions.get(activeId);
         if (!s) return;
@@ -479,9 +499,11 @@ export function createTerminalController(containerEl, opts = {}) {
         runLine,
         clear,
         restart,
+        syncCwd,
         newTab: (sh) => spawnSession(sh),
         closeTab,
         getTabCount: () => sessions.size,
+        getCwd: () => sessions.get(activeId)?.cwd || "",
         getText: () => sessions.get(activeId)?.mirror || "",
         isReady: () => Boolean(sessions.get(activeId)?.ready),
         isConnected: () => Boolean(sessions.get(activeId)?.connected),

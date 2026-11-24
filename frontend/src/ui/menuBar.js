@@ -7,15 +7,25 @@ const MENUS = [
     {
         label: "File",
         items: [
-            { id: "new-vhd", label: "New VHDL File", hint: ".vhd" },
-            { id: "new-v", label: "New Verilog File", hint: ".v" },
-            { id: "open-file", label: "Open...", hint: "Ctrl+O" },
-            { id: "open-folder", label: "Open Folder / Workspace..." },
-            { id: "save-file", label: "Save", hint: "Ctrl+S" },
+            { id: "new-vhd", label: "New...", hint: "Ctrl+N", icon: "qNew" },
+            { id: "open-file", label: "Open...", hint: "Ctrl+O", icon: "qOpen" },
+            { id: "close-file", label: "Close", hint: "Ctrl+F4" },
             { sep: true },
-            { id: "examples", label: "Open Example Project..." },
+            { id: "new-project", label: "New Project Wizard...", icon: "qProjNew" },
+            { id: "open-project", label: "Open Project...", hint: "Ctrl+J", icon: "qProjOpen" },
+            { id: "save-project", label: "Save Project" },
+            { id: "close-project", label: "Close Project" },
+            { sep: true },
+            { id: "save-file", label: "Save", hint: "Ctrl+S", icon: "qSave" },
+            { id: "save-as", label: "Save As..." },
+            { id: "save-all", label: "Save All", hint: "Ctrl+Shift+S", icon: "qSaveAll" },
+            { sep: true },
             { id: "export-zip", label: "Export Project Archive (.zip)" },
             { id: "export-vcd", label: "Export Waveform VCD" },
+            { sep: true },
+            { id: "examples", label: "Open Example Project..." },
+            { sep: true },
+            { id: "exit", label: "Exit", hint: "Alt+F4" },
         ],
     },
     {
@@ -121,7 +131,8 @@ export function createMenuBar(root, h) {
                     ${menu.items.map((item) => item.sep
                         ? `<div class="mb-sep" role="separator"></div>`
                         : `<button type="button" class="mb-entry" role="menuitem" data-act="${item.id}">
-                               <span>${item.label}</span>${item.hint ? `<code>${item.hint}</code>` : ""}
+                               <span class="mb-ico">${item.icon ? icon(item.icon) : ""}</span>
+                               <span class="mb-entry-label">${item.label}</span>${item.hint ? `<code>${item.hint}</code>` : ""}
                            </button>`).join("")}
                 </div>
             </div>`).join("")}

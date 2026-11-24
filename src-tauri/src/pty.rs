@@ -277,6 +277,10 @@ pub fn pty_create(
         .or_else(|| env::var_os("HOME"))
         .map(PathBuf::from)
         .filter(|p| p.is_dir());
+    let home_str = user_home
+        .as_ref()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
 
     let resolved_cwd = requested_cwd
         .or(user_home)
@@ -422,6 +426,7 @@ pub fn pty_create(
         "ok": true,
         "id": id,
         "cwd": resolved_cwd.to_string_lossy(),
+        "home": home_str,
         "shell": program,
         "pid": pid,
     }))

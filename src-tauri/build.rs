@@ -7,6 +7,9 @@ fn main() {
                 "pty_write",
                 "pty_resize",
                 "pty_kill",
+                "dialog_pick_folder",
+                "dialog_open_files",
+                "dialog_save_file",
             ]),
         ),
     )

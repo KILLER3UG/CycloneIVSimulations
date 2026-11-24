@@ -177,6 +177,24 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the dialog_open_files command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-dialog-open-files",
+          "markdownDescription": "Enables the dialog_open_files command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the dialog_pick_folder command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-dialog-pick-folder",
+          "markdownDescription": "Enables the dialog_pick_folder command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the dialog_save_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-dialog-save-file",
+          "markdownDescription": "Enables the dialog_save_file command without any pre-configured scope."
+        },
+        {
           "description": "Enables the pty_create command without any pre-configured scope.",
           "type": "string",
           "const": "allow-pty-create",
@@ -205,6 +223,24 @@
           "type": "string",
           "const": "allow-pty-write",
           "markdownDescription": "Enables the pty_write command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the dialog_open_files command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-dialog-open-files",
+          "markdownDescription": "Denies the dialog_open_files command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the dialog_pick_folder command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-dialog-pick-folder",
+          "markdownDescription": "Denies the dialog_pick_folder command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the dialog_save_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-dialog-save-file",
+          "markdownDescription": "Denies the dialog_save_file command without any pre-configured scope."
         },
         {
           "description": "Denies the pty_create command without any pre-configured scope.",

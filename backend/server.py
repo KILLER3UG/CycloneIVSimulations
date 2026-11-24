@@ -511,6 +511,45 @@ def workspace_delete_endpoint(payload: Dict[str, Any] = Body(...)) -> JSONRespon
         return _error_response(f"Failed deleting workspace file: {exc}", 500)
 
 
+@app.post("/api/workspace/open-files")
+def workspace_open_files_endpoint(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
+    raw_paths = [str(p or "").strip() for p in (payload.get("paths") or []) if str(p or "").strip()]
+    if not raw_paths:
+        return _error_response("At least one file path is required", 400)
+    resolved: list[Path] = []
+    for raw in raw_paths:
+        p = Path(raw).expanduser().resolve()
+        if not p.is_file():
+            return _error_response(f"File does not exist: {raw}", 400)
+        resolved.append(p)
+    try:
+        common = Path(os.path.commonpath([str(p.parent) for p in resolved]))
+        if not common.is_dir():
+            common = resolved[0].parent
+        snap = scan_workspace(common, max_depth=0)
+        present = {f["name"] for f in snap["files"]}
+        selected_rel = []
+        for p in resolved:
+            try:
+                rel = p.relative_to(common).as_posix()
+            except ValueError:
+                rel = p.name
+            selected_rel.append(rel)
+            if rel not in present:
+                raw_bytes = p.read_bytes()
+                snap["files"].append({
+                    "name": rel,
+                    "content": raw_bytes.decode("utf-8", errors="replace"),
+                    "size": len(raw_bytes),
+                })
+        snap["selectedFiles"] = selected_rel
+        return JSONResponse(status_code=200, content=snap)
+    except ValueError as exc:
+        return _error_response(str(exc), 400)
+    except OSError as exc:
+        return _error_response(f"Cannot open selected files: {exc}", 400)
+
+
 @app.post("/api/quartus/simulate-netlist")
 def quartus_simulate_netlist_endpoint(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
     settings = load_settings()
@@ -1051,6 +1090,7 @@ async def websocket_terminal(websocket: WebSocket) -> None:
         await websocket.send_json({
             "type": "ready",
             "cwd": term.cwd,
+            "home": str(Path.home()),
             "ghdlOnPath": term.ghdl_on_path,
             "pid": getattr(term._proc, "pid", None),
         })

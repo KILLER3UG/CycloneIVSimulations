@@ -90,6 +90,18 @@ export const icons = {
     qEdWrap: C('<path d="M2 4h11M2 8h9a2 2 0 1 1 0 4H7" stroke="#2563eb" stroke-width="1.4" fill="none" stroke-linecap="round"/><polygon points="7.5,10.2 5,12 7.5,13.8" fill="#2563eb"/>'),
     qSettings: C('<rect x="2" y="2" width="12" height="12" rx="1.5" fill="#e2e8f0" stroke="#64748b" stroke-width="1"/><path d="M5 6h6M5 9h6M5 12h4" stroke="#0f172a" stroke-width="1.2"/>'),
     qQuartus: C('<rect x="2" y="2" width="12" height="12" rx="2" fill="#0071c5"/><text x="8" y="11" text-anchor="middle" font-size="8.5" font-family="Segoe UI,sans-serif" font-weight="700" fill="#fff">Q</text>'),
+    qRepTable: C('<rect x="2" y="2.5" width="12" height="11" rx="1" fill="#ffffff" stroke="#0284c7" stroke-width="1"/><rect x="2" y="2.5" width="12" height="3.2" fill="#0284c7"/><path d="M6 5.7v7.8M10 5.7v7.8M2 9.5h12" stroke="#93c5fd" stroke-width="0.9"/>'),
+    qRepDoc: C('<path d="M3 1.8h7l3 3v9.4H3V1.8z" fill="#ffffff" stroke="#0284c7" stroke-width="1"/><path d="M10 1.8v3h3" fill="#bae6fd" stroke="#0284c7" stroke-width="0.9"/><path d="M5 7h6M5 9.5h6M5 12h4" stroke="#475569" stroke-width="1"/>'),
+    qRepFolder: C('<path d="M1.5 4h4.5l1.5 1.8H14v7.5H1.5V4z" fill="#fde047" stroke="#b45309" stroke-width="1"/>'),
+    qSaveAll: C('<rect x="1.5" y="1.5" width="9.5" height="9.5" rx="1" fill="#2d72b8" stroke="#1b4d82" stroke-width="0.9"/><rect x="5" y="5" width="9.5" height="9.5" rx="1" fill="#3b82f6" stroke="#1e40af" stroke-width="0.9"/><rect x="7" y="5.5" width="5" height="3.2" fill="#ffffff"/>'),
+    qProjNew: C('<path d="M2 4.5h4.5l1.5 1.8h5.5V13H2V4.5z" fill="#fde047" stroke="#b45309" stroke-width="1"/><path d="M12.5 1.5l1 2.2 2.2.3-1.7 1.5.4 2.2-1.9-1.1-1.9 1.1.4-2.2-1.7-1.5 2.2-.3z" fill="#facc15" stroke="#ca8a04" stroke-width="0.6"/>'),
+    qProjOpen: C('<path d="M1.5 4h4.5l1.5 1.8h6V13H1.5V4z" fill="#60a5fa" stroke="#1d4ed8" stroke-width="1"/><path d="M2.5 7h12l-1.5 6H1.5z" fill="#bfdbfe" stroke="#1d4ed8" stroke-width="0.9"/>'),
+    qFileAbc: C('<polygon points="8,1.5 14.5,6.5 8,11.5 1.5,6.5" fill="#1d85c7" stroke="#0c5c8f" stroke-width="0.9"/><text x="8" y="8" text-anchor="middle" font-size="5" font-family="Segoe UI,sans-serif" font-weight="700" fill="#ffffff">abc</text>'),
+    qCompReport: C('<rect x="2.5" y="1.8" width="9.5" height="11.5" rx="1" fill="#ffffff" stroke="#475569" stroke-width="1"/><rect x="4" y="3.5" width="6.5" height="2.2" fill="#2563eb"/><path d="M4 7.5h6M4 9.8h5" stroke="#64748b" stroke-width="1"/><polygon points="10.5,8.5 14.5,11.5 10.5,14.5" fill="#1d85c7"/>'),
+    qVhdBadge: C('<rect x="2" y="2.2" width="12" height="11.6" rx="1.2" fill="#0e7490" stroke="#164e63" stroke-width="0.9"/><rect x="3" y="3" width="10" height="5" fill="#1d85c7"/><text x="8" y="7.2" text-anchor="middle" font-size="4.6" font-family="Segoe UI,sans-serif" font-weight="700" fill="#ffffff">abc</text><text x="8" y="12.5" text-anchor="middle" font-size="4.4" font-family="Segoe UI,sans-serif" font-weight="700" fill="#ecfeff">VHD</text>'),
+    qTopTree: C('<path d="M8 2.5v4M4 6.5h8M4 6.5v3.5M12 6.5v3.5" stroke="#0369a1" stroke-width="1.2"/><rect x="6" y="1" width="4" height="2.8" fill="#0284c7"/><rect x="2" y="9.5" width="4" height="3.2" fill="#94a3b8"/><rect x="10" y="9.5" width="4" height="3.2" fill="#dc2626"/>'),
+    qMiniPin: C('<rect x="4" y="2.5" width="8" height="7" fill="#cbd5e1" stroke="#475569" stroke-width="1"/><line x1="8" y1="9.5" x2="8" y2="14" stroke="#475569" stroke-width="1.3"/>'),
+    qMiniUndock: C('<rect x="2.5" y="4.5" width="8" height="8" fill="#ffffff" stroke="#475569" stroke-width="1"/><rect x="5" y="2.5" width="8.5" height="8" fill="#e2e8f0" stroke="#334155" stroke-width="1"/><rect x="5" y="2.5" width="8.5" height="2.2" fill="#0284c7"/>'),
 };
 
 export function icon(name) {

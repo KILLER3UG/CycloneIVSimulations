@@ -35,6 +35,9 @@ export function createLeftDock(navigatorHost, tasksHost, h) {
                 <option value="examples">Examples</option>
             </select>
             <div class="q-pane-btns">
+                <span class="q-pane-mini" title="Search Hierarchy">${icon("search")}</span>
+                <span class="q-pane-mini" title="Keep Attached">${icon("qMiniPin")}</span>
+                <span class="q-pane-mini" title="Undock">${icon("qMiniUndock")}</span>
                 <button type="button" class="q-win-btn" data-act="collapse-left" title="Collapse Project Navigator">&times;</button>
             </div>
         </div>
@@ -43,8 +46,7 @@ export function createLeftDock(navigatorHost, tasksHost, h) {
                 <div class="q-col-head">Entity:Instance</div>
                 <div class="nv-tree" id="nv-tree">
                     <div class="nv-node nv-device" id="nv-device-row">
-                        <span class="nv-caret">&#9662;</span>
-                        ${icon("qDeviceChip")}
+                        <span class="nv-dev-tri">${icon("qHierarchy")}</span>
                         <span id="nv-board">Cyclone IV E: EP4CE6E22C8</span>
                     </div>
                     <div id="nv-entity-tree"></div>
@@ -67,45 +69,88 @@ export function createLeftDock(navigatorHost, tasksHost, h) {
             <span class="q-pane-title">Tasks</span>
             <select id="tk-flow-select" class="q-pane-select" aria-label="Tasks flow">
                 <option value="compilation" selected>Compilation</option>
-                <option value="simulation">Simulation</option>
+                <option value="simulation">RTL Simulation</option>
             </select>
-        </div>
-        <div class="q-col-head">Task</div>
-        <div class="tk-list" id="tk-list">
-            <div class="tk-group" id="tk-compile-group">
-                <button type="button" class="tk-row tk-parent" data-task-parent="compile" title="Double-click or click to run Full Compilation (Ctrl+L)">
-                    <span class="tk-glyph" id="tk-master-glyph"></span>
-                    <span class="tk-arrow" id="tk-compile-arrow">&#9662;</span>
-                    <span class="tk-ico">${icon("qCompile")}</span>
-                    <span class="tk-label">Compile Design</span>
-                    <span class="tk-time" id="tk-master-time"></span>
-                </button>
-                <div class="tk-children" id="tk-children">
-                    ${TASKS.map((task, i) => `
-                        <button type="button" class="tk-row tk-child" data-task="${i}" data-stage="${task.id}" title="${task.hint}">
-                            <span class="tk-glyph" data-glyph></span>
-                            <span class="tk-arrow-sub">&#9656;</span>
-                            <span class="tk-ico">${icon(task.icon)}</span>
-                            <span class="tk-label">${task.label}</span>
-                            <span class="tk-time" data-time></span>
-                        </button>`).join("")}
-                </div>
+            <div class="q-pane-btns">
+                <span class="q-pane-mini" title="Keep Attached">${icon("qMiniPin")}</span>
+                <span class="q-pane-mini" title="Undock">${icon("qMiniUndock")}</span>
+                <button type="button" class="q-win-btn" data-act="collapse-left" title="Collapse Tasks">&times;</button>
             </div>
-            <button type="button" class="tk-row tk-extra" data-jump="settings" title="Configure Quartus path &amp; project settings">
-                <span class="tk-glyph"></span>
-                <span class="tk-ico">${icon("qSettings")}</span>
-                <span class="tk-label">Edit Settings</span>
-            </button>
-            <button type="button" class="tk-row tk-extra" data-jump="pinmap" title="Open Pin Planner">
-                <span class="tk-glyph"></span>
-                <span class="tk-ico">${icon("qChip")}</span>
-                <span class="tk-label">Pin Planner</span>
-            </button>
-            <button type="button" class="tk-row tk-extra" data-jump="programmer" title="Program Device (Open Programmer)">
-                <span class="tk-glyph"></span>
-                <span class="tk-ico">${icon("qPgm")}</span>
-                <span class="tk-label">Program Device (Open Programmer)</span>
-            </button>
+        </div>
+        <div class="tk-grid-head">
+            <span class="tk-h-gutter"></span>
+            <span class="tk-h-task">Task</span>
+            <span class="tk-h-time">Time</span>
+        </div>
+        <div class="tk-list" id="tk-list">
+            <div class="tk-flow-comp" id="tk-flow-comp">
+                <div class="tk-group" id="tk-compile-group">
+                    <button type="button" class="tk-row tk-parent" data-task-parent="compile" title="Double-click or click to run Full Compilation (Ctrl+L)">
+                        <span class="tk-glyph" id="tk-master-glyph"></span>
+                        <span class="tk-cell-main">
+                            <span class="tk-arrow" id="tk-compile-arrow">&#9662;</span>
+                            <span class="tk-ico">${icon("qCompile")}</span>
+                            <span class="tk-label">Compile Design</span>
+                        </span>
+                        <span class="tk-time" id="tk-master-time"></span>
+                    </button>
+                    <div class="tk-children" id="tk-children">
+                        ${TASKS.map((task, i) => `
+                            <button type="button" class="tk-row tk-child" data-task="${i}" data-stage="${task.id}" title="${task.hint}">
+                                <span class="tk-glyph" data-glyph></span>
+                                <span class="tk-cell-main">
+                                    <span class="tk-arrow-sub">&#9656;</span>
+                                    <span class="tk-ico">${icon(task.icon)}</span>
+                                    <span class="tk-label">${task.label}</span>
+                                </span>
+                                <span class="tk-time" data-time></span>
+                            </button>`).join("")}
+                    </div>
+                </div>
+                <button type="button" class="tk-row tk-extra" data-jump="settings" title="Configure Quartus path &amp; project settings">
+                    <span class="tk-glyph"></span>
+                    <span class="tk-cell-main">
+                        <span class="tk-ico">${icon("qSettings")}</span>
+                        <span class="tk-label">Edit Settings</span>
+                    </span>
+                    <span class="tk-time"></span>
+                </button>
+                <button type="button" class="tk-row tk-extra" data-jump="pinmap" title="Open Pin Planner">
+                    <span class="tk-glyph"></span>
+                    <span class="tk-cell-main">
+                        <span class="tk-ico">${icon("qChip")}</span>
+                        <span class="tk-label">Pin Planner</span>
+                    </span>
+                    <span class="tk-time"></span>
+                </button>
+                <button type="button" class="tk-row tk-extra" data-jump="programmer" title="Program Device (Open Programmer)">
+                    <span class="tk-glyph"></span>
+                    <span class="tk-cell-main">
+                        <span class="tk-ico">${icon("qPgm")}</span>
+                        <span class="tk-label">Program Device (Open Programmer)</span>
+                    </span>
+                    <span class="tk-time"></span>
+                </button>
+            </div>
+            <div class="tk-flow-sim hidden" id="tk-flow-sim">
+                <button type="button" class="tk-row" data-jump="simulate" title="Analyze &amp; Elaborate HDL">
+                    <span class="tk-glyph"></span>
+                    <span class="tk-cell-main">
+                        <span class="tk-ico">${icon("qCompile")}</span>
+                        <span class="tk-label">Analysis &amp; Elaboration</span>
+                    </span>
+                    <span class="tk-time"></span>
+                </button>
+                <button type="button" class="tk-row" data-jump="simulate" title="Run Interactive Board / ModelSim RTL Simulation">
+                    <span class="tk-glyph"></span>
+                    <span class="tk-cell-main">
+                        <span class="tk-arrow-sub">&#9656;</span>
+                        <span class="tk-ico">${icon("qCompile")}</span>
+                        <span class="tk-label">RTL Simulation</span>
+                    </span>
+                    <span class="tk-time"></span>
+                </button>
+            </div>
         </div>
     `;
 
@@ -122,7 +167,9 @@ export function createLeftDock(navigatorHost, tasksHost, h) {
 
     modeSelect?.addEventListener("change", () => showMode(modeSelect.value));
     flowSelect?.addEventListener("change", () => {
-        if (flowSelect.value === "simulation") h.onJump?.("simulate");
+        const simMode = flowSelect.value === "simulation";
+        tasksHost.querySelector("#tk-flow-comp")?.classList.toggle("hidden", simMode);
+        tasksHost.querySelector("#tk-flow-sim")?.classList.toggle("hidden", !simMode);
     });
 
     navigatorHost.addEventListener("click", (e) => {
@@ -170,11 +217,11 @@ export function createLeftDock(navigatorHost, tasksHost, h) {
         const tree = navigatorHost.querySelector("#nv-entity-tree");
         if (!tree) return;
         if (!entity) {
-            tree.innerHTML = `<div class="nv-node nv-entity selected"><span class="nv-indent"></span>${icon("qEntityChip")}<span class="nv-ent-name">design</span></div>`;
+            tree.innerHTML = `<div class="nv-node nv-entity selected"><span class="nv-indent"></span>${icon("qVhdBadge")}<span class="nv-ent-name">design</span>${icon("qTopTree")}</div>`;
             return;
         }
         const rows = [];
-        rows.push(`<div class="nv-node nv-entity selected" title="Top-level entity: ${entity.name}"><span class="nv-caret nv-ent-caret">&#9656;</span>${icon("qEntityChip")}<span class="nv-ent-name">${entity.name}</span></div>`);
+        rows.push(`<div class="nv-node nv-entity selected" title="Top-level entity: ${entity.name}"><span class="nv-indent"></span>${icon("qVhdBadge")}<span class="nv-ent-name">${entity.name}</span>${icon("qTopTree")}</div>`);
         rows.push(`<div id="nv-entity-ports" class="hidden">`);
         for (const port of entity.ports || []) {
             const dir = port.direction === "in" ? "in" : "out";

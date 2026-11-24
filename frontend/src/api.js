@@ -249,6 +249,14 @@ export class ApiClient {
         });
     }
 
+    workspaceOpenFiles(paths) {
+        return this._fetch("/api/workspace/open-files", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ paths: Array.isArray(paths) ? paths : [] }),
+        });
+    }
+
     workspaceWrite(dir, files) {
         return this._fetch("/api/workspace/write", {
             method: "POST",
